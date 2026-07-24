@@ -28,6 +28,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from consensus_rnaseq import consensus as cc
+from consensus_rnaseq import degsea as dg
 from consensus_rnaseq import embedding as emb
 from consensus_rnaseq import metrics as mt
 from consensus_rnaseq import plots as pl
@@ -110,7 +111,10 @@ def build_parser() -> argparse.ArgumentParser:
     con.add_argument("--linkage", default="average",
                      choices=["average", "complete", "ward", "single"])
     con.add_argument("--k-final", type=int, default=None,
-                     help="k retenu ; par défaut choisi automatiquement (PAC min)")
+                     help="k retenu ; par défaut choisi automatiquement (voir --k_criterion)")
+    con.add_argument("--k_criterion", choices=["pac", "deltak", "both"], default="both",
+                     help="critère de choix auto de k (si --k-final absent) : 'pac' "
+                          "(minimise le PAC), 'deltak' (coude de Δ(K)), 'both' (défaut).")
     con.add_argument("--min-cluster-size", type=int, default=10)
 
     stab = p.add_argument_group("stabilité des branches (Jaccard bootstrap)")
@@ -118,6 +122,19 @@ def build_parser() -> argparse.ArgumentParser:
                       help="'y' : après la partition finale, calcule la stabilité "
                            "Jaccard de chaque branche de l'arbre consensus par "
                            "bootstrap des gènes (n_resamples arbres). Défaut 'y'.")
+
+    deg = p.add_argument_group("DEGSEA (DESeq2 + GSEA par cluster)")
+    deg.add_argument("--run_degsea", choices=["y", "n"], default="n",
+                     help="'y' : après les embeddings, DESeq2 + GSEA par cluster "
+                          "(one-vs-all et one-vs-one). Étape longue. Défaut 'n'.")
+    deg.add_argument("--degsea_mode", choices=["ova", "ovo", "both"], default="both",
+                     help="contrastes DESeq2 : ova (one-vs-all), ovo (one-vs-one, "
+                          "coûteux : k(k-1)/2), both (défaut).")
+    deg.add_argument("--gsea_gene_sets",
+                     default=str(Path.home() / ".cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt"),
+                     help="fichier .gmt de gene sets pour le GSEA (hallmarks MSigDB par défaut).")
+    deg.add_argument("--gsea_permutations", type=int, default=1000,
+                     help="nombre de permutations du GSEA pré-classé (défaut 1000).")
 
     embg = p.add_argument_group("embeddings")
     embg.add_argument("--t-SNE_dim", dest="tsne_dim", type=int, choices=[2, 3],
@@ -276,8 +293,12 @@ def main(argv=None) -> int:
     tab.to_csv(outdir / "tables" / "k_selection.csv", index=False)
     log.info("Diagnostics par k :\n%s", tab.to_string(index=False))
 
-    k_final = args.k_final or mt.suggest_k(result, args.min_cluster_size)
-    log.info("k retenu : %d %s", k_final, "(imposé)" if args.k_final else "(heuristique PAC + coude Δ(K))")
+    if args.k_final:
+        k_final, reason = args.k_final, "(imposé)"
+    else:
+        k_final = mt.suggest_k(result, args.min_cluster_size, method=args.k_criterion)
+        reason = f"(auto, critère : {args.k_criterion})"
+    log.info("k retenu : %d %s", k_final, reason)
 
     pl.plot_cdf(result, outdir / "figures")
     pl.plot_tracking(result, outdir / "figures")
@@ -353,6 +374,22 @@ def main(argv=None) -> int:
         ct = pd.crosstab(labels, var.values)
         ct.to_csv(outdir / "tables" / f"crosstab_{args.color_by}_k{k_final}.csv")
         log.info("Croisement cluster x %s :\n%s", args.color_by, ct.to_string())
+
+    # ------------------------------------------------ 6. DEGSEA (DESeq2 + GSEA)
+    if args.run_degsea == "y":
+        log.info("DEGSEA : DESeq2 + GSEA par cluster (mode=%s) — étape longue…",
+                 args.degsea_mode)
+        nes = dg.run_degsea(
+            raw, labels, result.sample_names, outdir,
+            gene_sets=args.gsea_gene_sets,
+            mode=args.degsea_mode,
+            permutations=args.gsea_permutations,
+            n_jobs=args.n_jobs,
+            seed=args.seed,
+        )
+        if nes is not None and not nes.empty:
+            pl.plot_gsea_ova_heatmap(nes, outdir / "figures")
+        log.info("DEGSEA terminé : tables dans %s", outdir / "tables" / "degsea")
 
     with open(outdir / "run_params.json", "w") as fh:
         json.dump({**vars(args), "outdir": str(args.outdir), "k_final": k_final},

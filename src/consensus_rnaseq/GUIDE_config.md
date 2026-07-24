@@ -88,7 +88,8 @@ les partitions avec un indice de Rand ajusté, et surtout lance `null_check.py`.
 | Paramètre | Recommandation |
 |---|---|
 | `k_min` / `k_max` | `2` → borne haute selon le nombre de sous-types plausible. Mets `k_max` large (15–30) pour voir où le PAC sature ; ça ne coûte pas cher. |
-| `k_final` | `null` = choix auto (heuristique PAC + coude Δ(K)). **À valider par les heatmaps.** Mets un entier une fois que tu as tranché (ex. `7`). |
+| `k_final` | `null` = choix auto (voir `k_criterion`). **À valider par les heatmaps.** Mets un entier une fois que tu as tranché (ex. `7`). |
+| `k_criterion` | Critère du choix auto (si `k_final: null`) : `pac` (minimise le PAC, fiable mais sous-estime parfois k), `deltak` (coude de Δ(K), sur-estime souvent k), `both` (défaut, croise les deux). Sans effet si `k_final` est fixé. |
 | `min_cluster_size` | `10` par défaut. Sert à l'heuristique `suggest_k` : un k qui produit un cluster de 3 tumeurs sur-partitionne. Monte-le sur une grosse cohorte. |
 
 **Comment choisir k concrètement :** regarde dans l'ordre
@@ -155,6 +156,19 @@ hierarchical` + `metric: euclidean` + `linkage: ward` + `scale_genes: true`**.
 | `compute_jaccard` | `y` = calcule la stabilité de chaque branche par bootstrap des gènes (`n_resamples` arbres). Coûte ~1× le temps du run. Mets `n` pour un test rapide, `y` pour l'analyse finale. Lecture : branche > 0,75 = stable, > 0,85 = très stable. |
 
 ---
+
+## 5 bis. DEGSEA (DESeq2 + GSEA par cluster)
+
+Caractérise chaque cluster après le clustering. **Étape longue**, désactivée par défaut.
+
+| Paramètre | Recommandation |
+|---|---|
+| `run_degsea` | `n` (défaut) / `y`. Ne l'active qu'une fois la partition figée (k choisi). |
+| `degsea_mode` | `ova` (one-vs-all, rapide, K contrastes), `ovo` (one-vs-one, **K(K-1)/2** contrastes, coûteux), `both`. Sur un grand K, reste sur `ova`. |
+| `gsea_gene_sets` | Chemin d'un `.gmt`. Défaut = hallmarks MSigDB. Autres dispos en cache : Reactome, KEGG, GO_BP. Les gènes doivent être des **symboles HGNC**. |
+| `gsea_permutations` | `1000` (défaut). Baisse à `200`–`500` pour aller plus vite pendant la mise au point. |
+
+⚠️ Double-dipping : p-valeurs anticonservatives (mêmes données pour définir les clusters et les tester). Lecture descriptive, pas inférentielle.
 
 ## 6. Embeddings (t-SNE / UMAP)
 

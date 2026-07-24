@@ -136,6 +136,30 @@ def plot_embeddings(emb: pd.DataFrame, outdir: Path, k: int,
     return _save(fig, outdir, f"embeddings_k{k}_{suffix}.png")
 
 
+def plot_gsea_ova_heatmap(nes: pd.DataFrame, outdir: Path) -> Path:
+    """Heatmap de synthèse GSEA one-vs-all : pathways (lignes) × clusters
+    (colonnes), colorés par NES (rouge = enrichi dans le cluster, bleu =
+    déplété). Vue d'ensemble des programmes qui distinguent chaque groupe."""
+    n_terms, n_clusters = nes.shape
+    fig, ax = plt.subplots(figsize=(1.1 * n_clusters + 3.4, 0.34 * n_terms + 1.6))
+    vmax = float(np.nanmax(np.abs(nes.values))) or 1.0
+    im = ax.imshow(nes.values, cmap="RdBu_r", vmin=-vmax, vmax=vmax,
+                   aspect="auto", interpolation="nearest")
+    ax.set_xticks(range(n_clusters)); ax.set_xticklabels(nes.columns)
+    ax.set_yticks(range(n_terms))
+    ax.set_yticklabels([t[:44] for t in nes.index], fontsize=8)
+    ax.set_xlabel("cluster (one-vs-all)")
+    ax.set_title("GSEA — NES par cluster (hallmarks les plus marqués)")
+    for i in range(n_terms):
+        for j in range(n_clusters):
+            v = nes.values[i, j]
+            if np.isfinite(v) and abs(v) >= 0.6 * vmax:
+                ax.text(j, i, f"{v:.1f}", ha="center", va="center", fontsize=6.5,
+                        color="white")
+    fig.colorbar(im, ax=ax, label="NES", fraction=0.025, pad=0.02)
+    return _save(fig, outdir, "gsea_ova_heatmap.png")
+
+
 def plot_purity(purity: pd.Series, keep: pd.Series, threshold: float,
                 direction: str, outdir: Path) -> Path:
     """Histogramme des puretés PUREE, seuil de filtrage marqué ; la zone retirée

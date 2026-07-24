@@ -149,27 +149,44 @@ def silhouette_per_sample(result: ConsensusResult, k: int) -> pd.DataFrame:
 def suggest_k(
     result: ConsensusResult,
     min_cluster_size: int = 10,
+    method: str = "both",
     pac_tol: float = 0.01,
     min_delta: float = 0.05,
 ) -> int:
     """Heuristique de choix de k. **À valider par la heatmap, jamais à suivre
     aveuglément.**
 
-    Règle en trois temps :
-      1. écarter les k produisant un cluster de moins de `min_cluster_size`
-         tumeurs (sur-partitionnement) ;
-      2. retenir les k dont le PAC est à `pac_tol` près du minimum — sur des
-         données bien structurées le PAC sature et ses écarts deviennent du
-         bruit, un argmin brut sous-estime alors k ;
-      3. parmi eux, prendre le plus grand k qui apporte encore un gain d'aire
-         sous la CDF d'au moins `min_delta` (coude de Δ(K)).
+    On écarte d'abord les k produisant un cluster de moins de `min_cluster_size`
+    tumeurs (sur-partitionnement), puis on applique le critère `method` :
+
+    - ``"pac"`` : k qui **minimise le PAC** (proportion de paires ambiguës).
+      Fiable, mais peut sous-estimer k quand le PAC sature sur des données bien
+      structurées.
+    - ``"deltak"`` : **coude de Δ(K)** — le plus grand k qui apporte encore un
+      gain d'aire sous la CDF d'au moins `min_delta`. Suit Monti et al., mais a
+      un biais monotone documenté et **sur-estime souvent k**.
+    - ``"both"`` (défaut) : parmi les k à `pac_tol` près du PAC minimal, le plus
+      grand qui garde un Δ(K) ≥ `min_delta` — combine la fiabilité du PAC et le
+      coude de Δ(K).
     """
     tab = summary(result)
     ok = tab[tab["min_cluster_size"] >= min_cluster_size]
     tab = ok if len(ok) else tab
 
-    near = tab[tab["PAC"] <= tab["PAC"].min() + pac_tol]
-    gain = near[near["delta_k"] >= min_delta]
-    if len(gain):
-        return int(gain["k"].max())
-    return int(near.loc[near["PAC"].idxmin(), "k"])
+    if method == "pac":
+        return int(tab.loc[tab["PAC"].idxmin(), "k"])
+
+    if method == "deltak":
+        gain = tab[tab["delta_k"] >= min_delta]
+        if len(gain):
+            return int(gain["k"].max())
+        return int(tab.loc[tab["delta_k"].idxmax(), "k"])
+
+    if method == "both":
+        near = tab[tab["PAC"] <= tab["PAC"].min() + pac_tol]
+        gain = near[near["delta_k"] >= min_delta]
+        if len(gain):
+            return int(gain["k"].max())
+        return int(near.loc[near["PAC"].idxmin(), "k"])
+
+    raise ValueError(f"method inconnu : {method!r} (pac | deltak | both).")

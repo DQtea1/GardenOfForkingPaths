@@ -9,3 +9,4 @@ pyyaml>=6.0           # lecture du fichier de configuration --config
 umap-learn>=0.5.4     # optionnel : sans lui, le pipeline tourne avec --no-umap
 pyarrow>=14.0         # optionnel : lecture parquet
 plotly>=5.18          # optionnel : requis seulement pour les embeddings 3D (--t-SNE_dim 3)
+gseapy>=1.1           # optionnel : GSEA de l'étape DEGSEA (run_degsea=y)

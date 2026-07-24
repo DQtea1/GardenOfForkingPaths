@@ -9,6 +9,7 @@ calculée **à partir de la distance consensus**, pas de l'expression brute.
 ├── run_pipeline.py                  # pipeline complet (CLI)
 ├── config.yaml                      # tous les paramètres du pipeline (--config)
 ├── GUIDE_config.md                  # comment régler chaque paramètre (algo, distance, linkage…)
+├── pipeline_map.html                # carte interactive du processus (3 granularités + params)
 ├── null_check.py                    # contrôle par modèle nul — à ne pas sauter
 ├── make_demo_data.py                # 500 tumeurs simulées, 4 sous-types + atypiques
 ├── requirements.txt
@@ -19,6 +20,7 @@ calculée **à partir de la distance consensus**, pas de l'expression brute.
     ├── metrics.py                   # CDF, Δ(K), PAC, item/cluster consensus, silhouette
     ├── stability.py                 # stabilité Jaccard des branches (bootstrap gènes)
     ├── embedding.py                 # t-SNE / UMAP 2D/3D sur distance précalculée
+    ├── degsea.py                    # DESeq2 + GSEA par cluster (one-vs-all / one-vs-one)
     └── plots.py                     # heatmaps, tracking plot, nuages, dendro stabilité
 ```
 
@@ -187,6 +189,26 @@ score, membres, et `is_final_cluster` pour les branches égales à un cluster
 retenu) et `figures/branch_stability_dendrogram_k*.png` (dendrogramme dont les
 branches sont colorées du rouge = instable au vert = stable). C'est le
 complément « par branche » du PAC, qui est lui global.
+
+## DEGSEA — caractérisation des clusters (DESeq2 + GSEA)
+
+`run_degsea: y` ajoute, après les embeddings, une caractérisation de chaque
+cluster : expression différentielle **DESeq2** (via PyDESeq2, sur les counts
+bruts) puis **GSEA pré-classé** (gseapy) sur la statistique de Wald, en
+**one-vs-all** (cluster *c* vs le reste) et **one-vs-one** (chaque paire), selon
+`degsea_mode` (`ova` | `ovo` | `both`). Les gene sets viennent d'un fichier
+`.gmt` (`gsea_gene_sets`, hallmarks MSigDB par défaut) ; les gènes de la matrice
+doivent être des **symboles HGNC**.
+
+Sorties dans `tables/degsea/{ova,ovo}/` : un `deseq2_*.csv` et un `gsea_*.csv`
+par contraste, plus `gsea_summary.csv` (pathways significatifs, FDR < 0,25) et
+`figures/gsea_ova_heatmap.png` (NES par cluster). Le one-vs-one coûte *k(k-1)/2*
+DESeq2 : l'étape est longue, d'où le défaut `n`.
+
+> ⚠️ **Double-dipping.** Les clusters et les tests sortent des mêmes données :
+> les p-valeurs sont anticonservatives (Gao, Bien & Witten 2022). À lire comme
+> une caractérisation des programmes, pas comme un test valide — valider par
+> data-splitting ou cohorte externe.
 
 ## Pièges à connaître
 
