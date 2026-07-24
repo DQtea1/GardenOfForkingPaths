@@ -1,0 +1,69 @@
+# Configuration du pipeline consensus clustering.
+#
+# Usage :
+#   python run_pipeline.py --config config.yaml
+#
+# Comment régler chaque paramètre (algo, distance, linkage, k…) : voir GUIDE_config.md
+#
+# Tout paramètre passé en ligne de commande a la PRIORITÉ sur ce fichier ;
+# le YAML a lui-même la priorité sur les défauts internes. Exemple :
+#   python run_pipeline.py --config config.yaml --k-max 12 --compute_jaccard n
+# lance le run décrit ici mais force k-max=12 et désactive la stabilité Jaccard.
+#
+# Les clés utilisent des underscores (n_top_genes, color_by, tsne_dim, ...),
+# pas des tirets. Une valeur laissée à `null` reprend le défaut interne.
+
+# ----------------------------------------------------------------- entrées / sorties
+counts: /mnt/d/03_SARAH_projet/00_DATA/01_BULK/01_MERGED_BULKS/00_Unfiltered/RNAseq_counts.csv                  # OBLIGATOIRE : matrice csv/tsv/parquet (gènes en lignes)
+samples_in_rows: false        # true si les échantillons sont en lignes
+metadata: /mnt/d/03_SARAH_projet/00_DATA/02_CLINIC/clinique_itd.csv                # csv/tsv indexé par échantillon (annotations cliniques)
+color_by: histo_classe                # colonne des métadonnées à superposer sur les embeddings
+outdir: /mnt/d/03_SARAH_projet/01_OUTPUTS/ConsensusClustering           # dossier de sortie
+
+# ------------------------------------------------------------------------ prétraitement
+already_normalized: false     # true si entrée déjà en VST/rlog/logCPM (saute filtrage + normalisation)
+norm_method: vst              # normalisation des counts bruts : vst (DESeq2/PyDESeq2, défaut) | logcpm
+min_cpm: 1.0
+min_frac_samples: 0.2
+keep_technical: false         # true = garde les gènes RP/MT/HB
+n_top_genes: 2000
+variance_method: mad          # mad | var
+scale_genes: false            # true = z-score par gène
+outlier_sd_threshold: 0.0     # ACP + retrait des tumeurs à > N SD sur une CP ; 0 = aucun retrait
+outlier_n_pc: 10              # nombre de composantes inspectées pour la détection d'outliers
+outlier_min_explained_var: 0.0  # si > 0 : inspecte les CP à variance expliquée > seuil (0.08 = 8 %) au lieu de n_pc
+
+# --------------------------------------------------------------------- pureté tumorale (PUREE)
+purity_threshold: 0.7           # seuil dans ]0,1[ ; 0 / null / false = pas de filtrage (PUREE non lancé)
+purity_direction: higher      # higher = garde puretés >= seuil ; lower = garde puretés <= seuil
+puree_dir: /home/quentin/02_MODELS/PUREE               # dépôt PUREE (predict_purity.py, models/, data/)
+puree_python: /home/quentin/miniforge3/envs/PUREE/bin/python  # interpréteur de l'env PUREE
+puree_gene_id: HGNC           # HGNC (symboles) | ENSEMBL
+
+# ------------------------------------------------------------------- consensus clustering
+k_min: 3
+k_max: 20
+n_resamples: 3000
+prop_samples: 0.8
+prop_genes: 0.8
+sample_mode: subsample        # subsample | bootstrap
+gene_mode: subsample          # subsample | bootstrap
+base: hierarchical            # hierarchical | kmeans | kmedoids
+metric: pearson               # pearson | spearman | euclidean | cosine
+linkage: average              # average | complete | ward | single
+k_final: null                 # entier pour forcer k ; null = choix automatique (PAC + Δ(K))
+min_cluster_size: 10
+
+# ------------------------------------------------- stabilité des branches (Jaccard bootstrap)
+compute_jaccard: y            # y | n
+
+# ------------------------------------------------------------------------- embeddings
+tsne_dim: 3                   # 2 (PNG) | 3 (HTML interactif, nécessite plotly)
+perplexity: 30.0
+n_neighbors: 15
+min_dist: 0.1
+no_umap: false                # true = ne calcule pas l'UMAP
+
+# ------------------------------------------------------------------------------- divers
+n_jobs: -1                    # -1 = tous les cœurs
+seed: 0

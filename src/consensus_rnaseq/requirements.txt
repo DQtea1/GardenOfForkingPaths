@@ -1,0 +1,11 @@
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+scikit-learn>=1.3
+pydeseq2>=0.5         # normalisation VST par défaut des counts bruts (norm_method=vst)
+joblib>=1.3
+matplotlib>=3.7
+pyyaml>=6.0           # lecture du fichier de configuration --config
+umap-learn>=0.5.4     # optionnel : sans lui, le pipeline tourne avec --no-umap
+pyarrow>=14.0         # optionnel : lecture parquet
+plotly>=5.18          # optionnel : requis seulement pour les embeddings 3D (--t-SNE_dim 3)
