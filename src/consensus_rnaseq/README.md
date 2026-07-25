@@ -196,19 +196,91 @@ complément « par branche » du PAC, qui est lui global.
 cluster : expression différentielle **DESeq2** (via PyDESeq2, sur les counts
 bruts) puis **GSEA pré-classé** (gseapy) sur la statistique de Wald, en
 **one-vs-all** (cluster *c* vs le reste) et **one-vs-one** (chaque paire), selon
-`degsea_mode` (`ova` | `ovo` | `both`). Les gene sets viennent d'un fichier
-`.gmt` (`gsea_gene_sets`, hallmarks MSigDB par défaut) ; les gènes de la matrice
-doivent être des **symboles HGNC**.
+`degsea_mode` (`ova` | `ovo` | `both`). Les gènes de la matrice doivent être des
+**symboles HGNC**.
 
-Sorties dans `tables/degsea/{ova,ovo}/` : un `deseq2_*.csv` et un `gsea_*.csv`
-par contraste, plus `gsea_summary.csv` (pathways significatifs, FDR < 0,25) et
-`figures/gsea_ova_heatmap.png` (NES par cluster). Le one-vs-one coûte *k(k-1)/2*
-DESeq2 : l'étape est longue, d'où le défaut `n`.
+**Gene sets — une ou plusieurs collections.** Par défaut un seul fichier `.gmt`
+(`gsea_gene_sets`). Pour tester **plusieurs collections** dans le même run,
+ajoute des clés `load_<nom>: chemin.gmt` dans le YAML (ex. `load_h`, `load_c2`,
+`load_c6`, `load_signatures_select`) : DESeq2 n'est calculé qu'une fois par
+contraste, et le GSEA est relancé pour chaque collection. Les fichiers `.gmt`
+introuvables sont ignorés avec un avertissement. Convertir MSigDB / signatures
+en `.gmt` : voir `HELP/`.
+
+Sorties dans `tables/degsea/{ova,ovo}/` : un `deseq2_<contraste>.csv` par
+contraste + un `gsea_<collection>_<contraste>.csv` par collection, plus
+`gsea_summary.csv` (colonne `collection`, pathways FDR < 0,25) et une heatmap NES
+par collection `figures/gsea_ova_heatmap_<collection>.png`. Le one-vs-one coûte
+*k(k-1)/2* DESeq2 : l'étape est longue, d'où le défaut `n`.
 
 > ⚠️ **Double-dipping.** Les clusters et les tests sortent des mêmes données :
 > les p-valeurs sont anticonservatives (Gao, Bien & Witten 2022). À lire comme
 > une caractérisation des programmes, pas comme un test valide — valider par
 > data-splitting ou cohorte externe.
+
+## Projection de signatures (scoring + association clinique)
+
+`compute_signatures: y` ajoute, après DEGSEA, une projection de signatures
+(gene sets) sur les tumeurs, **indépendante du clustering** :
+
+- **7.1 scoring** — chaque signature est scorée par tumeur de **deux façons** :
+  **ssGSEA** (gseapy, NES par échantillon) et **expression moyenne** (moyenne des
+  z-scores des gènes de la signature). Sur une matrice logCPM **tous gènes**.
+- **7.2 association** — pour chaque signature × variable des métadonnées :
+  variable **catégorielle** → **Wilcoxon** (Mann-Whitney) entre chaque paire de
+  modalités ; variable **continue** → **corrélation** (Spearman par défaut). FDR
+  (BH) par méthode de score.
+- **7.3 figures** — par variable catégorielle et par méthode : **boxplots** des
+  top signatures qui séparent le mieux les modalités, et **heatmap** de
+  l'activation des signatures par tumeur (groupée par la variable).
+
+**Sources de signatures — harmonisées.** Plusieurs fichiers de formats
+hétérogènes (chacun sa nomenclature) sont ramenés à `{signature: gènes}` via un
+bloc `signature_sources` du YAML — une entrée par source :
+
+```yaml
+signature_sources:
+  select:      {format: gmt, path: .../signatures_select.gmt}
+  IPRES:       {format: csv, path: .../IPRES.csv,
+                name_col: Geneset, genes_col: Gene Listing, genes_sep: ";"}
+```
+
+`format: gmt` (fichier .gmt) ou `format: csv` (une signature par ligne :
+`name_col`, `genes_col`, `detail_col`, `genes_sep`). **Ajouter une source =
+ajouter une entrée**, aucun changement de code. Les sources introuvables sont
+ignorées (avertissement) ; les collisions de noms sont préfixées par la source ;
+la provenance est tracée dans `tables/signatures/signature_sources.csv`. À défaut
+de `signature_sources`, un fichier unique via `signatures_gmt` / la collection
+`load_signatures_select` / `gsea_gene_sets`.
+
+Sorties dans `tables/signatures/` (`scores_{ssgsea,mean}.csv`,
+`association_{ssgsea,mean}.csv`, `signature_sources.csv`) et
+`figures/sig_{boxplots,heatmap}_{méthode}_{variable}.png`. Réglages :
+`sig_corr_method`, `sig_top_n`, `sig_pval`.
+
+## Déconvolution (omnideconv / immunedeconv)
+
+`run_deconv: y` lance une **batterie de déconvolution** de la composition
+cellulaire de chaque tumeur (le calcul lourd est délégué à **R** en
+sous-processus ; `omnideconv` + `immunedeconv` doivent être installés dans le
+même environnement) :
+
+- **sans référence** (immunedeconv) : `mcp_counter`, `xcell`, `quantiseq`, `epic` ;
+- **avec référence single-cell** (omnideconv) : `dwls`, `bayesprism` — construisent
+  une signature à partir d'un scRNA-seq annoté.
+
+Chaque méthode s'active et se paramètre indépendamment (bloc `deconv_methods` du
+YAML, tout activé par défaut aux valeurs conseillées ; les paramètres inconnus
+d'une méthode sont ignorés). La référence single-cell (DWLS/BayesPrism) est
+déclarée dans `deconv_reference` (`.rds` Seurat/SCE, colonnes `celltype_col` /
+`batch_col`, sous-échantillonnée à `max_cells_per_type` par type). Sorties :
+`tables/deconvolution/deconv_<méthode>.csv` (types cellulaires × tumeurs) et
+`figures/deconv_<méthode>.png` (composition moyenne par cluster).
+
+> ⚠️ **BayesPrism** (Gibbs) est **très lent** (heures sur ~500 tumeurs) — à
+> désactiver (`bayesprism: {enabled: false}`) pour une passe rapide. La
+> déconvolution attend des **counts bruts** (symboles HGNC) ; sans longueurs de
+> gènes on passe du CPM (approx. du TPM) à immunedeconv.
 
 ## Pièges à connaître
 
@@ -257,6 +329,7 @@ results/run01/
 ├── run_params.json
 ├── consensus_matrix_k4.npy
 ├── figures/
+│   ├── cluster_overview_k*.png      # FIGURE DE SYNTHÈSE (voir ci-dessous)
 │   ├── consensus_heatmap_k*.png     # matrices consensus réordonnées
 │   ├── cdf_pac_deltak.png           # choix de k
 │   ├── tracking_plot.png            # suivi des affectations quand k augmente
@@ -269,6 +342,23 @@ results/run01/
     ├── consensus_distance_k4.csv.gz
     └── embeddings_k4.csv
 ```
+
+## Figure de synthèse (`cluster_overview_k*.png`)
+
+Générée en fin de pipeline, elle combine sur un **axe commun (l'ordre du
+dendrogramme)** tout ce qui caractérise la partition :
+
+- **haut** : l'arbre consensus, branches colorées par leur **stabilité Jaccard** ;
+- **centre** : la **heatmap consensus** réordonnée + barre de clusters ;
+- **gauche** : la **proportion de chaque modalité de `--color-by`** par cluster ;
+- **droite** : l'**enrichissement GSEA** (NES one-vs-all) des voies les plus
+  significativement différentielles de chaque cluster ;
+- **bas** : le **boxplot d'item consensus** (stabilité des tumeurs) par cluster.
+
+Les panneaux latéraux et le boxplot sont alignés sur les blocs de clusters. Les
+panneaux se dégradent proprement selon ce qui est disponible : sans
+`--compute_jaccard y` l'arbre est en gris, sans `--color-by` le panneau de gauche
+disparaît, sans `--run_degsea y` le panneau de droite indique « GSEA non calculé ».
 
 ## Suites naturelles
 

@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from joblib import Parallel, delayed
 
 from consensus_rnaseq import consensus as cc
 from consensus_rnaseq import metrics as mt
@@ -61,14 +62,20 @@ def gaussian_null(X: np.ndarray, rng: np.random.Generator, n_pc: int = 50) -> np
     return fake @ Vt[:n_pc] + X.mean(0)
 
 
-def run(X: np.ndarray, k_values, args, seed: int) -> pd.DataFrame:
+def run(X: np.ndarray, k_values, args, seed: int, n_jobs: int) -> pd.DataFrame:
     res = cc.consensus_clustering(
         X, k_values=k_values, n_resamples=args.n_resamples,
         prop_samples=args.prop_samples, prop_genes=args.prop_genes,
         sample_mode=args.sample_mode, gene_mode=args.gene_mode,
-        base=args.base, metric=args.metric, random_state=seed, n_jobs=args.n_jobs,
+        base=args.base, metric=args.metric, random_state=seed, n_jobs=n_jobs,
     )
     return mt.summary(res)[["k", "PAC", "auc_cdf", "delta_k"]]
+
+
+def _run_labeled(X, k_values, args, seed, n_jobs, model, rep) -> pd.DataFrame:
+    """Un run étiqueté (observé ou réplicat nul) — tâche indépendante, pensée
+    pour être dispatchée en parallèle sur les réplicats."""
+    return run(X, k_values, args, seed, n_jobs).assign(model=model, rep=rep)
 
 
 def main(argv=None) -> int:
@@ -89,6 +96,9 @@ def main(argv=None) -> int:
     p.add_argument("--gene-mode", default="subsample")
     p.add_argument("--base", default="hierarchical")
     p.add_argument("--metric", default="pearson")
+    p.add_argument("--parallel", choices=["y", "n"], default="y",
+                   help="'y' (défaut) : lance les réplicats (observé + nuls) en "
+                        "parallèle sur --n-jobs cœurs. 'n' : séquentiel (n_jobs=1).")
     p.add_argument("--n-jobs", type=int, default=-1)
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args(argv)
@@ -102,14 +112,29 @@ def main(argv=None) -> int:
     X = pp.preprocess(raw, already_normalized=args.already_normalized,
                       n_top_genes=args.n_top_genes).values
 
-    frames = [run(X, k_values, args, args.seed).assign(model="observé", rep=0)]
+    # Générer les jeux de données (observé + nuls) est séquentiel — `rng` est
+    # partagé et son état d'avancement doit rester déterministe. Seuls les runs
+    # de consensus clustering sur ces jeux (indépendants une fois générés) sont
+    # candidats à la parallélisation.
+    jobs = [("observé", 0, X)]
     for r in range(args.n_null):
-        print(f"nul permutation {r + 1}/{args.n_null}")
-        frames.append(run(permute_genes(X, rng), k_values, args, args.seed + r)
-                      .assign(model="nul: permutation par gène", rep=r))
-        print(f"nul gaussien {r + 1}/{args.n_null}")
-        frames.append(run(gaussian_null(X, rng), k_values, args, args.seed + r)
-                      .assign(model="nul: covariance appariée", rep=r))
+        jobs.append(("nul: permutation par gène", r, permute_genes(X, rng)))
+        jobs.append(("nul: covariance appariée", r, gaussian_null(X, rng)))
+
+    parallel = args.parallel == "y" and len(jobs) > 1
+    inner_n_jobs = 1 if parallel else args.n_jobs
+    if parallel:
+        print(f"{len(jobs)} runs (observé + nuls) en parallèle sur {args.n_jobs} cœurs")
+        frames = Parallel(n_jobs=args.n_jobs)(
+            delayed(_run_labeled)(Xj, k_values, args, args.seed + r, inner_n_jobs, model, r)
+            for model, r, Xj in jobs
+        )
+    else:
+        frames = []
+        for model, r, Xj in jobs:
+            print(f"{model} (réplicat {r + 1})")
+            frames.append(_run_labeled(Xj, k_values, args, args.seed + r,
+                                       inner_n_jobs, model, r))
 
     tab = pd.concat(frames, ignore_index=True)
     tab.to_csv(outdir / "null_comparison.csv", index=False)

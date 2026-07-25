@@ -18,7 +18,7 @@ counts: /mnt/d/03_SARAH_projet/00_DATA/01_BULK/01_MERGED_BULKS/00_Unfiltered/RNA
 samples_in_rows: false        # true si les échantillons sont en lignes
 metadata: /mnt/d/03_SARAH_projet/00_DATA/02_CLINIC/clinique_itd.csv                # csv/tsv indexé par échantillon (annotations cliniques)
 color_by: histo_classe                # colonne des métadonnées à superposer sur les embeddings
-outdir: /mnt/d/03_SARAH_projet/01_OUTPUTS/ConsensusClustering           # dossier de sortie
+outdir: /mnt/d/03_SARAH_projet/01_OUTPUTS/ConsensusClustering/V2           # dossier de sortie
 
 # ================================================= 1 · Prétraitement (normalisation, gènes variables)
 already_normalized: false     # true si entrée déjà en VST/rlog/logCPM (saute filtrage + normalisation)
@@ -145,8 +145,8 @@ deconv_methods:
   xcell:       {enabled: true}                            # scores d'enrichissement, 64 types (sans référence)
   quantiseq:   {enabled: true, tumor: true}               # fractions absolues (tumor=true retire "uncharacterized")
   epic:        {enabled: true, tumor: true}               # fractions (signature TRef adaptée aux tumeurs)
-  dwls:        {enabled: true, dwls_method: mast_optimized}  # fractions, via référence single-cell
-  bayesprism:  {enabled: true}                            # fractions, via référence single-cell — TRÈS LENT
+  dwls:        {enabled: false, dwls_method: mast_optimized}  # fractions, via référence single-cell
+  bayesprism:  {enabled: false}                            # fractions, via référence single-cell — TRÈS LENT
 
 # ================================================= Divers (transversal : parallélisation, graine)
 parallel: y                   # y (défaut) = parallélise consensus/Jaccard/DEGSEA/embeddings sur n_jobs ; n = tout séquentiel (n_jobs=1)

@@ -41,6 +41,23 @@ def load_matrix(path: str | Path, genes_in_rows: bool = True) -> pd.DataFrame:
 # --------------------------------------------------------------------------
 # Filtrage / normalisation
 # --------------------------------------------------------------------------
+def drop_zero_count_genes(counts: pd.DataFrame) -> pd.DataFrame:
+    """Retire les gènes à count nul dans **toutes** les tumeurs.
+
+    Filtre de base indépendant de `min_cpm`/`min_frac_samples` : un gène sans
+    aucun compte n'apporte aucune information et fait planter certaines étapes
+    en aval (VST de DESeq2 notamment, dont l'estimation des size factors exige
+    des gènes non nuls partout). À appliquer sur des *counts bruts*, avant tout
+    filtrage ou normalisation.
+    """
+    keep = (counts.values > 0).any(axis=0)
+    n_dropped = int((~keep).sum())
+    if n_dropped:
+        logger.info("Gènes à 0 count dans toutes les tumeurs retirés : %d / %d",
+                    n_dropped, len(keep))
+    return counts.loc[:, keep]
+
+
 def filter_low_expression(
     counts: pd.DataFrame, min_cpm: float = 1.0, min_frac_samples: float = 0.2
 ) -> pd.DataFrame:
@@ -246,6 +263,7 @@ def preprocess(
     """
     expr = counts
     if not already_normalized:
+        expr = drop_zero_count_genes(expr)
         expr = filter_low_expression(expr, min_cpm, min_frac_samples)
         if norm_method == "vst":
             expr = vst_normalize(expr)

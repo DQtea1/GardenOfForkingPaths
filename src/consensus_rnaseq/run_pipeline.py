@@ -28,12 +28,14 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from consensus_rnaseq import consensus as cc
+from consensus_rnaseq import deconv as dc
 from consensus_rnaseq import degsea as dg
 from consensus_rnaseq import embedding as emb
 from consensus_rnaseq import metrics as mt
 from consensus_rnaseq import plots as pl
 from consensus_rnaseq import preprocessing as pp
 from consensus_rnaseq import purity as pur
+from consensus_rnaseq import sigproj as sp
 from consensus_rnaseq import stability as st
 
 
@@ -135,6 +137,38 @@ def build_parser() -> argparse.ArgumentParser:
                      help="fichier .gmt de gene sets pour le GSEA (hallmarks MSigDB par défaut).")
     deg.add_argument("--gsea_permutations", type=int, default=1000,
                      help="nombre de permutations du GSEA pré-classé (défaut 1000).")
+    deg.add_argument("--gsea_heatmap_pval", type=float, default=0.05,
+                     help="seuil de p-valeur (nominale GSEA) pour inclure un "
+                          "pathway dans la heatmap one-vs-all : tous les pathways "
+                          "significatifs dans >= 1 cluster (défaut 0.05).")
+
+    sig = p.add_argument_group("projection de signatures (scoring + association clinique)")
+    sig.add_argument("--compute_signatures", choices=["y", "n"], default="n",
+                     help="'y' : après DEGSEA, score les signatures par tumeur "
+                          "(ssGSEA + expression moyenne) et teste leur association "
+                          "aux variables cliniques. Défaut 'n'.")
+    sig.add_argument("--signatures_gmt", default=None,
+                     help="fichier .gmt des signatures à scorer. Défaut : la "
+                          "collection load_signatures_select du YAML, sinon "
+                          "--gsea_gene_sets.")
+    sig.add_argument("--sig_corr_method", choices=["spearman", "pearson"],
+                     default="spearman",
+                     help="corrélation score↔variable continue (défaut spearman).")
+    sig.add_argument("--sig_top_n", type=int, default=8,
+                     help="nombre de top signatures affichées par variable (défaut 8).")
+    sig.add_argument("--sig_pval", type=float, default=0.05,
+                     help="seuil de FDR pour retenir une signature comme "
+                          "significativement associée (défaut 0.05).")
+
+    dec = p.add_argument_group("déconvolution (omnideconv / immunedeconv)")
+    dec.add_argument("--run_deconv", choices=["y", "n"], default="n",
+                     help="'y' : batterie de déconvolution (MCPcounter, xCell, "
+                          "quanTIseq, EPIC, et DWLS/BayesPrism si référence "
+                          "single-cell). Étape longue. Défaut 'n'. Méthodes et "
+                          "paramètres : bloc deconv_methods du YAML ; référence : "
+                          "bloc deconv_reference.")
+    dec.add_argument("--deconv_rscript", default="Rscript",
+                     help="interpréteur Rscript (omnideconv + immunedeconv installés).")
 
     embg = p.add_argument_group("embeddings")
     embg.add_argument("--t-SNE_dim", dest="tsne_dim", type=int, choices=[2, 3],
@@ -147,6 +181,11 @@ def build_parser() -> argparse.ArgumentParser:
     embg.add_argument("--min-dist", type=float, default=0.1)
     embg.add_argument("--no-umap", action="store_true")
 
+    p.add_argument("--parallel", choices=["y", "n"], default="y",
+                   help="'y' (défaut) : parallélise le rééchantillonnage consensus, "
+                        "la stabilité Jaccard, DEGSEA et les embeddings sur --n-jobs "
+                        "cœurs. 'n' : force tout en séquentiel (n_jobs=1), utile pour "
+                        "déboguer ou sur une machine partagée.")
     p.add_argument("--n-jobs", type=int, default=-1)
     p.add_argument("--seed", type=int, default=0)
     return p
@@ -172,16 +211,44 @@ def parse_args(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)                 # défauts appliqués
     merged = vars(args)
+    gsea_collections: dict[str, str] = {}
+    signature_sources: dict = {}
+    deconv_methods: dict = {}
+    deconv_reference: dict = {}
 
     # 1. YAML : écrase les défauts, uniquement pour des clés connues
     if args.config:
         config = _load_yaml(args.config)
         unknown = set(config) - set(merged) - {"config"}
+
+        # 1a. Clés `load_*` pointant vers un .gmt -> collections de gene sets GSEA.
+        #     Le nom de la collection est le suffixe après `load_` (ex. load_c2 -> c2).
+        for key in sorted(k for k in unknown if k.startswith("load_")):
+            val = config[key]
+            if isinstance(val, str) and val.strip().lower().endswith(".gmt"):
+                gsea_collections[key[len("load_"):]] = str(Path(val).expanduser())
+                unknown.discard(key)   # consommée ; les load_* non-.gmt restent signalées
+
+        # 1a-bis. dicts imbriqués : sources de signatures (étape 7) et réglages
+        #         de déconvolution (étape 8).
+        if isinstance(config.get("signature_sources"), dict):
+            signature_sources = config["signature_sources"]
+            unknown.discard("signature_sources")
+        if isinstance(config.get("deconv_methods"), dict):
+            deconv_methods = config["deconv_methods"]
+            unknown.discard("deconv_methods")
+        if isinstance(config.get("deconv_reference"), dict):
+            deconv_reference = config["deconv_reference"]
+            unknown.discard("deconv_reference")
+
+        # 1b. Autres clés inconnues : avertissement non bloquant (fonctions à venir,
+        #     p. ex. human_pathways, IPRES flat — remplacé par signature_sources).
         if unknown:
-            parser.error(f"clés inconnues dans {args.config} : "
-                         f"{', '.join(sorted(unknown))}")
+            print(f"[config] clés ignorées (non gérées par le pipeline) : "
+                  f"{', '.join(sorted(unknown))}", file=sys.stderr)
+
         for key, val in config.items():
-            if key != "config":
+            if key != "config" and key in merged:   # seules les clés connues
                 merged[key] = val
 
     # 2. Ligne de commande : réappliquée par-dessus le YAML (priorité maximale).
@@ -196,15 +263,25 @@ def parse_args(argv=None):
     if not merged.get("counts"):
         parser.error("--counts est obligatoire (en ligne de commande ou dans le YAML).")
 
+    merged["gsea_collections"] = gsea_collections     # {nom: chemin .gmt}
+    merged["signature_sources"] = signature_sources   # {nom: {format, path, ...}}
+    merged["deconv_methods"] = deconv_methods         # {méthode: {enabled, ...}}
+    merged["deconv_reference"] = deconv_reference     # {format, path, celltype_col, ...}
     return argparse.Namespace(**merged)
 
 
 def main(argv=None) -> int:
+    # ------------------------------------------ 0. configuration & démarrage
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s | %(levelname)-7s | %(message)s",
                         datefmt="%H:%M:%S")
     log = logging.getLogger("pipeline")
+
+    # parallel="n" force tout en séquentiel, quel que soit --n-jobs
+    eff_n_jobs = args.n_jobs if args.parallel == "y" else 1
+    if args.parallel == "n":
+        log.info("Parallélisation désactivée (--parallel n) : n_jobs=1 partout.")
 
     outdir = Path(args.outdir)
     (outdir / "figures").mkdir(parents=True, exist_ok=True)
@@ -285,7 +362,7 @@ def main(argv=None) -> int:
         linkage_method=args.linkage,
         sample_names=X_df.index.values,
         random_state=args.seed,
-        n_jobs=args.n_jobs,
+        n_jobs=eff_n_jobs,
     )
 
     # ------------------------------------------------------- 3. diagnostics k
@@ -324,13 +401,14 @@ def main(argv=None) -> int:
         outdir / "tables" / f"consensus_distance_k{k_final}.csv.gz", compression="gzip")
 
     # ------------------------------------ 4b. stabilité des branches (Jaccard)
+    bs = None
     if args.compute_jaccard == "y":
         bs = st.branch_stability(
             X_df.values, result.distance(k_final),
             n_resamples=args.n_resamples,
             gene_mode="bootstrap", prop_genes=1.0,
             metric=args.metric, linkage_method=args.linkage,
-            min_size=2, random_state=args.seed, n_jobs=args.n_jobs,
+            min_size=2, random_state=args.seed, n_jobs=eff_n_jobs,
         )
         bs_tab = bs.to_frame(sample_names=result.sample_names, final_labels=labels)
         bs_tab.to_csv(outdir / "tables" / f"branch_stability_k{k_final}.csv", index=False)
@@ -354,6 +432,7 @@ def main(argv=None) -> int:
         n_neighbors=args.n_neighbors,
         min_dist=args.min_dist,
         random_state=args.seed,
+        n_jobs=eff_n_jobs,
     )
     coords = coords.merge(items[["sample", "item_consensus"]], on="sample")
     coords.to_csv(outdir / "tables" / f"embeddings_k{k_final}.csv", index=False)
@@ -365,9 +444,11 @@ def main(argv=None) -> int:
              color_by=coords["item_consensus"], color_label="item consensus")
 
     # superposition d'une variable clinique (contrôle des confondants)
+    color_var = None
     if args.metadata and args.color_by:
         meta = pd.read_csv(args.metadata, sep=None, engine="python", index_col=0)
         var = meta.reindex(result.sample_names)[args.color_by]
+        color_var = var.to_numpy()
         plot_emb(coords, outdir / "figures", k_final,
                  color_by=var.reset_index(drop=True),
                  color_label=args.color_by)
@@ -376,21 +457,97 @@ def main(argv=None) -> int:
         log.info("Croisement cluster x %s :\n%s", args.color_by, ct.to_string())
 
     # ------------------------------------------------ 6. DEGSEA (DESeq2 + GSEA)
+    nes = None
     if args.run_degsea == "y":
-        log.info("DEGSEA : DESeq2 + GSEA par cluster (mode=%s) — étape longue…",
-                 args.degsea_mode)
-        nes = dg.run_degsea(
+        # collections `load_*.gmt` du YAML si présentes, sinon le .gmt unique
+        gene_sets = args.gsea_collections or {
+            Path(args.gsea_gene_sets).stem: args.gsea_gene_sets}
+        log.info("DEGSEA : DESeq2 + GSEA par cluster (mode=%s, %d collection(s)) — "
+                 "étape longue…", args.degsea_mode, len(gene_sets))
+        nes_by_coll = dg.run_degsea(
             raw, labels, result.sample_names, outdir,
-            gene_sets=args.gsea_gene_sets,
+            gene_sets=gene_sets,
             mode=args.degsea_mode,
             permutations=args.gsea_permutations,
-            n_jobs=args.n_jobs,
+            heatmap_pval=args.gsea_heatmap_pval,
+            n_jobs=eff_n_jobs,
             seed=args.seed,
         )
-        if nes is not None and not nes.empty:
-            pl.plot_gsea_ova_heatmap(nes, outdir / "figures")
+        # une heatmap NES par collection
+        for coll, m in nes_by_coll.items():
+            pl.plot_gsea_ova_heatmap(m, outdir / "figures",
+                                     pval=args.gsea_heatmap_pval, collection=coll)
+        # pour la figure de synthèse : Hallmark de préférence, sinon la 1re dispo
+        if nes_by_coll:
+            key = next((k for k in ("h", "HALLMARK", "hallmark") if k in nes_by_coll),
+                       next(iter(nes_by_coll)))
+            nes = nes_by_coll[key]
         log.info("DEGSEA terminé : tables dans %s", outdir / "tables" / "degsea")
 
+    # ------------------------------------------ 7. projection de signatures
+    if args.compute_signatures == "y":
+        # sources harmonisées : signature_sources du YAML, sinon une source .gmt
+        # unique (signatures_gmt / load_signatures_select / gsea_gene_sets).
+        sources = dict(args.signature_sources)
+        if not sources:
+            fb = (args.signatures_gmt
+                  or args.gsea_collections.get("signatures_select")
+                  or args.gsea_gene_sets)
+            if fb:
+                sources = {"signatures": {"format": "gmt", "path": fb}}
+        signatures, prov = sp.load_signature_sources(sources)
+        if not signatures:
+            log.warning("Projection de signatures : aucune signature chargée "
+                        "(sources : %s) — étape sautée.", list(sources) or "aucune")
+        else:
+            log.info("7. Projection de %d signatures (%d source(s) : %s)",
+                     len(signatures), len(sources), ", ".join(sources))
+            (outdir / "tables" / "signatures").mkdir(parents=True, exist_ok=True)
+            prov.to_csv(outdir / "tables" / "signatures" / "signature_sources.csv",
+                        index=False)
+            sub = raw.loc[result.sample_names]
+            expr_full = sub if args.already_normalized else pp.log_cpm(sub)
+            meta_full = None
+            if args.metadata:
+                meta_full = pd.read_csv(args.metadata, sep=None, engine="python",
+                                        index_col=0).reindex(result.sample_names)
+            sp.run_signature_projection(
+                expr_full, signatures, meta_full, outdir,
+                corr_method=args.sig_corr_method, top_n=args.sig_top_n,
+                sig_pval=args.sig_pval, n_jobs=eff_n_jobs, seed=args.seed,
+            )
+            log.info("Projection de signatures terminée : tables dans %s",
+                     outdir / "tables" / "signatures")
+
+    # ------------------------------------------------- 8. déconvolution (R)
+    if args.run_deconv == "y":
+        log.info("8. Déconvolution (omnideconv / immunedeconv) — étape longue…")
+        if args.already_normalized:
+            log.warning("Déconvolution : --already-normalized est actif, mais la "
+                        "déconvolution attend des counts BRUTS (CPM linéaire pour "
+                        "immunedeconv, counts pour BayesPrism). Résultats peu fiables.")
+        deconv = dc.run_deconvolution(
+            raw, result.sample_names, outdir,
+            methods=args.deconv_methods or None,       # None -> batterie par défaut
+            reference=args.deconv_reference or None,
+            rscript=args.deconv_rscript,
+        )
+        for meth, frac in deconv.items():
+            pl.plot_deconvolution(frac, labels, result.sample_names, meth,
+                                  outdir / "figures")
+        log.info("Déconvolution terminée : tables dans %s",
+                 outdir / "tables" / "deconvolution")
+
+    # ------------------------------- 9. figure de synthèse (tout combiné)
+    pl.plot_cluster_overview(
+        result, k_final, outdir / "figures", linkage_method=args.linkage,
+        branch_stability=bs, items=items,
+        color_by=color_var, color_label=args.color_by or "color_by",
+        nes=nes,
+    )
+    log.info("Figure de synthèse : cluster_overview_k%d.png", k_final)
+
+    # --------------------------------------------- 10. sauvegarde du run
     with open(outdir / "run_params.json", "w") as fh:
         json.dump({**vars(args), "outdir": str(args.outdir), "k_final": k_final},
                   fh, indent=2, default=str)

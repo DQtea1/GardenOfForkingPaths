@@ -24,11 +24,13 @@ import contextlib
 import io
 import logging
 import os
+from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 
 logger = logging.getLogger(__name__)
 
@@ -37,18 +39,22 @@ logger = logging.getLogger(__name__)
 # Briques : DESeq2 et GSEA sur un contraste
 # --------------------------------------------------------------------------
 def deseq2_contrast(counts: pd.DataFrame, groups: pd.Series,
-                    target: str, ref: str) -> pd.DataFrame:
+                    target: str, ref: str, n_cpus: int | None = None) -> pd.DataFrame:
     """DESeq2 sur deux groupes. `counts` : tumeurs × gènes (counts entiers) ;
-    `groups` : labels alignés sur `counts.index`. Renvoie le tableau de
+    `groups` : labels alignés sur `counts.index`. `n_cpus` borne le parallélisme
+    interne de PyDESeq2 (mets 1 quand plusieurs contrastes tournent déjà en
+    parallèle, pour ne pas sursouscrire les cœurs). Renvoie le tableau de
     résultats (index = gène : baseMean, log2FoldChange, stat, pvalue, padj)."""
     from pydeseq2.dds import DeseqDataSet
     from pydeseq2.ds import DeseqStats
 
     meta = pd.DataFrame({"group": groups.astype(str).to_numpy()}, index=counts.index)
     with contextlib.redirect_stdout(io.StringIO()):
-        dds = DeseqDataSet(counts=counts, metadata=meta, design="~group", quiet=True)
+        dds = DeseqDataSet(counts=counts, metadata=meta, design="~group",
+                           n_cpus=n_cpus, quiet=True)
         dds.deseq2()
-        st = DeseqStats(dds, contrast=["group", str(target), str(ref)], quiet=True)
+        st = DeseqStats(dds, contrast=["group", str(target), str(ref)],
+                        n_cpus=n_cpus, quiet=True)
         st.summary()
     return st.results_df.sort_values("stat", ascending=False)
 
@@ -91,19 +97,24 @@ def gsea_prerank(results_df: pd.DataFrame, gene_sets: str | Path,
 # Orchestration
 # --------------------------------------------------------------------------
 def _run_one(cnt: pd.DataFrame, groups: pd.Series, target: str, ref: str,
-             tag: str, de_dir: Path, gs_dir: Path, gene_sets, permutations,
-             min_count: int, threads: int, seed: int) -> pd.DataFrame | None:
-    """Un contraste : DESeq2 + GSEA, écriture des deux tables. Renvoie le
-    res2d GSEA (ou None)."""
+             tag: str, scheme: str, de_dir: Path, gs_dir: Path, gene_sets: dict,
+             permutations, min_count: int, threads: int,
+             seed: int) -> tuple[str, str, dict]:
+    """Un contraste : DESeq2 **une fois**, puis GSEA **pour chaque collection**
+    de `gene_sets` ({nom: chemin .gmt}). Renvoie (tag, scheme, {nom: res2d|None}).
+    Pensé pour un worker joblib indépendant ; `threads` borne PyDESeq2 et GSEA."""
     keep = cnt.columns[cnt.sum(axis=0) >= min_count]
-    res = deseq2_contrast(cnt[keep], groups, target, ref)
+    res = deseq2_contrast(cnt[keep], groups, target, ref, n_cpus=threads)
     res.to_csv(de_dir / f"deseq2_{tag}.csv", index_label="gene")
 
-    gsea = gsea_prerank(res, gene_sets, permutations=permutations,
-                        threads=threads, seed=seed)
-    if gsea is not None:
-        gsea.to_csv(gs_dir / f"gsea_{tag}.csv", index=False)
-    return gsea
+    gseas = {}
+    for name, path in gene_sets.items():
+        g = gsea_prerank(res, path, permutations=permutations,
+                         threads=threads, seed=seed)
+        if g is not None:
+            g.to_csv(gs_dir / f"gsea_{name}_{tag}.csv", index=False)
+        gseas[name] = g
+    return tag, scheme, gseas
 
 
 def run_degsea(
@@ -111,14 +122,15 @@ def run_degsea(
     labels: np.ndarray,
     sample_names: np.ndarray,
     outdir: Path,
-    gene_sets: str | Path,
+    gene_sets,
     mode: str = "both",
     min_group: int = 3,
     min_count: int = 10,
     permutations: int = 1000,
+    heatmap_pval: float = 0.05,
     n_jobs: int = -1,
     seed: int = 0,
-) -> pd.DataFrame | None:
+) -> dict:
     """Lance DESeq2 + GSEA sur tous les contrastes demandés.
 
     Parameters
@@ -126,12 +138,32 @@ def run_degsea(
     counts : matrice de counts **bruts**, tumeurs × gènes (symboles HGNC).
     labels : cluster de chaque tumeur, aligné sur `sample_names`.
     sample_names : ordre des tumeurs (partition finale).
-    gene_sets : chemin d'un fichier .gmt (hallmarks MSigDB par défaut).
+    gene_sets : soit un chemin `.gmt` unique, soit un **dict {nom: chemin .gmt}**
+        (une collection de gene sets par entrée). DESeq2 n'est calculé qu'une
+        fois par contraste ; le GSEA est relancé pour chaque collection.
     mode : "ova" (one-vs-all), "ovo" (one-vs-one) ou "both".
+    heatmap_pval : seuil de p-valeur nominale ; les matrices renvoyées ne gardent
+        que les pathways significatifs (p < seuil) dans au moins un cluster.
+    n_jobs : contrastes exécutés en parallèle (joblib, un contraste = une tâche).
+        `1` = séquentiel ; chaque contraste reçoit alors plus de threads internes.
 
-    Renvoie une matrice NES (pathways × clusters) issue du one-vs-all pour la
-    heatmap de synthèse, ou None.
+    Renvoie `{collection: matrice NES (pathways × clusters)}` (one-vs-all), pour
+    les heatmaps de synthèse — dict vide si aucun résultat GSEA.
     """
+    # normalisation gene_sets -> dict {nom: chemin}, en ne gardant que l'existant
+    if isinstance(gene_sets, (str, Path)):
+        gene_sets = {Path(gene_sets).stem: str(gene_sets)}
+    resolved = {}
+    for name, path in gene_sets.items():
+        p = Path(os.path.expanduser(str(path)))
+        if p.exists():
+            resolved[name] = str(p)
+        else:
+            logger.warning("DEGSEA : gene set introuvable, ignoré : %s (%s)", name, p)
+    gene_sets = resolved
+    logger.info("DEGSEA : GSEA sur %d collection(s) : %s", len(gene_sets),
+                ", ".join(gene_sets) or "aucune (DESeq2 seul)")
+
     base = Path(outdir) / "tables" / "degsea"
     cnt = counts.loc[sample_names].round().astype(int)
     lab = pd.Series(np.asarray(labels), index=list(sample_names))
@@ -144,70 +176,105 @@ def run_degsea(
                        min_group, dropped)
     if len(clusters) < 2:
         logger.warning("DEGSEA : moins de 2 clusters exploitables, étape sautée.")
-        return None
+        return {}
 
-    threads = os.cpu_count() if n_jobs in (-1, 0, None) else max(1, int(n_jobs))
     do_ova = mode in ("ova", "both")
     do_ovo = mode in ("ovo", "both")
 
     n_pairs = len(clusters) * (len(clusters) - 1) // 2 if do_ovo else 0
+    n_contrasts = (len(clusters) if do_ova else 0) + n_pairs
     logger.info("DEGSEA : %d clusters -> %d contrastes one-vs-all + %d one-vs-one",
                 len(clusters), len(clusters) if do_ova else 0, n_pairs)
     if n_pairs > 45:
         logger.warning("DEGSEA : %d paires one-vs-one, ça peut être long "
                        "(k élevé). Envisage degsea_mode=ova.", n_pairs)
 
-    summary_rows: list[dict] = []
-    ova_nes: dict = {}
+    # n_jobs != 1 : le parallélisme se fait au niveau des contrastes (un worker
+    # par contraste), donc chaque contraste est borné à 1 thread interne (DESeq2
+    # ET GSEA) pour ne pas sursouscrire les cœurs. n_jobs == 1 : pas de
+    # parallélisme externe, on donne alors tous les cœurs à chaque contraste.
+    parallel_contrasts = n_jobs != 1 and n_contrasts > 1
+    inner_threads = 1 if parallel_contrasts else (
+        os.cpu_count() if n_jobs in (-1, 0, None) else max(1, int(n_jobs)))
 
+    tasks = []
+    ova_de = ovo_de = None
     if do_ova:
         ova_de = base / "ova"; ova_de.mkdir(parents=True, exist_ok=True)
         for c in clusters:
-            tag = f"c{c}_vs_rest"
-            logger.info("DEGSEA one-vs-all : cluster %s (%d tumeurs)", c, sizes[c])
             groups = pd.Series(np.where(lab.values == c, f"c{c}", "rest"),
                                index=lab.index)
-            gsea = _run_one(cnt, groups, f"c{c}", "rest", tag, ova_de, ova_de,
-                            gene_sets, permutations, min_count, threads, seed)
-            if gsea is not None:
-                ova_nes[f"c{c}"] = gsea.set_index("Term")["NES"]
-                summary_rows += _collect(gsea, tag, "one-vs-all")
-
+            tasks.append(dict(cnt=cnt, groups=groups, target=f"c{c}", ref="rest",
+                              tag=f"c{c}_vs_rest", scheme="one-vs-all",
+                              de_dir=ova_de, gs_dir=ova_de))
     if do_ovo:
         ovo_de = base / "ovo"; ovo_de.mkdir(parents=True, exist_ok=True)
         for a, b in combinations(clusters, 2):
-            tag = f"c{a}_vs_c{b}"
-            logger.info("DEGSEA one-vs-one : %s vs %s", a, b)
             mask = lab.isin([a, b]).values
             groups = pd.Series([f"c{x}" for x in lab.values[mask]],
                                index=lab.index[mask])
-            gsea = _run_one(cnt.loc[mask], groups, f"c{a}", f"c{b}", tag,
-                            ovo_de, ovo_de, gene_sets, permutations,
-                            min_count, threads, seed)
-            if gsea is not None:
-                summary_rows += _collect(gsea, tag, "one-vs-one")
+            tasks.append(dict(cnt=cnt.loc[mask], groups=groups, target=f"c{a}",
+                              ref=f"c{b}", tag=f"c{a}_vs_c{b}", scheme="one-vs-one",
+                              de_dir=ovo_de, gs_dir=ovo_de))
+
+    logger.info("DEGSEA : %d contrastes, %s (n_jobs=%s)", len(tasks),
+               "en parallèle" if parallel_contrasts else "séquentiel", n_jobs)
+
+    results = Parallel(n_jobs=n_jobs if parallel_contrasts else 1)(
+        delayed(_run_one)(t["cnt"], t["groups"], t["target"], t["ref"], t["tag"],
+                          t["scheme"], t["de_dir"], t["gs_dir"], gene_sets,
+                          permutations, min_count, inner_threads, seed)
+        for t in tasks
+    )
+
+    summary_rows: list[dict] = []
+    ova_nes = defaultdict(dict)     # collection -> {cluster: Series(NES)}
+    ova_pval = defaultdict(dict)    # collection -> {cluster: Series(p-val)}
+    for tag, scheme, gseas in results:
+        cluster_id = tag.split("_vs_rest")[0] if scheme == "one-vs-all" else None
+        for coll, gsea in gseas.items():
+            if gsea is None:
+                continue
+            summary_rows += _collect(gsea, coll, tag, scheme)
+            if cluster_id is not None:
+                g = gsea.set_index("Term")
+                ova_nes[coll][cluster_id] = g["NES"]
+                ova_pval[coll][cluster_id] = g["NOM p-val"]
 
     if summary_rows:
         pd.DataFrame(summary_rows).to_csv(base / "gsea_summary.csv", index=False)
-        logger.info("DEGSEA : synthèse GSEA -> %s", base / "gsea_summary.csv")
+        logger.info("DEGSEA : synthèse GSEA (%d collections) -> %s",
+                    len({r['collection'] for r in summary_rows}), base / "gsea_summary.csv")
 
-    return _nes_matrix(ova_nes) if ova_nes else None
+    nes_by_collection: dict = {}
+    for coll in ova_nes:
+        m = _nes_matrix(ova_nes[coll], ova_pval[coll], heatmap_pval)
+        if not m.empty:
+            nes_by_collection[coll] = m
+            logger.info("DEGSEA [%s] : %d pathways significatifs (p < %.3g).",
+                        coll, len(m), heatmap_pval)
+    return nes_by_collection
 
 
-def _collect(res2d: pd.DataFrame, contrast: str, scheme: str,
+def _collect(res2d: pd.DataFrame, collection: str, contrast: str, scheme: str,
              fdr_max: float = 0.25) -> list[dict]:
     """Lignes de synthèse : pathways significatifs (FDR < seuil) d'un contraste."""
     sig = res2d[res2d["FDR q-val"] < fdr_max]
-    return [{"contrast": contrast, "scheme": scheme, "term": r["Term"],
-             "NES": r["NES"], "NOM_pval": r.get("NOM p-val"),
+    return [{"collection": collection, "contrast": contrast, "scheme": scheme,
+             "term": r["Term"], "NES": r["NES"], "NOM_pval": r.get("NOM p-val"),
              "FDR": r["FDR q-val"], "lead_genes": r.get("Lead_genes")}
             for _, r in sig.iterrows()]
 
 
-def _nes_matrix(ova_nes: dict, fdr_source: dict | None = None,
-                top: int = 25) -> pd.DataFrame:
-    """Matrice pathways × clusters (NES one-vs-all), restreinte aux `top`
-    pathways les plus marqués, pour la heatmap de synthèse."""
+def _nes_matrix(ova_nes: dict, ova_pval: dict, pval_max: float = 0.05) -> pd.DataFrame:
+    """Matrice pathways × clusters (NES one-vs-all) pour la heatmap.
+
+    Ne garde que les pathways **significatifs** (p-valeur nominale du GSEA
+    `< pval_max`) dans au moins un cluster, triés par |NES| max décroissant.
+    """
     nes = pd.DataFrame(ova_nes)
-    order = nes.abs().max(axis=1).sort_values(ascending=False).index[:top]
-    return nes.loc[order]
+    pval = pd.DataFrame(ova_pval).reindex(index=nes.index, columns=nes.columns)
+    sig = (pval < pval_max).any(axis=1)
+    kept = nes.loc[sig]
+    order = kept.abs().max(axis=1).sort_values(ascending=False).index
+    return kept.loc[order]

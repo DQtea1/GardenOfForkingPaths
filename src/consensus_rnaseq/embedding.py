@@ -21,6 +21,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 from sklearn.manifold import TSNE
 
 logger = logging.getLogger(__name__)
@@ -109,13 +110,38 @@ def embeddings_table(
     n_neighbors: int = 15,
     min_dist: float = 0.1,
     random_state: int = 0,
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     """DataFrame prêt pour le plot : coordonnées t-SNE (+ UMAP) et cluster.
 
     Produit `n_components` colonnes par méthode : `tsne1..tsneN` (et
-    `umap1..umapN`), avec N = 2 ou 3.
+    `umap1..umapN`), avec N = 2 ou 3. t-SNE et UMAP sont deux calculs
+    indépendants : si `run_umap` et `n_jobs != 1`, ils sont lancés en parallèle
+    (joblib) plutôt que l'un après l'autre.
     """
     out = pd.DataFrame({"sample": sample_names, "cluster": labels})
+
+    if run_umap and n_jobs != 1:
+        try:
+            import umap  # noqa: F401  (juste pour échouer tôt si absent)
+            have_umap = True
+        except ImportError as exc:
+            logger.warning("UMAP ignoré : %s", exc)
+            have_umap = False
+        if have_umap:
+            ts, um = Parallel(n_jobs=2)(
+                delayed(fn)(D, n_components=n_components, random_state=random_state, **kw)
+                for fn, kw in (
+                    (tsne_from_distance, dict(perplexity=perplexity)),
+                    (umap_from_distance, dict(n_neighbors=n_neighbors, min_dist=min_dist)),
+                )
+            )
+            for j in range(n_components):
+                out[f"tsne{j + 1}"] = ts[:, j]
+            for j in range(n_components):
+                out[f"umap{j + 1}"] = um[:, j]
+            return out
+
     ts = tsne_from_distance(D, n_components=n_components, perplexity=perplexity,
                             random_state=random_state)
     for j in range(n_components):
