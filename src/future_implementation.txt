@@ -1,0 +1,273 @@
+Si ton objectif est de **déterminer si la présence (ou le type) d'une ITD est associée à des changements d'expression génique**, alors tu es face à un problème classique d'analyse d'association entre un phénotype binaire (ou catégoriel) et des données transcriptomiques.
+
+L'approche dépend principalement de deux questions :
+
+1. **Veux-tu identifier les gènes différentiellement exprimés ?**
+2. **Veux-tu construire un modèle prédictif de la présence d'ITD ?**
+
+Voici une stratégie qui fonctionne bien.
+
+---
+
+# 1. Préparer les données
+
+Tu disposes de :
+
+* matrice d'expression RNAseq
+
+| Sample | Gene1 | Gene2 | ... |
+| ------ | ----: | ----: | --: |
+| S1     |   ... |   ... |     |
+| S2     |       |       |     |
+
+* annotation des échantillons
+
+| Sample | Cancer | ITD | Type_ITD |
+| ------ | ------ | --- | -------- |
+| S1     | AML    | oui | FLT3     |
+| S2     | Gliome | non | NA       |
+| S3     | CRC    | oui | BCOR     |
+| ...    |        |     |          |
+
+L'important est que les identifiants d'échantillons correspondent.
+
+---
+
+# 2. Normaliser les données RNAseq
+
+Selon les données disponibles :
+
+* counts → DESeq2 / edgeR
+* TPM/FPKM → log2(TPM+1)
+* déjà normalisées → vérifier uniquement la présence de batch effects.
+
+Si plusieurs projets sont mélangés (TCGA, PCAWG, etc.), il faudra probablement corriger les effets de lot (ComBat, limma removeBatchEffect).
+
+---
+
+# 3. Première analyse : ITD oui/non
+
+Le plus simple consiste à comparer
+
+ITD+
+vs
+ITD−
+
+avec un modèle de type :
+
+[
+Expression \sim ITD
+]
+
+ou, mieux,
+
+[
+Expression \sim ITD + Cancer
+]
+
+afin de tenir compte du fait que les cancers ont naturellement des profils transcriptomiques très différents.
+
+Avec limma :
+
+```R
+design <- model.matrix(~ Cancer + ITD)
+
+fit <- lmFit(expr, design)
+fit <- eBayes(fit)
+
+topTable(fit, coef="ITD")
+```
+
+ou avec DESeq2 :
+
+```R
+design = ~ Cancer + ITD
+```
+
+---
+
+# 4. Si le type d'ITD est connu
+
+Tu peux remplacer le facteur binaire par un facteur catégoriel :
+
+```
+Expression ~ Cancer + TypeITD
+```
+
+par exemple
+
+```
+Pas d'ITD
+FLT3
+BCOR
+KMT2A
+...
+```
+
+Puis réaliser
+
+* un test global (ANOVA)
+* puis des comparaisons post-hoc.
+
+---
+
+# 5. Interaction Cancer × ITD
+
+Une question intéressante est :
+
+> L'effet d'une ITD est-il identique dans tous les cancers ?
+
+Le modèle devient
+
+[
+Expression \sim Cancer + ITD + Cancer:ITD
+]
+
+L'interaction indique si l'effet transcriptomique de l'ITD dépend du type tumoral.
+
+---
+
+# 6. Analyses exploratoires
+
+Avant toute analyse différentielle :
+
+### PCA
+
+Colorer les points par
+
+* type tumoral
+* présence d'ITD
+
+Si les ITD séparent les échantillons après correction de l'effet cancer, c'est un bon signe.
+
+---
+
+### UMAP
+
+Même idée.
+
+---
+
+### Heatmap
+
+Sur les gènes les plus variables.
+
+---
+
+# 7. GSEA plutôt que gène par gène
+
+Très souvent, l'ITD n'affecte pas quelques gènes mais des voies biologiques.
+
+Tu peux faire
+
+```
+ITD+
+vs
+ITD-
+```
+
+puis utiliser
+
+* fgsea
+* clusterProfiler
+* GSEA MSigDB
+
+afin d'identifier les voies enrichies.
+
+Souvent beaucoup plus informatif.
+
+---
+
+# 8. Modèles prédictifs
+
+Tu peux aussi inverser la question :
+
+> Peut-on prédire la présence d'une ITD à partir du transcriptome ?
+
+Par exemple :
+
+```
+ITD ~ expression des gènes
+```
+
+avec
+
+* LASSO
+* Elastic Net
+* Random Forest
+* XGBoost
+
+L'objectif est alors
+
+* identifier une signature transcriptomique
+* classer les patients.
+
+---
+
+# 9. Attention au facteur "Cancer"
+
+C'est probablement le point le plus important.
+
+Les différences entre cancers sont généralement beaucoup plus importantes que celles induites par une ITD.
+
+Sans ajustement, les résultats risquent de refléter uniquement les différences entre types tumoraux.
+
+Par exemple :
+
+```
+Expression ~ ITD
+```
+
+peut être trompeur si
+
+* les FLT3-ITD sont presque exclusivement présentes dans les LAM,
+* alors que les témoins proviennent d'autres cancers.
+
+Dans ce cas, on confond l'effet ITD avec l'effet "type tumoral".
+
+Il est donc préférable d'utiliser :
+
+```
+Expression ~ Cancer + ITD
+```
+
+voire
+
+```
+Expression ~ Cancer + ITD + Sexe + Age + Batch
+```
+
+si ces covariables sont disponibles.
+
+---
+
+# 10. Si tu disposes d'un très grand nombre de cancers
+
+Une stratégie particulièrement robuste consiste à utiliser un **modèle linéaire mixte** :
+
+[
+\text{Expression}*{ij} = \beta_0 + \beta_1 \text{ITD}*{ij} + (1|\text{Cancer}_j)
+]
+
+où :
+
+* **ITD** est un effet fixe (ce que l'on cherche à estimer) ;
+* **Cancer** est un effet aléatoire, capturant la variabilité propre à chaque type tumoral.
+
+Cette approche permet d'estimer un effet moyen de l'ITD tout en tenant compte de l'hétérogénéité inter-tumeurs. Elle est particulièrement pertinente si certains types tumoraux ont peu d'échantillons ou si tu souhaites généraliser les conclusions à l'ensemble des cancers.
+
+---
+
+## Pipeline recommandé
+
+Je structurerais l'analyse ainsi :
+
+1. Contrôle qualité et normalisation des données RNA-seq.
+2. PCA/UMAP pour visualiser la structure des données et détecter d'éventuels effets de lot.
+3. Analyse d'expression différentielle avec un modèle du type `Expression ~ Cancer + ITD` (ou un modèle mixte si le nombre de types tumoraux est important).
+4. Si plusieurs classes d'ITD existent, remplacer le terme binaire par `TypeITD`.
+5. Tester une interaction `Cancer × ITD` pour identifier des effets spécifiques à certains cancers.
+6. Réaliser une analyse d'enrichissement de voies (GSEA/fgsea) sur les résultats.
+7. En complément, développer un modèle prédictif (LASSO, Random Forest, XGBoost) pour rechercher une signature transcriptomique associée à la présence d'ITD.
+
+Cette stratégie permet de répondre à plusieurs niveaux de questions : **quels gènes sont associés aux ITD, quelles voies biologiques sont perturbées, et dans quelle mesure ces effets sont communs ou spécifiques à certains types de tumeurs**. C'est également une approche bien adaptée à une étude pan-cancer.
