@@ -103,6 +103,35 @@ def _bootstrap_max_jaccard(
 # --------------------------------------------------------------------------
 # Résultat + API
 # --------------------------------------------------------------------------
+def _bootstrap_max_jaccard_multi(
+    seed: int, X: np.ndarray, cons_list: list, sizes_list: list,
+    prop_genes: float, gene_mode: str, metric: str, linkage_method: str,
+    min_size: int,
+) -> list:
+    """Un arbre bootstrap scoré contre **plusieurs** arbres consensus (un par k).
+
+    L'arbre bootstrap (le coûteux) est construit **une seule fois**, puis on
+    calcule le Jaccard max de chacune de ses branches avec les branches de chaque
+    arbre consensus. Renvoie une liste de vecteurs (un par k, aligné sur
+    `cons_list`)."""
+    rng = np.random.default_rng(seed)
+    n, p = X.shape
+    idx_g = _draw(p, prop_genes, gene_mode, rng)
+    D = pairwise_distance(X[:, idx_g], metric)
+    Z = linkage(squareform(D, checks=False), method=linkage_method)
+    members = branch_members(Z, min_size=min_size, include_root=True)
+    if not members:
+        return [np.zeros(c.shape[0]) for c in cons_list]
+    Boot, _ = _bool_matrix(members, n)
+    boot_sizes = Boot.sum(axis=1)
+    out = []
+    for Cons, cons_sizes in zip(cons_list, sizes_list):
+        inter = Cons @ Boot.T
+        union = cons_sizes[:, None] + boot_sizes[None, :] - inter
+        out.append((inter / np.maximum(union, 1e-12)).max(axis=1))
+    return out
+
+
 @dataclass
 class BranchStability:
     """Stabilité Jaccard de chaque branche de l'arbre consensus."""
@@ -201,3 +230,63 @@ def branch_stability(
         sizes=cons_sizes.astype(int),
         stability=stability,
     )
+
+
+def branch_stability_multi(
+    X: np.ndarray,
+    consensus_distances: dict,
+    n_resamples: int = 1000,
+    prop_genes: float = 1.0,
+    gene_mode: str = "bootstrap",
+    metric: str = "pearson",
+    linkage_method: str = "average",
+    min_size: int = 2,
+    random_state: int = 0,
+    n_jobs: int = -1,
+) -> dict:
+    """Stabilité Jaccard des branches **pour plusieurs k à la fois**.
+
+    `consensus_distances` : `{k: distance consensus n×n}` (`result.distance(k)`).
+    Les B arbres bootstrap (le coût dominant) sont construits **une seule fois** et
+    partagés pour scorer l'arbre consensus de **chaque** k — donc le coût est
+    quasiment celui d'un seul k. Renvoie `{k: BranchStability}`.
+    """
+    X = np.ascontiguousarray(X, dtype=np.float64)
+    n = X.shape[0]
+    ks = sorted(consensus_distances)
+
+    Zc_l, ids_l, mem_l, cons_l, sizes_l = [], [], [], [], []
+    for k in ks:
+        Zc = linkage(squareform(consensus_distances[k], checks=False), method=linkage_method)
+        members = branch_members(Zc, min_size=min_size, include_root=False)
+        Cons, node_ids = _bool_matrix(members, n)
+        Zc_l.append(Zc); ids_l.append(node_ids); mem_l.append(members)
+        cons_l.append(Cons); sizes_l.append(Cons.sum(axis=1))
+
+    logger.info(
+        "Stabilité Jaccard (tous k) : branches par k = %s, B=%d arbres bootstrap "
+        "PARTAGÉS (gènes %s, metric=%s, linkage=%s)",
+        {k: len(ids_l[i]) for i, k in enumerate(ks)}, n_resamples, gene_mode,
+        metric, linkage_method,
+    )
+
+    seeds = np.random.SeedSequence(random_state).generate_state(n_resamples)
+    vecs = Parallel(n_jobs=n_jobs, batch_size=8)(
+        delayed(_bootstrap_max_jaccard_multi)(
+            int(s), X, cons_l, sizes_l, prop_genes, gene_mode,
+            metric, linkage_method, min_size,
+        )
+        for s in seeds
+    )
+
+    result = {}
+    for i, k in enumerate(ks):
+        stability = np.mean([v[i] for v in vecs], axis=0)
+        result[k] = BranchStability(
+            linkage=Zc_l[i],
+            node_ids=ids_l[i],
+            members={nid: mem_l[i][nid] for nid in ids_l[i]},
+            sizes=sizes_l[i].astype(int),
+            stability=stability,
+        )
+    return result

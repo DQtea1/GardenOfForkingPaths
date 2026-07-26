@@ -29,12 +29,26 @@ def load_matrix(path: str | Path, genes_in_rows: bool = True) -> pd.DataFrame:
         df = pd.read_parquet(path)
     else:
         sep = "\t" if path.suffix in {".tsv", ".txt"} else ","
-        df = pd.read_csv(path, sep=sep, index_col=0)
+        # low_memory=False : évite l'inférence de type par bloc qui, sur une
+        # colonne de gènes mixte (nombres + symboles), renvoie un mélange
+        # int/str dans l'index et fait planter les étapes par symboles.
+        df = pd.read_csv(path, sep=sep, index_col=0, low_memory=False)
 
     if genes_in_rows:
         df = df.T
     df = df.astype(np.float64)
+    # identifiants (gènes en colonnes, tumeurs en index) toujours en chaînes
+    df.index = df.index.astype(str)
+    df.columns = df.columns.astype(str)
     logger.info("Matrice chargée : %d échantillons x %d gènes", *df.shape)
+
+    n_numeric = sum(g.isdigit() for g in df.columns)
+    if n_numeric > 0.3 * df.shape[1]:
+        logger.warning(
+            "Identifiants de gènes majoritairement NUMÉRIQUES (%d / %d) — on dirait "
+            "des Entrez IDs, pas des symboles HGNC. Les étapes par symboles (GSEA, "
+            "signatures, déconvolution) ne trouveront quasi aucun gène : convertis "
+            "d'abord la matrice en symboles HGNC.", n_numeric, df.shape[1])
     return df
 
 

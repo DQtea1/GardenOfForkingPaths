@@ -201,10 +201,12 @@ bruts) puis **GSEA pré-classé** (gseapy) sur la statistique de Wald, en
 
 **Gene sets — une ou plusieurs collections.** Par défaut un seul fichier `.gmt`
 (`gsea_gene_sets`). Pour tester **plusieurs collections** dans le même run,
-ajoute des clés `load_<nom>: chemin.gmt` dans le YAML (ex. `load_h`, `load_c2`,
-`load_c6`, `load_signatures_select`) : DESeq2 n'est calculé qu'une fois par
-contraste, et le GSEA est relancé pour chaque collection. Les fichiers `.gmt`
-introuvables sont ignorés avec un avertissement. Convertir MSigDB / signatures
+renseigne un **dictionnaire** `gsea_collections: {nom: chemin.gmt}` dans le YAML
+(ex. `c2`, `c6`, `h`, `signatures_select`) : DESeq2 n'est calculé qu'une fois par
+contraste, et le GSEA est relancé pour chaque collection. Désactive une
+collection en commentant sa ligne ou avec `{enabled: false, path: …}`. Les
+fichiers `.gmt` introuvables sont ignorés avec un avertissement (la forme
+héritée `load_<nom>: chemin.gmt` reste acceptée). Convertir MSigDB / signatures
 en `.gmt` : voir `HELP/`.
 
 Sorties dans `tables/degsea/{ova,ovo}/` : un `deseq2_<contraste>.csv` par
@@ -282,6 +284,29 @@ déclarée dans `deconv_reference` (`.rds` Seurat/SCE, colonnes `celltype_col` /
 > déconvolution attend des **counts bruts** (symboles HGNC) ; sans longueurs de
 > gènes on passe du CPM (approx. du TPM) à immunedeconv.
 
+## Rapport d'analyse interactif (`report.html`)
+
+`create_report: y` génère en fin de run un **`report.html` autonome** (aucune
+dépendance, aucun accès réseau) qui agrège tous les résultats. Les heatmaps sont
+dessinées en **canvas partageant l'ordre des patients**, d'où des panneaux
+**empilables et alignés** au niveau des tumeurs / clusters / signatures.
+
+- **Onglet Résultats** — *Non-supervisé* : heatmap de la matrice de consensus, k
+  choisi dans un menu **trié par PAC croissant** (score affiché) ; boutons `+`
+  pour ajouter au-dessus/en-dessous des panneaux alignés (arbre consensus, barre
+  de clusters, item consensus, variables cliniques, heatmap de signatures,
+  déconvolution, DEGSEA OVA). *Signatures détaillé* : distribution des scores par
+  groupe (cluster ou variable clinique). *t-SNE / UMAP* : nuage coloré par une
+  variable clinique / signature / type cellulaire (dégradé si continu, palette si
+  catégoriel).
+- **Onglet Tableaux** : toutes les tables générées, triables (clic en-tête) et
+  filtrables.
+- **Onglet Pré-analyse** : figures de filtrage et de choix de k (ACP outliers,
+  pureté PUREE, CDF/PAC/Δ(K), tracking plot).
+
+Toutes les données sont embarquées en JSON dans le fichier (plusieurs Mo selon le
+nombre de tumeurs et de k). `create_report: n` pour sauter cette étape.
+
 ## Pièges à connaître
 
 **1. Le consensus clustering trouve toujours des clusters.** Sur des données
@@ -326,6 +351,8 @@ les plus intéressants cliniquement, pas du bruit à écarter.
 
 ```
 results/run01/
+├── run.log                          # journal horodaté de la progression (chaque étape + temps total)
+├── report.html                      # rapport interactif autonome (si create_report=y)
 ├── run_params.json
 ├── consensus_matrix_k4.npy
 ├── figures/

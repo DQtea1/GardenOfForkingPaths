@@ -379,8 +379,8 @@ const STAGES = [
         params:[["degsea_mode","ova | ovo | both"],["parallel","y = un contraste par cœur"]],
         out:["tables/degsea/ova/deseq2_c*_vs_rest.csv","tables/degsea/ovo/deseq2_c*_vs_c*.csv"] },
       { title:"GSEA pré-classé (multi-collections)", fn:"degsea.gsea_prerank()  (gseapy)",
-        desc:"GSEA sur les gènes classés par la statistique DESeq2, relancé pour chaque collection de gene sets. Une collection = soit gsea_gene_sets (fichier unique), soit chaque clé load_<nom>: chemin.gmt du YAML (c1, c2, h, signatures_select…). DESeq2 n'est calculé qu'une fois par contraste. Gènes = symboles HGNC.",
-        params:[["load_*",".gmt par collection (multi)"],["gsea_gene_sets","fichier .gmt unique (défaut)"],["gsea_permutations","permutations"]],
+        desc:"GSEA sur les gènes classés par la statistique DESeq2, relancé pour chaque collection de gene sets. Les collections = le dict gsea_collections {nom: .gmt} du YAML (c1, c2, h, signatures_select…), sinon gsea_gene_sets (fichier unique). DESeq2 n'est calculé qu'une fois par contraste. Gènes = symboles HGNC.",
+        params:[["gsea_collections","dict {nom: .gmt} (multi-collections)"],["gsea_gene_sets","fichier .gmt unique (repli)"],["gsea_permutations","permutations"]],
         out:["tables/degsea/*/gsea_<collection>_<contraste>.csv","tables/degsea/gsea_summary.csv (col. collection)"] },
       { title:"Heatmap de synthèse (une par collection)", fn:"plots.plot_gsea_ova_heatmap()",
         desc:"NES par cluster (one-vs-all) pour tous les pathways significatifs (p-valeur nominale < seuil) dans >= 1 cluster ; une heatmap par collection. ⚠️ Double-dipping : lecture descriptive, pas inférentielle.",
@@ -432,7 +432,17 @@ const STAGES = [
         out:["figures/cluster_overview_k*.png"] },
     ]},
 
-  { tag:"10", kind:"io", title:"Sauvegarde du run",
+  { tag:"10", kind:"normal", optional:true, cond:"create_report = y",
+    title:"Rapport d'analyse (HTML interactif)",
+    sub:"Un unique report.html autonome qui agrège tous les résultats.",
+    steps:[
+      { title:"Export des données + rendu HTML", fn:"report.build_report()",
+        desc:"Rassemble matrices de consensus par k (triés par PAC), labels, arbres, scores de signatures, déconvolution, DEGSEA, métadonnées, embeddings, tables et figures de pré-analyse, exportés en JSON dans un HTML autonome. Heatmaps en canvas partageant l'ordre des patients -> panneaux empilables et alignés. 3 onglets : Résultats (non-supervisé / signatures / t-SNE-UMAP), Tableaux (triables), Pré-analyse.",
+        params:[["create_report","y | n"]],
+        out:["report.html"] },
+    ]},
+
+  { tag:"11", kind:"io", title:"Sauvegarde du run",
     sub:"Trace complète des paramètres effectifs.",
     steps:[
       { title:"Écriture des paramètres", fn:"json.dump(vars(args))",

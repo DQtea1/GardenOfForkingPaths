@@ -637,3 +637,38 @@ def plot_item_consensus(items: pd.DataFrame, outdir: Path, k: int) -> Path:
     ax.set_ylabel("item consensus"); ax.set_title(f"Stabilité par tumeur (k={k})")
     ax.spines[["top", "right"]].set_visible(False)
     return _save(fig, outdir, f"item_consensus_k{k}.png")
+
+
+def plot_chi2_residuals(res: dict, var_name: str, cluster_label: str,
+                        outdir: Path, fname: str) -> Path:
+    """Heatmap des résidus standardisés ajustés (Haberman) d'un croisement.
+
+    Rouge = sur-représentation, bleu = sous-représentation ; l'annotation porte
+    le résidu et une/deux étoiles quand |résidu| > 1.96 / 2.58 (seuils ~5 %/1 %).
+    """
+    adj = res["adj_residuals"]
+    nr, nc = adj.shape
+    fig, ax = plt.subplots(figsize=(max(4.0, 0.85 * nc + 2.2),
+                                    max(2.8, 0.5 * nr + 1.6)))
+    vmax = max(3.0, float(np.abs(adj.values).max()))
+    im = ax.imshow(adj.values, cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
+    ax.set_xticks(range(nc)); ax.set_xticklabels(adj.columns, rotation=45, ha="right")
+    ax.set_yticks(range(nr)); ax.set_yticklabels(adj.index)
+    ax.set_xlabel(var_name)
+    for i in range(nr):
+        for j in range(nc):
+            v = adj.values[i, j]
+            star = "**" if abs(v) > 2.58 else "*" if abs(v) > 1.96 else ""
+            ax.text(j, i, f"{v:.1f}{star}", ha="center", va="center", fontsize=8,
+                    color="white" if abs(v) > vmax * 0.6 else "#222")
+    cv = res["cramers_v"]
+    ax.set_title(f"Résidus ajustés — {cluster_label} × {var_name}\n"
+                 f"{res['test']} · p = {res['pvalue']:.2g} · "
+                 f"V de Cramér = {cv:.2f}" + ("" if res["conditions_met"]
+                 else " · conditions khi² non remplies"), fontsize=9)
+    cbar = fig.colorbar(im, ax=ax, shrink=0.85)
+    cbar.set_label("résidu standardisé ajusté")
+    fig.text(0.5, 0.005, "⚠ khi² : suppose 1 tumeur/patient — duplicats patient "
+             "→ p-valeurs sous-estimées", ha="center", va="bottom",
+             fontsize=7, color="#a12622")
+    return _save(fig, outdir, fname, dpi=140)

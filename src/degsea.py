@@ -128,6 +128,7 @@ def run_degsea(
     min_count: int = 10,
     permutations: int = 1000,
     heatmap_pval: float = 0.05,
+    subdir: str = "",
     n_jobs: int = -1,
     seed: int = 0,
 ) -> dict:
@@ -165,6 +166,8 @@ def run_degsea(
                 ", ".join(gene_sets) or "aucune (DESeq2 seul)")
 
     base = Path(outdir) / "tables" / "degsea"
+    if subdir:
+        base = base / subdir      # une sous-arbo par k quand on balaie tous les k
     cnt = counts.loc[sample_names].round().astype(int)
     lab = pd.Series(np.asarray(labels), index=list(sample_names))
 

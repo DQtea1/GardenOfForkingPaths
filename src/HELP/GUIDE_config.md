@@ -16,8 +16,9 @@ Les sections ci-dessous sont numérotées comme les **étapes du pipeline**
 (`run_pipeline.py`, `pipeline_map.html` et `config_SARAH.yaml` partagent la même
 numérotation) : `1` chargement/prétraitement, `1a` PUREE, `1b` outliers, `2`
 consensus, `4b` stabilité Jaccard, `5` embeddings, `6` DEGSEA, `7` signatures,
-`8` déconvolution. Les étapes sans paramètre utilisateur (3 diagnostics de k,
-4 partition, 9 synthèse, 10 sauvegarde) n'ont pas de section ici.
+`8` déconvolution, `10` rapport HTML. Les étapes sans paramètre utilisateur
+(3 diagnostics de k, 4 partition, 9 synthèse, 11 sauvegarde) n'ont pas de section
+ici.
 
 ---
 
@@ -194,8 +195,9 @@ Caractérise chaque cluster après le clustering. **Étape longue**, désactivé
 |---|---|
 | `run_degsea` | `n` (défaut) / `y`. Ne l'active qu'une fois la partition figée (k choisi). |
 | `degsea_mode` | `ova` (one-vs-all, rapide, K contrastes), `ovo` (one-vs-one, **K(K-1)/2** contrastes, coûteux), `both`. Sur un grand K, reste sur `ova`. |
+| `degsea_all_k` | `n` (défaut) / `y`. `y` calcule le DEGSEA pour **tous** les k de `[k_min..k_max]` (et pas seulement le k final) : une sous-arborescence `tables/degsea/k<k>/` par k, et dans le rapport le panneau *DEGSEA OVA* s'aligne automatiquement sur le k choisi dans le sélecteur. **Très coûteux** (≈ somme des K contrastes DESeq2 sur toute la plage) — à réserver à l'exploration comparative. |
 | `gsea_gene_sets` | Chemin d'un `.gmt` **unique** (défaut = hallmarks MSigDB). Gènes en **symboles HGNC**. |
-| `load_<nom>` | Pour tester **plusieurs collections** à la fois : une clé par collection, `load_c2: …/c2.gmt`, `load_h: …/h.gmt`, `load_signatures_select: …/signatures_select.gmt`. Chaque `.gmt` donne son propre GSEA (DESeq2 mutualisé). Remplace `gsea_gene_sets` s'il y en a au moins une. Fichiers absents ignorés (avertissement). |
+| `gsea_collections` | Pour tester **plusieurs collections** : un **dictionnaire** `{nom: chemin.gmt}` (ex. `c2: …/c2.gmt`, `h: …/h.gmt`). Chaque `.gmt` donne son propre GSEA (DESeq2 mutualisé). Désactive une collection en commentant sa ligne ou avec `{enabled: false, path: …}`. Remplace `gsea_gene_sets` s'il y en a au moins une. Fichiers absents ignorés (avertissement). *(La forme héritée `load_<nom>: chemin.gmt` reste acceptée.)* |
 | `gsea_permutations` | `1000` (défaut). Baisse à `200`–`500` pour aller plus vite pendant la mise au point. |
 | `gsea_heatmap_pval` | Seuil de p-valeur nominale (défaut `0.05`) pour les heatmaps `gsea_ova_heatmap_<collection>.png` : elles contiennent **tous** les pathways significatifs (p < seuil) dans au moins un cluster. Baisse-le (`0.01`) pour plus strict. |
 
@@ -230,6 +232,29 @@ Composition cellulaire par tumeur, batterie de méthodes (calcul en R). **Longue
 
 ---
 
+## 9a · Khi² d'indépendance (variables catégorielles)
+
+Croise la **partition en clusters** (pour chaque k) avec chaque **variable clinique catégorielle**, et les variables cliniques entre elles — pour savoir *quelles* variables distinguent les groupes et *quelles modalités* y sont sur/sous-représentées. **Léger**, activé par défaut (sauté sans métadonnées catégorielles).
+
+| Paramètre | Recommandation |
+|---|---|
+| `run_chi2` | `y` (défaut) / `n`. Pour chaque paire : tableau de contingence **avec marges**, **khi² de Pearson** d'indépendance, **V de Cramér** (taille d'effet) et **résidus standardisés ajustés** (Haberman : \|r\| > 1.96 / 2.58 = sur/sous-représentation à 5 %/1 %). **FDR (BH)** sur toutes les paires. |
+| `chi2_mc_resamples` | `2000` (défaut). Nombre de permutations du **khi² de Monte-Carlo**, utilisé en **repli** quand les conditions de Cochran ne sont pas remplies (> 20 % de cellules à effectif attendu < 5, ou un attendu < 1) sur une table **R×C** ; les tables **2×2** basculent alors sur le **test exact de Fisher**. |
+
+Sorties (`tables/chi2/`) : `chi2_summary.csv` (toutes paires, tous k, test utilisé, p, V de Cramér, FDR, diagnostic des conditions) ; `<paire>__counts.csv` (contingence + marges) et `<paire>__adjresiduals.csv` (résidus ajustés) pour k_final et les paires cliniques. Figures : `figures/chi2_residuals_clusterK<k>_<var>.png` (heatmap des résidus, rouge = sur-représenté, bleu = sous-représenté, étoilé si significatif). *Note : pour des variables **ordinales** (stade, grade), un test de tendance serait plus puissant — le khi² nominal est un choix conservateur.*
+
+---
+
+## 10 · Rapport d'analyse (HTML interactif)
+
+| Paramètre | Recommandation |
+|---|---|
+| `create_report` | `y` (défaut) / `n`. Génère `outdir/report.html` : un rapport **autonome** (ouvrable dans un navigateur, sans dépendance) qui agrège tout. Onglet *Résultats* — sous-onglet **Non-supervisé** : heatmap de consensus (k trié par PAC), + panneaux **alignés sur les patients** (arbre, clusters, item consensus, clinique, signatures, déconvolution, DEGSEA) empilables ; **Signatures détaillé** (boxplots de score par groupe) ; **t-SNE/UMAP** (coloration par variable/signature/déconv). Onglet *Tableaux* (tri/filtre). Onglet *Pré-analyse* (figures ACP/PUREE/CDF). |
+
+Le fichier embarque toutes les données en JSON → il peut peser plusieurs Mo (matrices de consensus par k). Rien à installer pour le lire.
+
+---
+
 ## Divers (transversal : parallélisation, graine)
 
 | Paramètre | Recommandation |
@@ -237,6 +262,7 @@ Composition cellulaire par tumeur, batterie de méthodes (calcul en R). **Longue
 | `parallel` | `y` (défaut) = parallélise le rééchantillonnage consensus, la stabilité Jaccard, DEGSEA (un contraste = une tâche) et les embeddings (t-SNE ∥ UMAP) sur `n_jobs` cœurs. `n` = force tout en séquentiel (`n_jobs=1`), utile pour déboguer ou sur une machine partagée. |
 | `n_jobs` | `-1` = tous les cœurs (défaut). Sans effet si `parallel: n`. Réduis (ex. `4`) si la machine est partagée mais que tu veux garder du parallélisme partiel. |
 | `seed` | `0`. Fixe la reproductibilité. Change-le pour vérifier la stabilité aux graines (embeddings surtout). |
+| `log_file` | Journal horodaté de la progression (défaut `run.log`, dans `outdir`). Toute la sortie console y est aussi écrite, avec date complète et temps total en fin de run. Mets un chemin absolu pour le placer ailleurs. |
 
 ---
 

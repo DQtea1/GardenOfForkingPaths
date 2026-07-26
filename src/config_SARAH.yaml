@@ -70,31 +70,26 @@ no_umap: false                # true = ne calcule pas l'UMAP
 # ================================================= 6 · DEGSEA (DESeq2 + GSEA par cluster)
 run_degsea: y                 # y | n — DESeq2 + GSEA par cluster (étape longue). counts bruts + symboles HGNC
 
-# MSigDB C1 · Positional — bandes cytogénétiques, gènes par bras chromosomique (300 sets)
-load_c1: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c1.gmt
-# MSigDB C2 · Curated — pathways canoniques (Reactome, KEGG, WikiPathways, BioCarta, PID) + perturbations (6495 sets)
-load_c2: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c2.gmt
-# MSigDB C3 · Regulatory targets — cibles de facteurs de transcription (TFT) et de miARN (MIR) (3713 sets)
-load_c3: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c3.gmt
-# MSigDB C4 · Computational cancer — voisinages de gènes cancéreux (CGN) et modules cancer (CM) (858 sets)
-load_c4: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c4.gmt
-# MSigDB C5 · Ontology — Gene Ontology (BP/CC/MF) + Human Phenotype Ontology (HPO) (28339 sets, souvent petits)
-load_c5: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c5.gmt
-# MSigDB C6 · Oncogenic — signatures de dérégulation par oncogènes/voies cancéreuses (189 sets)
-load_c6: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c6.gmt
-# MSigDB C7 · Immunologic — ImmuneSigDB (états cellules immunitaires) + réponses vaccinales (5219 sets)
-load_c7: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c7.gmt
-# MSigDB C8 · Cell type — signatures de types cellulaires issues du single-cell (830 sets)
-load_c8: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c8.gmt
-# MSigDB H · Hallmark — 50 signatures raffinées d'états/processus biologiques cohérents
-load_h: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/h.gmt
-# Custom (hors MSigDB) · signatures immunes maison, ex. Neutro-atlas IMMU_* (164 sets)
-load_sigGeNeHetX: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/sigGeNeHetX.gmt
-# Custom · signatures curées à la main (Ayers anti-PD1, CAF, ICA, PREDIMEL…) — cf. signatures.csv
-load_signatures_select: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/signatures_select.gmt
+# Collections de gene sets pour le GSEA : un dictionnaire {nom: chemin.gmt}.
+# Commenter la ligne pour ne pas utiliser une collection. Si toutes commentées.
+gsea_collections:
+  # c1: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c1.gmt   # Positional — bandes cytogénétiques (300)
+  # c2: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c2.gmt   # Curated — Reactome/KEGG/WikiPathways… (6495)
+  # c3: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c3.gmt   # Regulatory targets — TFT + miRNA (3713)
+  c4: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c4.gmt   # Computational cancer — CGN + CM (858)
+  # c5: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c5.gmt   # Ontology — GO + HPO (28339, TRÈS LENT)
+  c6: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c6.gmt   # Oncogenic (189)
+  # c7: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c7.gmt   # Immunologic — ImmuneSigDB + vaccins (5219)
+  c8: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c8.gmt   # Cell type — single-cell (830)
+  h:  /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/h.gmt    # Hallmark (50)
+  sigGeNeHetX: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/sigGeNeHetX.gmt  # Custom immun (164)
+  signatures_select: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/signatures_select.gmt  # Custom curées
 
 degsea_mode: ova             # ova (one-vs-all) | ovo (one-vs-one) | both
-gsea_gene_sets: ~/.cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt  # fichier .gmt des gene sets
+degsea_all_k: y              # y | n — si y : DEGSEA calculé pour TOUS les k [k_min..k_max]
+                             #   (tables/degsea/k<k>/ par k + panneau DEGSEA alignable sur chaque k
+                             #   dans le rapport). Très coûteux. Défaut n : seul le k final.
+gsea_gene_sets: ~/.cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt  # .gmt unique de repli (si gsea_collections vide)
 gsea_permutations: 1000       # permutations du GSEA pré-classé
 gsea_heatmap_pval: 0.05       # heatmap : garde tous les pathways à p-valeur nominale < ce seuil dans >= 1 cluster
 
@@ -148,7 +143,16 @@ deconv_methods:
   dwls:        {enabled: false, dwls_method: mast_optimized}  # fractions, via référence single-cell
   bayesprism:  {enabled: false}                            # fractions, via référence single-cell — TRÈS LENT
 
+# ================================================= 9a · Khi² d'indépendance (variables catégorielles)
+run_chi2: y                   # y | n — croise cluster (chaque k) × clinique catégoriel + clinique × clinique
+                              #   (khi², Fisher/Monte-Carlo en repli, V de Cramér, résidus ajustés). Léger.
+chi2_mc_resamples: 2000       # permutations du khi² de Monte-Carlo (repli des tables R×C non conformes à Cochran)
+
+# ================================================= 10 · Rapport d'analyse (HTML interactif)
+create_report: y              # y | n — génère outdir/report.html (rapport autonome de tous les résultats)
+
 # ================================================= Divers (transversal : parallélisation, graine)
 parallel: y                   # y (défaut) = parallélise consensus/Jaccard/DEGSEA/embeddings sur n_jobs ; n = tout séquentiel (n_jobs=1)
 n_jobs: -1                    # -1 = tous les cœurs (ignoré si parallel=n)
 seed: 42
+log_file: run.log             # journal horodaté de la progression (relatif à outdir si non absolu)

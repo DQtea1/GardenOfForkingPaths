@@ -20,6 +20,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from consensus_rnaseq import catassoc as ca
 from consensus_rnaseq import consensus as cc
 from consensus_rnaseq import deconv as dc
 from consensus_rnaseq import degsea as dg
@@ -35,6 +37,7 @@ from consensus_rnaseq import metrics as mt
 from consensus_rnaseq import plots as pl
 from consensus_rnaseq import preprocessing as pp
 from consensus_rnaseq import purity as pur
+from consensus_rnaseq import report as rp
 from consensus_rnaseq import sigproj as sp
 from consensus_rnaseq import stability as st
 
@@ -132,6 +135,11 @@ def build_parser() -> argparse.ArgumentParser:
     deg.add_argument("--degsea_mode", choices=["ova", "ovo", "both"], default="both",
                      help="contrastes DESeq2 : ova (one-vs-all), ovo (one-vs-one, "
                           "coûteux : k(k-1)/2), both (défaut).")
+    deg.add_argument("--degsea_all_k", choices=["y", "n"], default="n",
+                     help="'y' : calcule le DEGSEA pour TOUS les k de la plage "
+                          "[k_min..k_max] (une sous-arborescence tables/degsea/k<k>/ "
+                          "par k, et un panneau DEGSEA aligné sur n'importe quel k "
+                          "dans le rapport). Très coûteux. Défaut 'n' (seul k_final).")
     deg.add_argument("--gsea_gene_sets",
                      default=str(Path.home() / ".cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt"),
                      help="fichier .gmt de gene sets pour le GSEA (hallmarks MSigDB par défaut).")
@@ -170,6 +178,22 @@ def build_parser() -> argparse.ArgumentParser:
     dec.add_argument("--deconv_rscript", default="Rscript",
                      help="interpréteur Rscript (omnideconv + immunedeconv installés).")
 
+    chi = p.add_argument_group("association catégorielle (khi² d'indépendance)")
+    chi.add_argument("--run_chi2", choices=["y", "n"], default="y",
+                     help="'y' (défaut) : croise cluster (chaque k) × variables "
+                          "cliniques catégorielles et clinique × clinique — khi² "
+                          "d'indépendance (Fisher/Monte-Carlo en repli), V de Cramér "
+                          "et résidus standardisés ajustés. Sauté sans métadonnées "
+                          "catégorielles. Étape légère.")
+    chi.add_argument("--chi2_mc_resamples", type=int, default=2000,
+                     help="permutations du khi² de Monte-Carlo (repli des tables R×C "
+                          "aux conditions de Cochran non remplies ; défaut 2000).")
+
+    rep = p.add_argument_group("rapport d'analyse (HTML interactif)")
+    rep.add_argument("--create_report", choices=["y", "n"], default="y",
+                     help="'y' (défaut) : génère outdir/report.html — rapport "
+                          "interactif autonome de tous les résultats.")
+
     embg = p.add_argument_group("embeddings")
     embg.add_argument("--t-SNE_dim", dest="tsne_dim", type=int, choices=[2, 3],
                       default=2,
@@ -188,6 +212,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "déboguer ou sur une machine partagée.")
     p.add_argument("--n-jobs", type=int, default=-1)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--log_file", default="run.log",
+                   help="fichier journal horodaté (relatif à outdir si non absolu ; "
+                        "défaut run.log). Toute la progression y est écrite.")
     return p
 
 
@@ -221,8 +248,21 @@ def parse_args(argv=None):
         config = _load_yaml(args.config)
         unknown = set(config) - set(merged) - {"config"}
 
-        # 1a. Clés `load_*` pointant vers un .gmt -> collections de gene sets GSEA.
-        #     Le nom de la collection est le suffixe après `load_` (ex. load_c2 -> c2).
+        # 1a. Collections de gene sets GSEA. Forme recommandée : un dict
+        #     `gsea_collections: {nom: chemin.gmt}` (valeur str = chemin activé,
+        #     ou {enabled: bool, path: ...}). Forme héritée aussi acceptée :
+        #     des clés plates `load_<nom>: chemin.gmt`.
+        if isinstance(config.get("gsea_collections"), dict):
+            for name, spec in config["gsea_collections"].items():
+                if isinstance(spec, str):
+                    path, enabled = spec, True
+                elif isinstance(spec, dict):
+                    path, enabled = spec.get("path"), spec.get("enabled", True)
+                else:
+                    continue
+                if enabled and path:
+                    gsea_collections[str(name)] = str(Path(path).expanduser())
+            unknown.discard("gsea_collections")
         for key in sorted(k for k in unknown if k.startswith("load_")):
             val = config[key]
             if isinstance(val, str) and val.strip().lower().endswith(".gmt"):
@@ -273,19 +313,40 @@ def parse_args(argv=None):
 def main(argv=None) -> int:
     # ------------------------------------------ 0. configuration & démarrage
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s | %(levelname)-7s | %(message)s",
-                        datefmt="%H:%M:%S")
+
+    outdir = Path(args.outdir)
+    (outdir / "figures").mkdir(parents=True, exist_ok=True)
+    (outdir / "tables").mkdir(parents=True, exist_ok=True)
+
+    # journalisation : console (heure) + fichier .log horodaté (date complète)
+    log_path = Path(args.log_file)
+    if not log_path.is_absolute():
+        log_path = outdir / log_path
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    _sh = logging.StreamHandler(sys.stderr)
+    _sh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-7s | %(message)s",
+                                       datefmt="%H:%M:%S"))
+    _fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    _fh.setFormatter(logging.Formatter(
+        "%(asctime)s | %(levelname)-7s | %(name)-22s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"))
+    root.addHandler(_sh)
+    root.addHandler(_fh)
     log = logging.getLogger("pipeline")
+
+    t_start = time.perf_counter()
+    log.info("================ Démarrage du pipeline — %s ================",
+             time.strftime("%Y-%m-%d %H:%M:%S"))
+    log.info("Config : %s | sortie : %s | journal : %s",
+             args.config or "(ligne de commande)", outdir.resolve(), log_path.resolve())
 
     # parallel="n" force tout en séquentiel, quel que soit --n-jobs
     eff_n_jobs = args.n_jobs if args.parallel == "y" else 1
     if args.parallel == "n":
         log.info("Parallélisation désactivée (--parallel n) : n_jobs=1 partout.")
-
-    outdir = Path(args.outdir)
-    (outdir / "figures").mkdir(parents=True, exist_ok=True)
-    (outdir / "tables").mkdir(parents=True, exist_ok=True)
 
     # ---------------------------------------------------------------- 1. data
     raw = pp.load_matrix(args.counts, genes_in_rows=not args.samples_in_rows)
@@ -402,14 +463,18 @@ def main(argv=None) -> int:
 
     # ------------------------------------ 4b. stabilité des branches (Jaccard)
     bs = None
+    bs_by_k = {}
     if args.compute_jaccard == "y":
-        bs = st.branch_stability(
-            X_df.values, result.distance(k_final),
+        # calculée pour TOUS les k (arbres bootstrap partagés -> coût ~ un seul k),
+        # pour que le rapport affiche la stabilité sur l'arbre de n'importe quel k
+        bs_by_k = st.branch_stability_multi(
+            X_df.values, {k: result.distance(k) for k in k_values},
             n_resamples=args.n_resamples,
             gene_mode="bootstrap", prop_genes=1.0,
             metric=args.metric, linkage_method=args.linkage,
             min_size=2, random_state=args.seed, n_jobs=eff_n_jobs,
         )
+        bs = bs_by_k[k_final]
         bs_tab = bs.to_frame(sample_names=result.sample_names, final_labels=labels)
         bs_tab.to_csv(outdir / "tables" / f"branch_stability_k{k_final}.csv", index=False)
         pl.plot_branch_stability(bs, outdir / "figures", k_final)
@@ -458,25 +523,39 @@ def main(argv=None) -> int:
 
     # ------------------------------------------------ 6. DEGSEA (DESeq2 + GSEA)
     nes = None
+    nes_by_coll = {}
+    degsea_by_k = {}                    # {k: {collection: matrice NES}} -> rapport
     if args.run_degsea == "y":
         # collections `load_*.gmt` du YAML si présentes, sinon le .gmt unique
         gene_sets = args.gsea_collections or {
             Path(args.gsea_gene_sets).stem: args.gsea_gene_sets}
-        log.info("DEGSEA : DESeq2 + GSEA par cluster (mode=%s, %d collection(s)) — "
-                 "étape longue…", args.degsea_mode, len(gene_sets))
-        nes_by_coll = dg.run_degsea(
-            raw, labels, result.sample_names, outdir,
-            gene_sets=gene_sets,
-            mode=args.degsea_mode,
-            permutations=args.gsea_permutations,
-            heatmap_pval=args.gsea_heatmap_pval,
-            n_jobs=eff_n_jobs,
-            seed=args.seed,
-        )
-        # une heatmap NES par collection
-        for coll, m in nes_by_coll.items():
-            pl.plot_gsea_ova_heatmap(m, outdir / "figures",
-                                     pval=args.gsea_heatmap_pval, collection=coll)
+        all_k = args.degsea_all_k == "y"
+        ks_degsea = list(k_values) if all_k else [k_final]
+        log.info("DEGSEA : DESeq2 + GSEA par cluster (mode=%s, %d collection(s)) "
+                 "sur %d valeur(s) de k=%s — étape longue…",
+                 args.degsea_mode, len(gene_sets), len(ks_degsea), list(ks_degsea))
+        for kk in ks_degsea:
+            if all_k:
+                log.info("DEGSEA — k=%d (%d/%d)…", kk,
+                         ks_degsea.index(kk) + 1, len(ks_degsea))
+            labels_k = result.labels(kk, args.linkage)
+            res = dg.run_degsea(
+                raw, labels_k, result.sample_names, outdir,
+                gene_sets=gene_sets,
+                mode=args.degsea_mode,
+                permutations=args.gsea_permutations,
+                heatmap_pval=args.gsea_heatmap_pval,
+                subdir=(f"k{kk}" if all_k else ""),
+                n_jobs=eff_n_jobs,
+                seed=args.seed,
+            )
+            degsea_by_k[kk] = res
+            if kk == k_final:
+                nes_by_coll = res
+                # une heatmap NES par collection (pour le k final uniquement)
+                for coll, m in res.items():
+                    pl.plot_gsea_ova_heatmap(m, outdir / "figures",
+                                             pval=args.gsea_heatmap_pval, collection=coll)
         # pour la figure de synthèse : Hallmark de préférence, sinon la 1re dispo
         if nes_by_coll:
             key = next((k for k in ("h", "HALLMARK", "hallmark") if k in nes_by_coll),
@@ -485,6 +564,8 @@ def main(argv=None) -> int:
         log.info("DEGSEA terminé : tables dans %s", outdir / "tables" / "degsea")
 
     # ------------------------------------------ 7. projection de signatures
+    sig_scores = None
+    sig_tests = None
     if args.compute_signatures == "y":
         # sources harmonisées : signature_sources du YAML, sinon une source .gmt
         # unique (signatures_gmt / load_signatures_select / gsea_gene_sets).
@@ -511,15 +592,31 @@ def main(argv=None) -> int:
             if args.metadata:
                 meta_full = pd.read_csv(args.metadata, sep=None, engine="python",
                                         index_col=0).reindex(result.sample_names)
-            sp.run_signature_projection(
+            sig_scores = sp.run_signature_projection(
                 expr_full, signatures, meta_full, outdir,
                 corr_method=args.sig_corr_method, top_n=args.sig_top_n,
                 sig_pval=args.sig_pval, n_jobs=eff_n_jobs, seed=args.seed,
             )
+            # tests de Wilcoxon (one-vs-rest) score de signature x modalité, pour
+            # chaque k (stratif. cluster) et chaque variable clinique catégorielle
+            # -> étoiles au-dessus des boxplots du rapport (7.2 bis).
+            cluster_labels_by_k = {k: result.labels(k, args.linkage) for k in k_values}
+            sig_tests, sig_tests_tidy = sp.stratified_signature_tests(
+                sig_scores, cluster_labels_by_k, meta_full)
+            if len(sig_tests_tidy):
+                sig_tests_tidy.to_csv(
+                    outdir / "tables" / "signatures" / "signature_group_tests.csv",
+                    index=False)
+                n_sig = int((sig_tests_tidy["pvalue"] < 0.05).sum())
+                log.info("Projection 7.2bis : %d tests de Wilcoxon (score x modalité, "
+                         "one-vs-rest + pairwise, tous k), %d significatifs "
+                         "(p < 0.05) -> %s", len(sig_tests_tidy), n_sig,
+                         outdir / "tables" / "signatures" / "signature_group_tests.csv")
             log.info("Projection de signatures terminée : tables dans %s",
                      outdir / "tables" / "signatures")
 
     # ------------------------------------------------- 8. déconvolution (R)
+    deconv = {}
     if args.run_deconv == "y":
         log.info("8. Déconvolution (omnideconv / immunedeconv) — étape longue…")
         if args.already_normalized:
@@ -538,6 +635,17 @@ def main(argv=None) -> int:
         log.info("Déconvolution terminée : tables dans %s",
                  outdir / "tables" / "deconvolution")
 
+    # ------------------ 9a. khi² d'indépendance (cluster/clinique catégoriel)
+    if args.run_chi2 == "y" and args.metadata:
+        meta_chi = pd.read_csv(args.metadata, sep=None, engine="python",
+                               index_col=0).reindex(result.sample_names)
+        cluster_labels_by_k = {k: result.labels(k, args.linkage) for k in k_values}
+        ca.run_categorical_association(
+            cluster_labels_by_k, meta_chi, result.sample_names, outdir, k_final,
+            mc_resamples=args.chi2_mc_resamples, seed=args.seed)
+    elif args.run_chi2 == "y":
+        log.info("9a. Khi² : pas de métadonnées (--metadata) — étape sautée.")
+
     # ------------------------------- 9. figure de synthèse (tout combiné)
     pl.plot_cluster_overview(
         result, k_final, outdir / "figures", linkage_method=args.linkage,
@@ -547,12 +655,31 @@ def main(argv=None) -> int:
     )
     log.info("Figure de synthèse : cluster_overview_k%d.png", k_final)
 
-    # --------------------------------------------- 10. sauvegarde du run
+    # ------------------------------ 10. rapport d'analyse HTML interactif
+    if args.create_report == "y":
+        report_meta = None
+        if args.metadata:
+            report_meta = pd.read_csv(args.metadata, sep=None, engine="python",
+                                      index_col=0).reindex(result.sample_names)
+        rp.build_report(
+            result, k_final, outdir,
+            coords=coords, meta=report_meta, sig_scores=sig_scores,
+            sig_tests=sig_tests, deconv=(deconv or None),
+            degsea_by_k=(degsea_by_k or None),
+            branch_stability_by_k=(bs_by_k or None),
+            min_cluster_size=args.min_cluster_size, k_criterion=args.k_criterion,
+            linkage_method=args.linkage,
+        )
+        log.info("Rapport d'analyse : %s", outdir / "report.html")
+
+    # --------------------------------------------- 11. sauvegarde du run
     with open(outdir / "run_params.json", "w") as fh:
         json.dump({**vars(args), "outdir": str(args.outdir), "k_final": k_final},
                   fh, indent=2, default=str)
 
-    log.info("Terminé. Résultats dans %s", outdir.resolve())
+    dt = time.perf_counter() - t_start
+    log.info("================ Terminé en %dh %02dm %02ds — résultats dans %s ================",
+             int(dt // 3600), int(dt % 3600 // 60), int(dt % 60), outdir.resolve())
     return 0
 
 

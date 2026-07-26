@@ -9,11 +9,15 @@ Trois familles, à croiser (aucune ne suffit seule) :
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import silhouette_samples, silhouette_score
 
 from .consensus import ConsensusResult
+
+logger = logging.getLogger(__name__)
 
 
 def _upper(C: np.ndarray) -> np.ndarray:
@@ -156,34 +160,43 @@ def suggest_k(
     """Heuristique de choix de k. **À valider par la heatmap, jamais à suivre
     aveuglément.**
 
-    On écarte d'abord les k produisant un cluster de moins de `min_cluster_size`
-    tumeurs (sur-partitionnement), puis on applique le critère `method` :
-
-    - ``"pac"`` : k qui **minimise le PAC** (proportion de paires ambiguës).
-      Fiable, mais peut sous-estimer k quand le PAC sature sur des données bien
-      structurées.
+    - ``"pac"`` : k qui **minimise le PAC** (proportion de paires ambiguës), sur
+      **tous** les k testés. Fiable, mais peut sous-estimer k quand le PAC sature.
     - ``"deltak"`` : **coude de Δ(K)** — le plus grand k qui apporte encore un
-      gain d'aire sous la CDF d'au moins `min_delta`. Suit Monti et al., mais a
-      un biais monotone documenté et **sur-estime souvent k**.
-    - ``"both"`` (défaut) : parmi les k à `pac_tol` près du PAC minimal, le plus
-      grand qui garde un Δ(K) ≥ `min_delta` — combine la fiabilité du PAC et le
-      coude de Δ(K).
+      gain d'aire sous la CDF d'au moins `min_delta`. Sur-estime souvent k.
+    - ``"both"`` (défaut) : parmi les k à `pac_tol` près du PAC minimal **et**
+      dont le plus petit cluster fait ≥ `min_cluster_size` tumeurs, le plus grand
+      qui garde un Δ(K) ≥ `min_delta`.
+
+    `min_cluster_size` ne **filtre en dur que pour `both`** (l'auto par défaut).
+    Pour les critères explicites `pac` / `deltak`, le critère est respecté à la
+    lettre et un **avertissement** est émis si le k retenu produit un petit
+    cluster — l'utilisateur garde le contrôle.
     """
     tab = summary(result)
-    ok = tab[tab["min_cluster_size"] >= min_cluster_size]
-    tab = ok if len(ok) else tab
+
+    def _warn_small(k: int) -> int:
+        row = tab.loc[tab["k"] == k].iloc[0]
+        if row["min_cluster_size"] < min_cluster_size:
+            logger.warning(
+                "suggest_k(%s) : k=%d retenu (PAC=%.3f) mais son plus petit cluster "
+                "ne fait que %d tumeurs (< min_cluster_size=%d). Baisse "
+                "min_cluster_size ou fixe k_final si ce n'est pas voulu.",
+                method, k, row["PAC"], int(row["min_cluster_size"]), min_cluster_size)
+        return k
 
     if method == "pac":
-        return int(tab.loc[tab["PAC"].idxmin(), "k"])
+        return _warn_small(int(tab.loc[tab["PAC"].idxmin(), "k"]))
 
     if method == "deltak":
         gain = tab[tab["delta_k"] >= min_delta]
-        if len(gain):
-            return int(gain["k"].max())
-        return int(tab.loc[tab["delta_k"].idxmax(), "k"])
+        k = int(gain["k"].max()) if len(gain) else int(tab.loc[tab["delta_k"].idxmax(), "k"])
+        return _warn_small(k)
 
     if method == "both":
-        near = tab[tab["PAC"] <= tab["PAC"].min() + pac_tol]
+        ok = tab[tab["min_cluster_size"] >= min_cluster_size]
+        base = ok if len(ok) else tab
+        near = base[base["PAC"] <= base["PAC"].min() + pac_tol]
         gain = near[near["delta_k"] >= min_delta]
         if len(gain):
             return int(gain["k"].max())
