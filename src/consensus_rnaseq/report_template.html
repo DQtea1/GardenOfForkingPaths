@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rapport d'analyse — consensus clustering</title>
+<style>
+  :root{
+    --bg:#f5f7f8; --surface:#fff; --surface2:#eef2f3; --ink:#17242a; --ink2:#5a6b73;
+    --line:#dbe3e6; --accent:#0f766e; --accent2:#14b8a6; --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px}
+  h1{font-size:1.15rem;margin:0}
+  header{padding:12px 18px;background:var(--surface);border-bottom:1px solid var(--line);
+    display:flex;align-items:baseline;gap:14px}
+  header .sub{color:var(--ink2);font-size:.82rem}
+  .tabs{display:flex;gap:2px;padding:0 14px;background:var(--surface);border-bottom:1px solid var(--line)}
+  .tab{padding:9px 15px;border:0;background:transparent;color:var(--ink2);font:600 13px var(--sans);
+    cursor:pointer;border-bottom:2px solid transparent}
+  .tab:hover{color:var(--ink)}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .subtabs{display:flex;gap:2px;padding:8px 16px 0;flex-wrap:wrap}
+  .subtab{padding:6px 12px;border:1px solid var(--line);background:var(--surface2);border-radius:7px 7px 0 0;
+    color:var(--ink2);font:600 12px var(--sans);cursor:pointer;border-bottom:0}
+  .subtab.active{background:var(--surface);color:var(--accent);border-color:var(--accent)}
+  .pane{display:none;padding:14px 16px 60px}
+  .pane.active{display:block}
+  .sub{display:none}
+  .sub.active{display:block}
+  .ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0;padding:10px;
+    background:var(--surface);border:1px solid var(--line);border-radius:9px}
+  .ctl label{font:600 12px var(--sans);color:var(--ink2)}
+  select,input[type=text]{font:13px var(--sans);padding:5px 8px;border:1px solid var(--line);
+    border-radius:6px;background:#fff;color:var(--ink)}
+  button.mini{font:600 12px var(--sans);padding:5px 10px;border:1px solid var(--line);border-radius:6px;
+    background:var(--surface2);color:var(--ink);cursor:pointer}
+  button.mini:hover{border-color:var(--accent);color:var(--accent)}
+  .addbar{display:flex;justify-content:center;margin:2px 0}
+  .addbtn{font:700 13px var(--sans);color:#fff;background:var(--accent);border:0;border-radius:16px;
+    padding:3px 12px;cursor:pointer}
+  .addbtn:hover{background:var(--accent2)}
+  .stack{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:8px;overflow-x:auto}
+  .panel{position:relative;margin:0}
+  .panel .rm{position:absolute;right:2px;top:1px;font:700 12px var(--mono);color:#c0392b;background:#fff;
+    border:1px solid var(--line);border-radius:4px;cursor:pointer;padding:0 5px;z-index:2}
+  .panel .ttl{position:absolute;left:6px;top:2px;font:600 10px var(--mono);color:var(--ink2);z-index:2}
+  canvas{display:block}
+  .menu{position:absolute;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);
+    padding:6px;z-index:20;max-height:320px;overflow:auto;min-width:220px}
+  .menu button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:6px 8px;
+    border-radius:5px;cursor:pointer;font:13px var(--sans);color:var(--ink)}
+  .menu button:hover{background:var(--surface2)}
+  .menu .grp{font:600 10px var(--mono);text-transform:uppercase;color:var(--ink2);padding:6px 8px 2px}
+  table.dt{border-collapse:collapse;font:12px var(--mono);width:100%}
+  table.dt th{position:sticky;top:0;background:var(--surface2);border:1px solid var(--line);padding:5px 8px;
+    cursor:pointer;text-align:left;white-space:nowrap}
+  table.dt th:hover{color:var(--accent)}
+  table.dt td{border:1px solid var(--line);padding:3px 8px;white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis}
+  table.dt tr:nth-child(even){background:var(--surface2)}
+  .tblwrap{max-height:70vh;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  .imgcard{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:10px;margin-bottom:16px}
+  .imgcard h3{margin:0 0 8px;font-size:.95rem}
+  .imgcard img{max-width:100%;height:auto}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--ink2);align-items:center}
+  .legend .sw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+  .muted{color:var(--ink2);font-size:.82rem}
+  .flexrow{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+  .boxopts{border:1px solid var(--line);border-radius:9px;padding:10px 12px;min-width:190px;
+    background:var(--surface);display:flex;flex-direction:column;gap:9px;font:13px var(--sans)}
+  .boxopts .hd{font:600 12px var(--sans);color:var(--ink2);text-transform:uppercase;letter-spacing:.03em}
+  .boxopts label{display:flex;align-items:center;gap:7px;justify-content:space-between;color:var(--ink2)}
+  .boxopts input[type=range]{width:96px}
+  .boxopts .val{font:11px ui-monospace;color:var(--ink2);min-width:26px;text-align:right}
+  .frow{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .fvarname{font:600 11px var(--sans);color:var(--ink2);margin-right:2px}
+  .fchip{font:12px var(--sans);color:var(--ink2);display:inline-flex;align-items:center;gap:3px;
+    background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:2px 7px;cursor:pointer;user-select:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>Rapport d'analyse — consensus clustering</h1>
+  <span class="sub" id="hdrSub"></span>
+</header>
+
+<div class="tabs" id="tabs">
+  <button class="tab active" data-tab="results">Résultats</button>
+  <button class="tab" data-tab="tables">Tableaux</button>
+  <button class="tab" data-tab="pre">Pré-analyse</button>
+</div>
+
+<!-- ============ RÉSULTATS ============ -->
+<div class="pane active" id="pane-results">
+  <div class="subtabs">
+    <button class="subtab active" data-sub="unsup">Non-supervisé</button>
+    <button class="subtab" data-sub="sigdet">Signatures détaillé</button>
+    <button class="subtab" data-sub="embed">t-SNE / UMAP</button>
+  </div>
+
+  <div class="sub active" id="sub-unsup">
+    <div class="ctl">
+      <label>k (trié par PAC croissant) :</label>
+      <select id="kSelect"></select>
+      <span class="muted">Empile des panneaux alignés sur les patients avec les boutons <b>+</b>.</span>
+    </div>
+    <div class="addbar"><button class="addbtn" data-side="top">+ panneau au-dessus</button></div>
+    <div id="stack-top"></div>
+    <div class="stack" id="stack-center"></div>
+    <div id="stack-bottom"></div>
+    <div class="addbar"><button class="addbtn" data-side="bottom">+ panneau en dessous</button></div>
+    <div class="legend" id="unsupLegend"></div>
+  </div>
+
+  <div class="sub" id="sub-sigdet">
+    <div class="ctl">
+      <label>Signature :</label><select id="sdSig"></select>
+      <label>Stratifier par :</label><select id="sdStrat"></select>
+      <label>k :</label><select id="sdK"></select>
+    </div>
+    <div class="ctl" style="align-items:flex-start">
+      <label style="align-self:center">Filtrer patients :</label>
+      <div id="sdFilters" style="display:flex;flex-wrap:wrap;gap:14px;flex:1"></div>
+      <button class="mini" id="sdFilterReset">Réinitialiser</button>
+    </div>
+    <div class="flexrow">
+      <div><div class="muted">ssGSEA</div><canvas id="sdBoxSs"></canvas></div>
+      <div><div class="muted">Expression moyenne</div><canvas id="sdBoxMean"></canvas></div>
+      <div class="boxopts">
+        <div class="hd">Affichage</div>
+        <label><span>Axe Y + échelle</span><input type="checkbox" id="boAxes" checked></label>
+        <label><span>Points de données</span><input type="checkbox" id="boPoints" checked></label>
+        <label><span>Opacité points</span><input type="range" id="boOpacity" min="0.05" max="1" step="0.05" value="0.55"><span class="val" id="boOpacityV">0.55</span></label>
+        <label><span>Jitter</span><input type="range" id="boJitter" min="0" max="1" step="0.05" value="0.55"><span class="val" id="boJitterV">0.55</span></label>
+        <label><span>Rayon points</span><input type="range" id="boRadius" min="1" max="5" step="0.5" value="2.4"><span class="val" id="boRadiusV">2.4</span></label>
+        <label><span>Wilcoxon 2 à 2 (barres)</span><input type="checkbox" id="boPair"></label>
+        <div class="muted" style="font-size:11px;line-height:1.45;margin-top:2px">
+          ★ Wilcoxon — décoché : 1 modalité vs reste (étoiles) ; coché : 2 à 2 (barres)<br>
+          * p&lt;0.05&nbsp; ** p&lt;0.01&nbsp; *** p&lt;0.001 · <b>ns</b> = groupe &lt; 3 / non testé<br>
+          <i>Filtre actif → tests recalculés en direct (Mann-Whitney).</i></div>
+      </div>
+    </div>
+    <div class="muted" style="margin-top:10px">Heatmap des scores (ssGSEA) alignée sur les patients (ordre du k choisi) :</div>
+    <div class="stack" id="sdHeat"></div>
+  </div>
+
+  <div class="sub" id="sub-embed">
+    <div class="ctl">
+      <label>Projection :</label>
+      <select id="emMethod"></select>
+      <label>k :</label><select id="emK"></select>
+      <label>Colorer par :</label><select id="emColor"></select>
+      <label>Forme par :</label><select id="emShape"></select>
+      <label>Taille par :</label><select id="emSize"></select>
+    </div>
+    <div class="flexrow">
+      <canvas id="emCanvas"></canvas>
+      <div class="legend" id="emLegend" style="flex-direction:column;align-items:flex-start"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ TABLEAUX ============ -->
+<div class="pane" id="pane-tables">
+  <div class="ctl">
+    <label>Table :</label><select id="tblSelect"></select>
+    <label>Filtre :</label><input type="text" id="tblFilter" placeholder="texte à chercher dans les lignes…">
+    <span class="muted" id="tblInfo"></span>
+  </div>
+  <div class="tblwrap"><table class="dt" id="tbl"></table></div>
+</div>
+
+<!-- ============ PRÉ-ANALYSE ============ -->
+<div class="pane" id="pane-pre"><div id="preList"></div></div>
+
+<script>
+const DATA = /*__DATA__*/null;
+</script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const N=DATA.n, SAMPLES=DATA.samples;
+$("hdrSub").textContent=`${N} tumeurs · k testés : ${DATA.ks.map(o=>o.k).sort((a,b)=>a-b).join(", ")} · k retenu = ${DATA.kFinal}`;
+
+/* ---------- palettes & colormaps ---------- */
+const CAT=["#4e79a7","#f28e2b","#e15759","#76b7b2","#59a14f","#edc948","#b07aa1","#ff9da7","#9c755f","#bab0ac",
+  "#86bcb6","#d37295","#a0cbe8","#ffbe7d","#8cd17d","#b6992d","#499894","#e15759","#79706e","#fabfd2"];
+function lerp(a,b,t){return a+(b-a)*t;}
+function mix(c1,c2,t){return `rgb(${Math.round(lerp(c1[0],c2[0],t))},${Math.round(lerp(c1[1],c2[1],t))},${Math.round(lerp(c1[2],c2[2],t))})`;}
+const VIR=[[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
+function viridis(t){t=Math.max(0,Math.min(1,t));const x=t*(VIR.length-1),i=Math.floor(x);return i>=VIR.length-1?mix(VIR[VIR.length-1],VIR[VIR.length-1],0):mix(VIR[i],VIR[i+1],x-i);}
+const DIV=[[33,102,172],[103,169,207],[247,247,247],[239,138,98],[178,24,43]];
+function rdbu(v,vmax){let t=(v/vmax+1)/2;t=Math.max(0,Math.min(1,t));const x=t*(DIV.length-1),i=Math.floor(x);return i>=DIV.length-1?`rgb(178,24,43)`:mix(DIV[i],DIV[i+1],x-i);}
+function consCol(v){return mix([255,255,255],[8,48,107],v);} // 0..1 blanc->bleu foncé
+function clusterCol(l){return CAT[(l-1)%CAT.length];}
+
+/* ---------- z-score par ligne (pour heatmaps de scores) ---------- */
+function zrows(mat){return mat.map(row=>{const v=row.filter(x=>x!=null);if(!v.length)return row.map(_=>null);
+  const m=v.reduce((a,b)=>a+b,0)/v.length;const sd=Math.sqrt(v.reduce((a,b)=>a+(b-m)*(b-m),0)/v.length)||1;
+  return row.map(x=>x==null?null:(x-m)/sd);});}
+
+/* ---------- canvas util (net sur écrans HiDPI) ---------- */
+function fitCanvas(cv,w,h){const dpr=window.devicePixelRatio||1;cv.style.width=w+"px";cv.style.height=h+"px";
+  cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);const ctx=cv.getContext("2d");ctx.setTransform(dpr,0,0,dpr,0,0);return ctx;}
+
+const LM=175, RM=14;   // marges gauche (labels) / droite — partagées => colonnes alignées
+function plotW(){return Math.max(320,($("stack-center").clientWidth||900)-LM-RM);}
+
+/* =========================================================
+   ONGLET RÉSULTATS — Non-supervisé (heatmaps alignées)
+   ========================================================= */
+let curK=DATA.ks[0].k;
+let topPanels=[], bottomPanels=["clusters"];   // panneaux additionnels
+
+function kInfo(k){const o=DATA.ks.find(x=>x.k===k);return o?`k=${k} · PAC=${o.pac.toFixed(3)}`:`k=${k}`;}
+// Sélecteur de k : rouge si le plus petit cluster < min_cluster_size
+// (sur-partitionnement), bleu clair pour le k recommandé (critère PAC+Δ(K)).
+function fillKSelect(sel,val){sel.innerHTML="";DATA.ks.forEach(o=>{const op=document.createElement("option");
+  op.value=o.k;let t=`k=${o.k}   ·   PAC=${o.pac.toFixed(3)}`;
+  const small=o.minClust<DATA.minClusterSize, best=(o.k===DATA.bestBoth);
+  if(best){op.style.background="#cfe2ff";op.style.color="#0b3a82";t+="   ★ recommandé";}
+  else if(small){op.style.background="#f8d7da";op.style.color="#a12622";t+=`   ⚠ petit cluster (${o.minClust})`;}
+  op.textContent=t;sel.appendChild(op);});sel.value=val;}
+
+// registre des panneaux disponibles
+function availablePanels(){
+  const items=[{id:"tree",label:"Arbre consensus",grp:"Structure"},
+               {id:"clusters",label:"Barre de clusters",grp:"Structure"},
+               {id:"item",label:"Item consensus (stabilité)",grp:"Structure"}];
+  for(const v in DATA.meta) items.push({id:"meta:"+v,label:"Clinique : "+v,grp:"Clinique"});
+  for(const m in DATA.signatures) items.push({id:"sig:"+m,label:"Signatures ("+m+")",grp:"Signatures"});
+  for(const m in DATA.deconv) items.push({id:"deconv:"+m,label:"Déconvolution ("+m+")",grp:"Déconvolution"});
+  const degColls=new Set();for(const k in DATA.degsea)for(const c in DATA.degsea[k])degColls.add(c);
+  [...degColls].forEach(c=>items.push({id:"degsea:"+c,label:"DEGSEA OVA ("+c+")",grp:"DEGSEA"}));
+  return items;
+}
+
+function drawCentral(){
+  const host=$("stack-center");host.innerHTML="";
+  const k=curK, per=DATA.perK[String(k)], order=per.order, C=DATA.consensus[String(k)];
+  const W=plotW(), cw=W/N, side=Math.min(W,520), ch=side/N;
+  const wrap=document.createElement("div");wrap.className="panel";
+  const cv=document.createElement("canvas");wrap.appendChild(cv);host.appendChild(wrap);
+  const ctx=fitCanvas(cv,LM+W+RM,side+22);
+  ctx.fillStyle="#5a6b73";ctx.font="11px ui-monospace";ctx.fillText("Matrice de consensus — "+kInfo(k),6,14);
+  for(let i=0;i<N;i++){const ri=order[i];const rowD=C[ri];
+    for(let j=0;j<N;j++){ctx.fillStyle=consCol(rowD[order[j]]/100);ctx.fillRect(LM+j*cw,20+i*ch,Math.ceil(cw),Math.ceil(ch));}}
+  drawClusterSeparators(ctx,per,order,cw,20,side,"x");
+  drawClusterSeparators(ctx,per,order,ch,LM,W,"y",20);
+}
+function blocks(per,order){const b=[];let i=0;const lab=order.map(o=>per.labels[o]);
+  while(i<N){let j=i;while(j<N&&lab[j]===lab[i])j++;b.push([lab[i],i,j]);i=j;}return b;}
+function drawClusterSeparators(ctx,per,order,cw,off,len,axis,off2){
+  const bl=blocks(per,order);ctx.strokeStyle="rgba(0,0,0,.35)";ctx.lineWidth=1;
+  bl.forEach(([l,i,j])=>{if(i===0)return;ctx.beginPath();
+    if(axis==="x"){ctx.moveTo(LM+i*cw,off);ctx.lineTo(LM+i*cw,off+len);}
+    else{ctx.moveTo(off,off2+i*cw);ctx.lineTo(off+len,off2+i*cw);}ctx.stroke();});
+}
+
+/* ---- dessin d'un panneau additionnel (aligné colonnes) ---- */
+function makePanel(type,side){
+  const per=DATA.perK[String(curK)],order=per.order,W=plotW(),cw=W/N;
+  const wrap=document.createElement("div");wrap.className="panel";
+  const rm=document.createElement("button");rm.className="rm";rm.textContent="✕";
+  rm.onclick=()=>{const arr=side==="top"?topPanels:bottomPanels;const i=arr.indexOf(type);if(i>=0)arr.splice(i,1);render();};
+  const ttl=document.createElement("div");ttl.className="ttl";
+  const cv=document.createElement("canvas");wrap.appendChild(cv);wrap.appendChild(ttl);wrap.appendChild(rm);
+
+  const kind=type.split(":")[0], arg=type.split(":")[1];
+  if(kind==="tree"){ttl.textContent="Arbre consensus";drawTree(cv,per,W,cw);}
+  else if(kind==="clusters"){ttl.textContent="Clusters";drawClustersBar(cv,per,order,W,cw);}
+  else if(kind==="item"){ttl.textContent="Item consensus";drawItem(cv,per,order,W,cw);}
+  else if(kind==="meta"){ttl.textContent="Clinique : "+arg;drawMetaRow(cv,order,W,cw,arg);}
+  else if(kind==="sig"){ttl.textContent="Signatures ("+arg+")";drawMatrix(cv,order,W,cw,DATA.signatures[arg].values,DATA.signatures[arg].names,true);}
+  else if(kind==="deconv"){ttl.textContent="Déconvolution ("+arg+")";drawMatrix(cv,order,W,cw,DATA.deconv[arg].values,DATA.deconv[arg].types,true);}
+  else if(kind==="degsea"){ttl.textContent="DEGSEA OVA ("+arg+")";drawDegsea(cv,per,order,W,cw,arg);}
+  return wrap;
+}
+// couleur de stabilité Jaccard (seuils de Hennig 2007)
+function stabCol(s){return s<0.5?"#d7191c":s<0.75?"#fdae61":s<0.85?"#a6d96a":"#1a9641";}
+function drawTree(cv,per,W,cw){
+  const ic=per.icoord,dc=per.dcoord,stab=per.stability;let maxx=0,maxy=0;
+  ic.forEach(a=>a.forEach(v=>maxx=Math.max(maxx,v)));dc.forEach(a=>a.forEach(v=>maxy=Math.max(maxy,v)));
+  const H=stab?152:120,ctx=fitCanvas(cv,LM+W+RM,H);ctx.strokeStyle="#555";ctx.lineWidth=1;
+  const sx=v=>LM+(v/maxx)*W, sy=v=>H-14-(v/(maxy||1))*(H-34);
+  for(let l=0;l<ic.length;l++){const xs=ic[l],ys=dc[l];ctx.beginPath();
+    ctx.moveTo(sx(xs[0]),sy(ys[0]));ctx.lineTo(sx(xs[1]),sy(ys[1]));ctx.lineTo(sx(xs[2]),sy(ys[2]));ctx.lineTo(sx(xs[3]),sy(ys[3]));ctx.stroke();}
+  if(!stab)return;
+  // pastilles de stabilité Jaccard aux apex des branches (+ valeur si assez de place)
+  ctx.textAlign="center";ctx.textBaseline="middle";ctx.font="9px ui-monospace";
+  for(let l=0;l<ic.length;l++){const s=stab[l];if(s==null)continue;
+    const ax=sx((ic[l][1]+ic[l][2])/2),ay=sy(dc[l][1]);
+    ctx.fillStyle=stabCol(s);ctx.beginPath();ctx.arc(ax,ay,4,0,7);ctx.fill();
+    ctx.strokeStyle="#fff";ctx.lineWidth=0.8;ctx.stroke();
+    if(sx(ic[l][2])-sx(ic[l][1])>26){ctx.fillStyle="#222";ctx.fillText(s.toFixed(2).slice(1),ax,ay-9);}}
+  // mini-légende (coin haut-gauche)
+  ctx.textBaseline="middle";ctx.font="9px ui-sans-serif";const lx=LM+2,ly=7;
+  ctx.fillStyle="#5a6b73";ctx.textAlign="left";ctx.fillText("Jaccard",lx,ly);
+  [["#d7191c","<.5"],["#fdae61",".5–.75"],["#a6d96a",".75–.85"],["#1a9641","≥.85"]].forEach((sg,i)=>{
+    const bx=lx+48+i*54;ctx.fillStyle=sg[0];ctx.fillRect(bx,ly-4,9,9);
+    ctx.fillStyle="#5a6b73";ctx.fillText(sg[1],bx+11,ly);});
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";
+}
+function drawClustersBar(cv,per,order,W,cw){const H=20,ctx=fitCanvas(cv,LM+W+RM,H);
+  for(let i=0;i<N;i++){ctx.fillStyle=clusterCol(per.labels[order[i]]);ctx.fillRect(LM+i*cw,2,Math.ceil(cw),16);}}
+function drawItem(cv,per,order,W,cw){const H=46,ctx=fitCanvas(cv,LM+W+RM,H);ctx.fillStyle="#5a6b73";ctx.font="10px ui-monospace";
+  ctx.fillText("item consensus",6,12);
+  for(let i=0;i<N;i++){const v=per.item[order[i]];if(v==null)continue;const h=v*32;
+    ctx.fillStyle=clusterCol(per.labels[order[i]]);ctx.fillRect(LM+i*cw,H-4-h,Math.ceil(cw),h);}
+  ctx.strokeStyle="#bbb";ctx.beginPath();ctx.moveTo(LM,H-4-0.8*32);ctx.lineTo(LM+W,H-4-0.8*32);ctx.stroke();}
+function drawMetaRow(cv,order,W,cw,v){const H=22,ctx=fitCanvas(cv,LM+W+RM,H);const vals=DATA.meta[v],cont=DATA.metaTypes[v]==="continuous";
+  let lo=0,hi=1;if(cont){const f=vals.filter(x=>x!=null);lo=Math.min(...f);hi=Math.max(...f);}
+  const cats=cont?null:[...new Set(vals.filter(x=>x!=null))];
+  for(let i=0;i<N;i++){const x=vals[order[i]];if(x==null){ctx.fillStyle="#eee";}else if(cont){ctx.fillStyle=viridis((x-lo)/((hi-lo)||1));}
+    else{ctx.fillStyle=CAT[cats.indexOf(x)%CAT.length];}ctx.fillRect(LM+i*cw,3,Math.ceil(cw),16);}
+  ctx.fillStyle="#5a6b73";ctx.font="10px ui-monospace";ctx.textAlign="right";ctx.fillText(v.slice(0,24),LM-6,15);ctx.textAlign="left";}
+function drawMatrix(cv,order,W,cw,values,names,z){const rows=z?zrows(values):values;let vmax=0;
+  rows.forEach(r=>r.forEach(x=>{if(x!=null)vmax=Math.max(vmax,Math.abs(x));}));vmax=vmax||1;
+  const rowH=Math.max(4,Math.min(16,Math.floor(320/rows.length))),H=rows.length*rowH+4,ctx=fitCanvas(cv,LM+W+RM,H);
+  ctx.font=Math.min(10,rowH)+"px ui-monospace";ctx.textAlign="right";ctx.textBaseline="middle";
+  for(let r=0;r<rows.length;r++){for(let i=0;i<N;i++){const x=rows[r][order[i]];
+    ctx.fillStyle=x==null?"#eee":rdbu(x,vmax);ctx.fillRect(LM+i*cw,2+r*rowH,Math.ceil(cw),Math.ceil(rowH));}
+    if(rowH>=8){ctx.fillStyle="#33414a";ctx.fillText((names[r]||"").slice(0,26),LM-5,2+r*rowH+rowH/2);}}
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";}
+function drawDegsea(cv,per,order,W,cw,coll){
+  const dk=DATA.degsea[String(curK)];
+  if(!dk||!dk[coll]){const ctx=fitCanvas(cv,LM+W+RM,26);ctx.fillStyle="#c0392b";ctx.font="11px ui-monospace";
+    const has=Object.keys(DATA.degsea).sort((a,b)=>a-b).join(", ");
+    ctx.fillText("DEGSEA non calculé pour k="+curK+" (disponible pour k="+has+")",LM,16);return;}
+  const d=dk[coll],terms=d.terms,cl=d.clusters,nes=d.nes;
+  // top 30 pathways par amplitude
+  const amp=nes.map((row,i)=>[i,Math.max(...row.map(x=>x==null?0:Math.abs(x)))]).sort((a,b)=>b[1]-a[1]).slice(0,30).map(a=>a[0]);
+  let vmax=0;amp.forEach(i=>nes[i].forEach(x=>{if(x!=null)vmax=Math.max(vmax,Math.abs(x));}));vmax=vmax||1;
+  const cmap={};cl.forEach((c,j)=>cmap[c]=j);
+  const rowH=Math.max(6,Math.min(15,Math.floor(300/amp.length))),H=amp.length*rowH+4,ctx=fitCanvas(cv,LM+W+RM,H);
+  ctx.font=Math.min(10,rowH)+"px ui-monospace";ctx.textAlign="right";ctx.textBaseline="middle";
+  for(let r=0;r<amp.length;r++){const row=nes[amp[r]];
+    for(let i=0;i<N;i++){const c=per.labels[order[i]];const j=cmap[c];const x=(j==null)?null:row[j];
+      ctx.fillStyle=x==null?"#eee":rdbu(x,vmax);ctx.fillRect(LM+i*cw,2+r*rowH,Math.ceil(cw),Math.ceil(rowH));}
+    if(rowH>=8){ctx.fillStyle="#33414a";ctx.fillText(terms[amp[r]].slice(0,26),LM-5,2+r*rowH+rowH/2);}}
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";}
+
+function renderStack(hostId,arr){const host=$(hostId);host.innerHTML="";arr.forEach(t=>{
+  const wrap=document.createElement("div");wrap.className="stack";wrap.style.marginBottom="6px";
+  wrap.appendChild(makePanel(t,hostId==="stack-top"?"top":"bottom"));host.appendChild(wrap);});}
+function render(){drawCentral();renderStack("stack-top",topPanels);renderStack("stack-bottom",bottomPanels);drawUnsupLegend();}
+function drawUnsupLegend(){$("unsupLegend").innerHTML=
+  '<span><i class="sw" style="background:'+consCol(1)+'"></i>consensus élevé</span>'+
+  '<span><i class="sw" style="background:#e15759"></i>NES/valeur ↑ (rouge)</span>'+
+  '<span><i class="sw" style="background:#2166ac"></i>NES/valeur ↓ (bleu)</span>'+
+  DATA.perK[String(curK)]?'<span class="muted">clusters : '+[...new Set(DATA.perK[String(curK)].labels)].sort((a,b)=>a-b).map(l=>'<i class="sw" style="background:'+clusterCol(l)+'"></i>C'+l).join(" ")+'</span>':'';}
+
+// menu d'ajout de panneau
+let openMenu=null;
+function showMenu(side,anchor){
+  if(openMenu){openMenu.remove();openMenu=null;}
+  const m=document.createElement("div");m.className="menu";
+  const items=availablePanels();const groups={};items.forEach(it=>{(groups[it.grp]=groups[it.grp]||[]).push(it);});
+  for(const g in groups){const gl=document.createElement("div");gl.className="grp";gl.textContent=g;m.appendChild(gl);
+    groups[g].forEach(it=>{const b=document.createElement("button");b.textContent=it.label;
+      b.onclick=()=>{const arr=side==="top"?topPanels:bottomPanels;if(!arr.includes(it.id))arr.push(it.id);m.remove();openMenu=null;render();};m.appendChild(b);});}
+  document.body.appendChild(m);const r=anchor.getBoundingClientRect();
+  m.style.left=Math.min(r.left,window.innerWidth-260)+"px";m.style.top=(r.bottom+window.scrollY+4)+"px";openMenu=m;
+}
+document.querySelectorAll(".addbtn").forEach(b=>b.onclick=e=>showMenu(b.dataset.side,b));
+document.addEventListener("click",e=>{if(openMenu&&!openMenu.contains(e.target)&&!e.target.classList.contains("addbtn")){openMenu.remove();openMenu=null;}});
+fillKSelect($("kSelect"),curK);
+$("kSelect").onchange=e=>{curK=+e.target.value;render();};
+
+/* =========================================================
+   Signatures détaillé
+   ========================================================= */
+function quart(a){a=a.filter(x=>x!=null).sort((x,y)=>x-y);if(!a.length)return null;const q=p=>{const i=(a.length-1)*p,lo=Math.floor(i);return a[lo]+(a[Math.ceil(i)]-a[lo])*(i-lo);};return{min:a[0],q1:q(.25),med:q(.5),q3:q(.75),max:a[a.length-1],n:a.length};}
+// graduations "rondes" pour l'axe Y
+function niceTicks(lo,hi,n){const span=(hi-lo)||1;let step=Math.pow(10,Math.floor(Math.log10(span/n)));
+  const err=span/n/step;if(err>=7.5)step*=10;else if(err>=3.5)step*=5;else if(err>=1.5)step*=2;
+  const ticks=[];for(let t=Math.ceil(lo/step)*step;t<=hi+1e-9;t+=step)ticks.push(t);return ticks;}
+function fmtTick(t){const a=Math.abs(t);if(a!==0&&(a<0.01||a>=1e4))return t.toExponential(1);
+  return (Math.round(t*1000)/1000).toString();}
+function boxOptions(){return{axes:$("boAxes").checked,points:$("boPoints").checked,
+  opacity:+$("boOpacity").value,jitter:+$("boJitter").value,radius:+$("boRadius").value,
+  pair:$("boPair").checked};}
+// étoiles de significativité (Wilcoxon one-vs-rest) — cf. sigproj.stratified_signature_tests
+function starStr(p){return (p==null)?"":p<1e-3?"***":p<1e-2?"**":p<0.05?"*":"";}
+function sigTestPvals(method,sig,stratKey,k){
+  const bm=DATA.sigTests&&DATA.sigTests[method];if(!bm)return null;
+  const bs=bm[stratKey];if(!bs)return null;
+  const bk=bs[String(k)]||bs["*"];if(!bk)return null;   // cluster: par k ; clinique: "*"
+  return bk[sig]||null;}                                 // {ovr:{...}, pair:{...}}
+
+/* ---- Mann-Whitney U côté client (fidèle à scipy 'asymptotic' à ~1e-7 près :
+   correction de continuité + correction des ex-aequo, approx normale). Sert au
+   recalcul EN DIRECT des tests quand on filtre les patients. ---- */
+const MING=3;                                            // n minimal par groupe (sinon "ns")
+function _erf(x){const s=x<0?-1:1;x=Math.abs(x);const t=1/(1+0.3275911*x);
+  const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x);return s*y;}
+function _rankAvg(v){const n=v.length,idx=[...v.keys()].sort((a,b)=>v[a]-v[b]),r=new Array(n);
+  let i=0;while(i<n){let j=i;while(j+1<n&&v[idx[j+1]]===v[idx[i]])j++;const avg=(i+j)/2+1;
+    for(let q=i;q<=j;q++)r[idx[q]]=avg;i=j+1;}return r;}
+function mannwhitneyU(a,b){const n1=a.length,n2=b.length;if(n1<MING||n2<MING)return null;
+  const all=a.concat(b),r=_rankAvg(all);let R1=0;for(let i=0;i<n1;i++)R1+=r[i];
+  const U1=R1-n1*(n1+1)/2,mu=n1*n2/2,n=n1+n2;
+  const cnt={};all.forEach(v=>cnt[v]=(cnt[v]||0)+1);let tie=0;for(const q in cnt){const t=cnt[q];tie+=t*t*t-t;}
+  const varU=n1*n2/12*((n+1)-tie/(n*(n-1)));if(varU<=0)return 1;
+  let num=U1-mu;num-=Math.sign(num)*0.5;const z=num/Math.sqrt(varU);
+  return Math.min(1,Math.max(0,2*(1-0.5*(1+_erf(Math.abs(z)/Math.SQRT2)))));}
+// recalcule {ovr, pair} sur des groupes déjà filtrés (même forme que sigTestPvals)
+function liveTests(groups){const keys=Object.keys(groups),ovr={},pair={};
+  const cl=k=>groups[k].filter(x=>x!=null);
+  keys.forEach(k=>{let b=[];keys.forEach(k2=>{if(k2!==k)b=b.concat(cl(k2));});ovr[k]=mannwhitneyU(cl(k),b);});
+  for(let i=0;i<keys.length;i++)for(let j=i+1;j<keys.length;j++){
+    const p=mannwhitneyU(cl(keys[i]),cl(keys[j]));if(p!=null)(pair[keys[i]]=pair[keys[i]]||{})[keys[j]]=p;}
+  return {ovr,pair};}
+
+/* ---- Filtres patients (cases par variable clinique catégorielle) ---- */
+let sdFilterBoxes={};                                   // var -> [{el, val}]
+function filterMask(){const active=[];
+  for(const v in sdFilterBoxes){const arr=sdFilterBoxes[v],on=arr.filter(o=>o.el.checked);
+    if(on.length<arr.length)active.push({v,allow:new Set(on.map(o=>o.val))});}   // filtre actif si pas tout coché
+  return i=>active.every(f=>{const val=DATA.meta[f.v][i];return val!=null&&f.allow.has(""+val);});}
+function isFilterActive(){for(const v in sdFilterBoxes)if(sdFilterBoxes[v].some(o=>!o.el.checked))return true;return false;}
+
+// p-valeur pairwise entre deux modalités (dict imbriqué, une seule direction stockée)
+function pairP(pair,a,b){if(!pair)return null;
+  if(pair[a]&&pair[a][b]!=null)return pair[a][b];
+  if(pair[b]&&pair[b][a]!=null)return pair[b][a];return null;}
+
+function drawBox(cv,groups,tst){const opt=boxOptions();
+  const keys=Object.keys(groups),ML=opt.axes?54:14,MB=34,step=15;
+  const boxes=keys.map(k=>quart(groups[k])),bx=boxes.filter(Boolean);
+  if(!bx.length){const ctx=fitCanvas(cv,260,60);ctx.fillStyle="#888";ctx.fillText("—",20,20);return;}
+  const cxs=keys.map((k,idx)=>ML+34+idx*92);
+  // ---- barres pairwise significatives + empilage en niveaux (paires larges au-dessus)
+  let bars=[],nLev=0;
+  if(opt.pair&&tst&&tst.pair){
+    for(let i=0;i<keys.length;i++)for(let j=i+1;j<keys.length;j++){
+      if(!boxes[i]||!boxes[j])continue;
+      const p=pairP(tst.pair,keys[i],keys[j]);if(p==null||p>=0.05)continue;
+      bars.push({i,j,p,xi:cxs[i],xj:cxs[j]});}
+    bars.sort((a,b)=>a.xi-b.xi||a.xj-b.xj);   // tri par extrémité gauche = empilage minimal
+    const occ=[];bars.forEach(br=>{let L=0;
+      for(;;){const row=occ[L]||(occ[L]=[]);
+        if(row.every(iv=>br.xj<iv[0]-8||br.xi>iv[1]+8)){row.push([br.xi,br.xj]);br.level=L;break;}L++;}});
+    nLev=occ.length;}
+  const MT=opt.pair?14+nLev*step:22;                 // réserve la bande des barres
+  const W=Math.max(260,keys.length*92+ML+24),H=270+MT,ctx=fitCanvas(cv,W,H);
+  let lo=Math.min(...bx.map(b=>b.min)),hi=Math.max(...bx.map(b=>b.max));
+  const pad=(hi-lo)*0.08||1;lo-=pad;hi+=pad;
+  const y=v=>H-MB-((v-lo)/(hi-lo))*(H-MB-MT);
+  // ---- axe Y : graduations, labels, lignes de grille horizontales
+  if(opt.axes){ctx.font="10px ui-monospace";ctx.textAlign="right";ctx.textBaseline="middle";
+    niceTicks(lo,hi,5).forEach(t=>{const yy=y(t);
+      ctx.strokeStyle="#eef1f3";ctx.beginPath();ctx.moveTo(ML,yy);ctx.lineTo(W-8,yy);ctx.stroke();
+      ctx.strokeStyle="#999";ctx.beginPath();ctx.moveTo(ML-4,yy);ctx.lineTo(ML,yy);ctx.stroke();
+      ctx.fillStyle="#5a636c";ctx.fillText(fmtTick(t),ML-7,yy);});
+    ctx.strokeStyle="#999";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(ML,MT);ctx.lineTo(ML,H-MB);ctx.stroke();
+    ctx.textAlign="left";ctx.textBaseline="alphabetic";}
+  ctx.strokeStyle="#999";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(ML,H-MB);ctx.lineTo(W-8,H-MB);ctx.stroke();
+  keys.forEach((k,idx)=>{const b=boxes[idx];if(!b)return;const cx=cxs[idx],bw=44;
+    // moustaches (+ chapeaux)
+    ctx.strokeStyle="#333";ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(cx,y(b.min));ctx.lineTo(cx,y(b.max));
+    ctx.moveTo(cx-bw/4,y(b.min));ctx.lineTo(cx+bw/4,y(b.min));
+    ctx.moveTo(cx-bw/4,y(b.max));ctx.lineTo(cx+bw/4,y(b.max));ctx.stroke();
+    // boîte + médiane
+    ctx.fillStyle=CAT[idx%CAT.length]+"99";ctx.fillRect(cx-bw/2,y(b.q3),bw,y(b.q1)-y(b.q3));
+    ctx.strokeStyle="#111";ctx.strokeRect(cx-bw/2,y(b.q3),bw,y(b.q1)-y(b.q3));
+    ctx.beginPath();ctx.moveTo(cx-bw/2,y(b.med));ctx.lineTo(cx+bw/2,y(b.med));ctx.stroke();
+    // points de données (jitter horizontal déterministe, opacité réglable)
+    if(opt.points){let seed=(idx*2654435761)>>>0;const rnd=()=>{seed=(seed*1664525+1013904223)>>>0;return seed/4294967296;};
+      ctx.fillStyle=CAT[idx%CAT.length];ctx.strokeStyle="rgba(0,0,0,.35)";ctx.lineWidth=.5;ctx.globalAlpha=opt.opacity;
+      groups[k].filter(x=>x!=null).forEach(v=>{const jx=(rnd()-0.5)*bw*0.92*opt.jitter;
+        ctx.beginPath();ctx.arc(cx+jx,y(v),opt.radius,0,7);ctx.fill();ctx.stroke();});
+      ctx.globalAlpha=1;}
+    // one-vs-rest au-dessus de la moustache haute (mode par défaut) :
+    // étoiles si significatif, "ns" en gris si groupe trop petit / non testé
+    if(!opt.pair&&tst&&tst.ovr){const p=tst.ovr[k];ctx.textAlign="center";
+      if(p==null){ctx.fillStyle="#999";ctx.font="10px ui-sans-serif";ctx.fillText("ns",cx,y(b.max)-8);}
+      else{const stx=starStr(p);if(stx){ctx.fillStyle="#111";ctx.font="bold 13px ui-sans-serif";ctx.fillText(stx,cx,y(b.max)-8);}}
+      ctx.textAlign="left";}
+    ctx.fillStyle="#33414a";ctx.font="10px ui-monospace";ctx.textAlign="center";
+    ctx.fillText((k+"").slice(0,11),cx,H-20);ctx.fillText("n="+b.n,cx,H-8);ctx.textAlign="left";});
+  // ---- barres de comparaison pairwise (chapeau + étoiles au-dessus)
+  if(opt.pair&&bars.length){const topBox=Math.min(...bx.map(b=>y(b.max)));
+    ctx.font="bold 12px ui-sans-serif";
+    bars.forEach(br=>{const yB=topBox-10-br.level*step,xi=cxs[br.i],xj=cxs[br.j];
+      ctx.strokeStyle="#555";ctx.lineWidth=1;ctx.beginPath();
+      ctx.moveTo(xi,yB+4);ctx.lineTo(xi,yB);ctx.lineTo(xj,yB);ctx.lineTo(xj,yB+4);ctx.stroke();
+      ctx.fillStyle="#111";ctx.textAlign="center";ctx.fillText(starStr(br.p),(xi+xj)/2,yB-2);ctx.textAlign="left";});}}
+function sdStratGroups(scoreRow,stratKey){
+  const g={},per=DATA.perK[String(+$("sdK").value)],pass=filterMask();
+  for(let i=0;i<N;i++){if(!pass(i))continue;let key;   // filtre patients
+    if(stratKey==="__cluster__")key="C"+per.labels[i];
+    else{const v=DATA.meta[stratKey][i];if(v==null)continue;key=""+v;}
+    const s=scoreRow[i];if(s==null)continue;(g[key]=g[key]||[]).push(s);}return g;}
+function redrawBoxes(){
+  const sig=$("sdSig").value,strat=$("sdStrat").value,k=+$("sdK").value,filt=isFilterActive();
+  ["ss","mean"].forEach(m=>{const meth=m==="ss"?"ssgsea":"mean";const S=DATA.signatures[meth];if(!S){return;}
+    const ri=S.names.indexOf(sig);if(ri<0)return;const g=sdStratGroups(S.values[ri],strat);
+    // filtre actif -> recalcul live (Mann-Whitney JS) ; sinon tests précalculés (scipy)
+    const tst=filt?liveTests(g):sigTestPvals(meth,sig,strat,k);
+    drawBox($("sdBox"+(m==="ss"?"Ss":"Mean")),g,tst);});
+}
+function renderSigDet(){
+  redrawBoxes();
+  // heatmap alignée (ssgsea)
+  const host=$("sdHeat");host.innerHTML="";const per=DATA.perK[String(+$("sdK").value)];
+  const p=document.createElement("div");p.className="panel";const cv=document.createElement("canvas");p.appendChild(cv);host.appendChild(p);
+  if(DATA.signatures.ssgsea){const W=Math.max(320,host.clientWidth-LM-RM);drawMatrix(cv,per.order,W,W/N,DATA.signatures.ssgsea.values,DATA.signatures.ssgsea.names,true);}
+}
+(function initSigDet(){
+  const ss=DATA.signatures.ssgsea;if(ss){ss.names.forEach(nm=>{const o=document.createElement("option");o.value=nm;o.textContent=nm;$("sdSig").appendChild(o);});}
+  const st=$("sdStrat");const oc=document.createElement("option");oc.value="__cluster__";oc.textContent="Cluster";st.appendChild(oc);
+  for(const v in DATA.meta) if(DATA.metaTypes[v]==="categorical"){const o=document.createElement("option");o.value=v;o.textContent=v;st.appendChild(o);}
+  fillKSelect($("sdK"),DATA.kFinal);
+  // ---- construction des filtres patients (une ligne de cases par variable catégorielle)
+  const host=$("sdFilters");sdFilterBoxes={};
+  for(const v in DATA.meta){if(DATA.metaTypes[v]!=="categorical")continue;
+    const cats=[...new Set(DATA.meta[v].filter(x=>x!=null))].map(String).sort();
+    sdFilterBoxes[v]=[];const row=document.createElement("div");row.className="frow";
+    const nm=document.createElement("span");nm.className="fvarname";nm.textContent=v;row.appendChild(nm);
+    cats.forEach(c=>{const lab=document.createElement("label");lab.className="fchip";
+      const cb=document.createElement("input");cb.type="checkbox";cb.checked=true;
+      lab.appendChild(cb);lab.appendChild(document.createTextNode(" "+c));row.appendChild(lab);
+      sdFilterBoxes[v].push({el:cb,val:c});});
+    host.appendChild(row);}
+  if(!Object.keys(sdFilterBoxes).length)host.innerHTML='<span class="muted">Aucune variable clinique catégorielle à filtrer.</span>';
+  host.addEventListener("change",redrawBoxes);
+  $("sdFilterReset").onclick=()=>{host.querySelectorAll("input").forEach(b=>b.checked=true);redrawBoxes();};
+  ["sdSig","sdStrat","sdK"].forEach(id=>$(id).onchange=renderSigDet);
+  // menu d'affichage des boxplots : ne redessine que les deux boîtes (léger)
+  ["boAxes","boPoints","boOpacity","boJitter","boRadius","boPair"].forEach(id=>$(id).oninput=()=>{
+    const v=$(id+"V");if(v)v.textContent=(+$(id).value).toFixed(2);redrawBoxes();});
+})();
+
+/* =========================================================
+   t-SNE / UMAP — nuage 3D interactif (glisser = tourner, molette = zoom)
+   ========================================================= */
+let emRot={x:0.35,y:0.6}, emZoom=1;
+// marqueurs : une forme par catégorie clinique (glyphe pour la légende + tracé canvas)
+const MK=[
+  {g:"●",d:(c,x,y,r)=>{c.beginPath();c.arc(x,y,r,0,7);c.fill();}},                                   // cercle
+  {g:"■",d:(c,x,y,r)=>{c.fillRect(x-r,y-r,2*r,2*r);}},                                                // carré
+  {g:"▲",d:(c,x,y,r)=>{c.beginPath();c.moveTo(x,y-r);c.lineTo(x+r,y+r);c.lineTo(x-r,y+r);c.closePath();c.fill();}},   // triangle haut
+  {g:"◆",d:(c,x,y,r)=>{c.beginPath();c.moveTo(x,y-r);c.lineTo(x+r,y);c.lineTo(x,y+r);c.lineTo(x-r,y);c.closePath();c.fill();}}, // losange
+  {g:"▼",d:(c,x,y,r)=>{c.beginPath();c.moveTo(x,y+r);c.lineTo(x+r,y-r);c.lineTo(x-r,y-r);c.closePath();c.fill();}},   // triangle bas
+  {g:"✚",d:(c,x,y,r)=>{const w=r*0.5;c.fillRect(x-w,y-r,2*w,2*r);c.fillRect(x-r,y-w,2*r,2*w);}},       // croix
+];
+
+// Registre des variables projetables sur les canaux couleur / forme / taille.
+// Chaque source : {label, grp, kind:'cat'|'cont', + accès aux valeurs par tumeur}.
+let EMSRC=[];
+function buildEmSources(){const s=[];
+  s.push({label:"Cluster",grp:"Structure",kind:"cat",cluster:true});
+  for(const v in DATA.meta)s.push({label:v,grp:"Clinique",
+    kind:DATA.metaTypes[v]==="continuous"?"cont":"cat",meta:v});
+  [["ssgsea","Signature ssGSEA"],["mean","Signature moyenne"]].forEach(([m,g])=>{const S=DATA.signatures[m];
+    if(S)S.names.forEach((nm,ri)=>s.push({label:nm,grp:g,kind:"cont",sigM:m,row:ri}));});
+  for(const m in DATA.deconv)DATA.deconv[m].types.forEach((t,ri)=>
+    s.push({label:t,grp:"Déconv. "+m,kind:"cont",decM:m,row:ri}));
+  return s;}
+function emGet(id){const v=$(id).value;return (v===""||v==="none")?null:EMSRC[+v];}
+function emVals(src){if(!src)return null;
+  if(src.cluster){const per=DATA.perK[String(+$("emK").value)];return{cont:false,vals:SAMPLES.map((_,i)=>"C"+per.labels[i])};}
+  if(src.meta!=null)return{cont:DATA.metaTypes[src.meta]==="continuous",vals:DATA.meta[src.meta]};
+  if(src.sigM)return{cont:true,vals:DATA.signatures[src.sigM].values[src.row]};
+  if(src.decM)return{cont:true,vals:DATA.deconv[src.decM].values[src.row]};
+  return null;}
+// remplit un <select> (regroupé par grp) en ne gardant que les sources voulues
+function fillEmSelect(sel,pred,noneLabel){sel.innerHTML="";
+  const none=document.createElement("option");none.value="none";none.textContent=noneLabel;sel.appendChild(none);
+  const groups={};EMSRC.forEach((src,i)=>{if(!pred(src))return;(groups[src.grp]=groups[src.grp]||[]).push(i);});
+  for(const g in groups){const og=document.createElement("optgroup");og.label=g;
+    groups[g].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=EMSRC[i].label;og.appendChild(o);});
+    sel.appendChild(og);}}
+
+function renderEmbed(){
+  const method=$("emMethod").value, pts=DATA.embed[method], cv=$("emCanvas");
+  if(!pts){fitCanvas(cv,400,80).fillText("Pas d'embedding "+method,10,20);return;}
+  const W=560,H=520,ctx=fitCanvas(cv,W,H), n=pts.length;
+  let cx=0,cy=0,cz=0; pts.forEach(p=>{cx+=p[0];cy+=p[1];cz+=p[2];}); cx/=n;cy/=n;cz/=n;
+  let rmax=1e-6; pts.forEach(p=>{rmax=Math.max(rmax,Math.abs(p[0]-cx),Math.abs(p[1]-cy),Math.abs(p[2]-cz));});
+  const ext=rmax*1.08;                                       // demi-côté de la boîte (marge)
+  const s=(Math.min(W,H)*0.34/ext)*emZoom;
+  // rotation : lacet (Y) puis tangage (X) — projection d'un point (data -> écran)
+  const cyy=Math.cos(emRot.y),syy=Math.sin(emRot.y),cxx=Math.cos(emRot.x),sxx=Math.sin(emRot.x);
+  const P=(x,y,z)=>{let X=(x-cx)*s,Y=(y-cy)*s,Z=(z-cz)*s;
+    let x1=X*cyy - Z*syy, z1=X*syy + Z*cyy;
+    let y2=Y*cxx - z1*sxx, z2=Y*sxx + z1*cxx;
+    return {x:W/2+x1, y:H/2-y2, d:z2};};
+
+  // ---- cadre 3D : grille sur les 3 parois arrière + boîte + axes/labels
+  const GRID="#e4e8eb",BOX="#c4cbd1",AX="#8a94a0",AXT="#5a636c",cc=[cx,cy,cz];
+  const faceDepth=(a,sg)=>{const p=[...cc];p[a]=cc[a]+sg*ext;return P(p[0],p[1],p[2]).d;};
+  const wall=(fa,sg)=>{const N=4,f=cc[fa]+sg*ext,ax=[0,1,2].filter(a=>a!==fa);
+    const mk=(u,v)=>{const p=[0,0,0];p[fa]=f;p[ax[0]]=cc[ax[0]]-ext+u;p[ax[1]]=cc[ax[1]]-ext+v;return P(p[0],p[1],p[2]);};
+    ctx.strokeStyle=GRID;ctx.lineWidth=1;
+    for(let i=0;i<=N;i++){const t=2*ext*i/N;
+      let a=mk(t,0),b=mk(t,2*ext);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+      let e=mk(0,t),g=mk(2*ext,t);ctx.beginPath();ctx.moveTo(e.x,e.y);ctx.lineTo(g.x,g.y);ctx.stroke();}};
+  [0,1,2].forEach(a=>wall(a, faceDepth(a,-1)>faceDepth(a,1)?-1:1));   // parois les plus lointaines
+  const corner=(i,j,k)=>P(cx+i*ext,cy+j*ext,cz+k*ext),S=[-1,1];
+  ctx.strokeStyle=BOX;ctx.lineWidth=1;                                // 12 arêtes de la boîte
+  for(const j of S)for(const k of S){let a=corner(-1,j,k),b=corner(1,j,k);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+  for(const i of S)for(const k of S){let a=corner(i,-1,k),b=corner(i,1,k);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+  for(const i of S)for(const j of S){let a=corner(i,j,-1),b=corner(i,j,1);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+  let cs=[];for(const i of S)for(const j of S)for(const k of S)cs.push({i,j,k,p:corner(i,j,k)});
+  const o=cs.reduce((a,b)=>b.p.d>a.p.d?b:a),sg=[o.i,o.j,o.k];        // coin le plus lointain = origine des axes
+  const L=[method.toUpperCase()+" 1",method.toUpperCase()+" 2",method.toUpperCase()+" 3"];
+  ctx.font="11px ui-sans-serif";
+  [0,1,2].forEach(ai=>{const nn=[...sg];nn[ai]=-nn[ai];
+    const a=corner(sg[0],sg[1],sg[2]),b=corner(nn[0],nn[1],nn[2]);
+    ctx.strokeStyle=AX;ctx.lineWidth=1.7;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    ctx.fillStyle=AXT;ctx.textAlign=b.x<a.x?"right":"left";
+    ctx.fillText(L[ai],b.x+(b.x<a.x?-4:4),b.y+4);});
+  ctx.textAlign="left";
+
+  // ---- trois canaux INDÉPENDANTS : couleur / forme / taille
+  const colSrc=emGet("emColor"),shpSrc=emGet("emShape"),szSrc=emGet("emSize");
+  const colV=emVals(colSrc),shpV=emVals(shpSrc),szV=emVals(szSrc);
+  // couleur : dégradé (continu) ou palette (catégoriel), gris si valeur nulle
+  let clo=0,chi=1,ccats=[];
+  if(colV){if(colV.cont){const f=colV.vals.filter(x=>x!=null);clo=Math.min(...f);chi=Math.max(...f);}
+    else ccats=[...new Set(colV.vals.filter(x=>x!=null))];}
+  const colorOf=i=>{if(!colV)return "#3b82c4";const v=colV.vals[i];if(v==null)return "#ccc";
+    return colV.cont?viridis((v-clo)/((chi-clo)||1)):CAT[ccats.indexOf(v)%CAT.length];};
+  // forme : une par modalité (catégoriel uniquement)
+  let scats=[];if(shpV)scats=[...new Set(shpV.vals.filter(x=>x!=null))];
+  const shapeOf=i=>{if(!shpV)return MK[0];const v=shpV.vals[i];
+    return (v==null)?MK[0]:MK[scats.indexOf(v)%MK.length];};
+  // taille : proportionnelle à la valeur (continu uniquement)
+  let zlo=0,zhi=1;if(szV){const f=szV.vals.filter(x=>x!=null);zlo=Math.min(...f);zhi=Math.max(...f);}
+  const sizeOf=(i,depth)=>{let base=3.2;if(szV){const v=szV.vals[i];
+      base=v==null?2.0:2.0+4.6*((v-zlo)/((zhi-zlo)||1));}return base*(0.7+0.55*depth);};
+  const proj=pts.map((p,i)=>{const q=P(p[0],p[1],p[2]);q.i=i;return q;});
+  proj.sort((a,b)=>a.d-b.d);                                          // painter : loin -> près
+  proj.forEach(q=>{const depth=(q.d/(ext*s)+1)/2;ctx.globalAlpha=0.55+0.45*depth;
+    ctx.fillStyle=colorOf(q.i);shapeOf(q.i).d(ctx,q.x,q.y,sizeOf(q.i,depth));});
+  ctx.globalAlpha=1;
+
+  // ---- légende : une section par canal actif
+  const HH='style="font-weight:600;margin-top:7px;color:#3a444b"';
+  let out="<b>"+kInfo(+$("emK").value)+" · "+method.toUpperCase()+" 3D</b>"+
+    "<div class='muted'>glisser = tourner · molette = zoom</div>";
+  if(colSrc){out+="<div "+HH+">Couleur : "+colSrc.label+"</div>";
+    if(colV.cont){for(let t=4;t>=0;t--){const v=clo+(chi-clo)*t/4;out+='<div><i class="sw" style="background:'+viridis(t/4)+'"></i>'+(isFinite(v)?v.toFixed(2):"—")+'</div>';}}
+    else ccats.forEach((c,i)=>out+='<div><i class="sw" style="background:'+CAT[i%CAT.length]+'"></i>'+c+'</div>');}
+  if(shpSrc){out+="<div "+HH+">Forme : "+shpSrc.label+"</div>";
+    scats.forEach((c,i)=>out+='<div><span style="font-size:14px;line-height:1;color:#33414a">'+MK[i%MK.length].g+'</span> '+c+'</div>');}
+  if(szSrc){out+="<div "+HH+">Taille : "+szSrc.label+"</div>"+
+    '<div class="muted">'+(isFinite(zlo)?zlo.toFixed(2):"—")+' → '+(isFinite(zhi)?zhi.toFixed(2):"—")+' (petit → grand)</div>';}
+  $("emLegend").innerHTML=out;
+}
+
+(function initEmbed(){
+  const em=$("emMethod");Object.keys(DATA.embed).forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m.toUpperCase();em.appendChild(o);});
+  fillKSelect($("emK"),DATA.kFinal);
+  EMSRC=buildEmSources();
+  fillEmSelect($("emColor"),()=>true,             "— aucun (couleur unie) —");
+  fillEmSelect($("emShape"),s=>s.kind==="cat",    "— aucune (cercle) —");   // catégoriel seul
+  fillEmSelect($("emSize"), s=>s.kind==="cont",   "— aucune (taille fixe) —"); // continu seul
+  $("emColor").value="0";                          // couleur par défaut = Cluster
+  ["emColor","emShape","emSize","emMethod","emK"].forEach(id=>$(id).onchange=renderEmbed);
+  // interaction 3D (rotation à la souris, zoom molette)
+  const cv=$("emCanvas");let drag=false,lx=0,ly=0;cv.style.cursor="grab";
+  cv.addEventListener("mousedown",e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.style.cursor="grabbing";});
+  window.addEventListener("mouseup",()=>{drag=false;cv.style.cursor="grab";});
+  window.addEventListener("mousemove",e=>{if(!drag)return;emRot.y+=(e.clientX-lx)*0.01;emRot.x+=(e.clientY-ly)*0.01;lx=e.clientX;ly=e.clientY;renderEmbed();});
+  cv.addEventListener("wheel",e=>{e.preventDefault();emZoom*=(e.deltaY<0?1.1:0.9);emZoom=Math.max(0.3,Math.min(6,emZoom));renderEmbed();},{passive:false});
+  renderEmbed();
+})();
+
+/* =========================================================
+   ONGLET TABLEAUX
+   ========================================================= */
+let tblSort={col:-1,dir:1};
+(function initTables(){const s=$("tblSelect");Object.keys(DATA.tables).forEach(name=>{const o=document.createElement("option");o.value=name;o.textContent=name;s.appendChild(o);});
+  s.onchange=()=>{tblSort={col:-1,dir:1};renderTable();};$("tblFilter").oninput=renderTable;renderTable();})();
+function renderTable(){const name=$("tblSelect").value;const T=DATA.tables[name];if(!T){return;}
+  const filt=$("tblFilter").value.toLowerCase();let rows=T.rows;
+  if(filt)rows=rows.filter(r=>r.some(c=>(c==null?"":(""+c)).toLowerCase().includes(filt)));
+  if(tblSort.col>=0){const c=tblSort.col;rows=rows.slice().sort((a,b)=>{let x=a[c],y=b[c];
+    const nx=parseFloat(x),ny=parseFloat(y);if(!isNaN(nx)&&!isNaN(ny)){x=nx;y=ny;}else{x=x==null?"":""+x;y=y==null?"":""+y;}
+    return (x<y?-1:x>y?1:0)*tblSort.dir;});}
+  const tbl=$("tbl");let h="<thead><tr>";T.columns.forEach((c,i)=>h+="<th>"+esc(c)+(tblSort.col===i?(tblSort.dir>0?" ▲":" ▼"):"")+"</th>");h+="</tr></thead><tbody>";
+  rows.slice(0,4000).forEach(r=>{h+="<tr>";r.forEach(c=>h+="<td>"+esc(c==null?"":c)+"</td>");h+="</tr>";});h+="</tbody>";tbl.innerHTML=h;
+  tbl.querySelectorAll("th").forEach((th,i)=>th.onclick=()=>{tblSort.dir=(tblSort.col===i)?-tblSort.dir:1;tblSort.col=i;renderTable();});
+  $("tblInfo").textContent=rows.length+" lignes"+(T.truncated?" (table tronquée à 3000)":"");}
+function esc(s){return(""+s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+
+/* =========================================================
+   ONGLET PRÉ-ANALYSE
+   ========================================================= */
+(function initPre(){const host=$("preList");if(!DATA.preAnalysis.length){host.innerHTML='<p class="muted">Aucune figure de pré-analyse.</p>';return;}
+  DATA.preAnalysis.forEach(o=>{const c=document.createElement("div");c.className="imgcard";
+    c.innerHTML="<h3>"+esc(o.title)+"</h3>";const im=document.createElement("img");im.src=o.img;c.appendChild(im);host.appendChild(c);});})();
+
+/* ---------- navigation onglets ---------- */
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+  t.classList.add("active");document.querySelectorAll(".pane").forEach(p=>p.classList.remove("active"));$("pane-"+t.dataset.tab).classList.add("active");});
+document.querySelectorAll(".subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".subtab").forEach(x=>x.classList.remove("active"));
+  t.classList.add("active");document.querySelectorAll(".sub").forEach(p=>p.classList.remove("active"));$("sub-"+t.dataset.sub).classList.add("active");
+  if(t.dataset.sub==="sigdet")renderSigDet();if(t.dataset.sub==="embed")renderEmbed();});
+window.addEventListener("resize",()=>{clearTimeout(window.__rt);window.__rt=setTimeout(()=>{if($("sub-unsup").classList.contains("active"))render();},200);});
+
+render();
+</script>
+</body>
+</html>

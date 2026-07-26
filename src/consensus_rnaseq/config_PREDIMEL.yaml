@@ -1,0 +1,153 @@
+# Configuration du pipeline consensus clustering.
+#
+# Usage :
+#   python run_pipeline.py --config config.yaml
+#
+# Comment régler chaque paramètre (algo, distance, linkage, k…) : voir GUIDE_config.md
+#
+# Tout paramètre passé en ligne de commande a la PRIORITÉ sur ce fichier ;
+# le YAML a lui-même la priorité sur les défauts internes. Exemple :
+#   python run_pipeline.py --config config.yaml --k-max 12 --compute_jaccard n
+# lance le run décrit ici mais force k-max=12 et désactive la stabilité Jaccard.
+#
+# Les clés utilisent des underscores (n_top_genes, color_by, tsne_dim, ...),
+# pas des tirets. Une valeur laissée à `null` reprend le défaut interne.
+
+# ============================================================= 1 · Entrées / sorties
+counts: /mnt/d/00_PUBLIC_DATA/00_DATASETS/01_BULK/00_MERGED/01_MELANOMA/PREDIMEL_78220_91061_23709/rawCounts/expression_corrected_counts_symbol.csv                  # OBLIGATOIRE : matrice csv/tsv/parquet (gènes en lignes)
+samples_in_rows: false        # true si les échantillons sont en lignes
+metadata: /mnt/d/00_PUBLIC_DATA/00_DATASETS/01_BULK/00_MERGED/01_MELANOMA/PREDIMEL_78220_91061_23709/rawCounts/clinical_metadata.csv                # csv/tsv indexé par échantillon (annotations cliniques)
+color_by: antipd1                # colonne des métadonnées à superposer sur les embeddings
+outdir: /mnt/d/03_SARAH_projet/01_OUTPUTS/ConsensusClustering/PREDIMEL           # dossier de sortie
+
+# ================================================= 1 · Prétraitement (normalisation, gènes variables)
+already_normalized: false     # true si entrée déjà en VST/rlog/logCPM (saute filtrage + normalisation)
+norm_method: vst              # normalisation des counts bruts : vst (DESeq2/PyDESeq2, défaut) | logcpm
+min_cpm: 1.0
+min_frac_samples: 0.2
+keep_technical: false         # true = garde les gènes RP/MT/HB
+n_top_genes: 5000
+variance_method: mad          # mad | var
+scale_genes: false            # true = z-score par gène
+
+# ================================================= 1a · Pureté tumorale (PUREE)
+purity_threshold: 0           # seuil dans ]0,1[ ; 0 / null / false = pas de filtrage (PUREE non lancé)
+purity_direction: higher      # higher = garde puretés >= seuil ; lower = garde puretés <= seuil
+puree_dir: /home/quentin/02_MODELS/PUREE               # dépôt PUREE (predict_purity.py, models/, data/)
+puree_python: /home/quentin/miniforge3/envs/PUREE/bin/python  # interpréteur de l'env PUREE
+puree_gene_id: HGNC           # HGNC (symboles) | ENSEMBL
+
+# ================================================= 1b · Filtrage d'outliers (ACP)
+outlier_sd_threshold: 3       # ACP + retrait des tumeurs à > N SD sur une CP ; 0 = aucun retrait
+outlier_n_pc: 5               # nombre de composantes inspectées pour la détection d'outliers
+outlier_min_explained_var: 0.0  # si > 0 : inspecte les CP à variance expliquée > seuil (0.08 = 8 %) au lieu de n_pc
+
+# ================================================= 2 · Consensus clustering (+ choix de k)
+k_min: 3
+k_max: 6
+n_resamples: 2000
+prop_samples: 0.8
+prop_genes: 0.8
+sample_mode: bootstrap        # subsample | bootstrap
+gene_mode: bootstrap          # subsample | bootstrap
+base: hierarchical            # hierarchical | kmeans | kmedoids
+metric: pearson               # pearson | spearman | euclidean | cosine
+linkage: average              # average | complete | ward | single
+k_final: null                 # entier pour forcer k ; null = choix automatique (voir k_criterion)
+k_criterion: pac             # choix auto de k : pac (min PAC) | deltak (coude Δ(K)) | both
+min_cluster_size: 10
+
+# ================================================= 4b · Stabilité des branches (Jaccard bootstrap)
+compute_jaccard: y            # y | n
+
+# ================================================= 5 · Embeddings (t-SNE / UMAP)
+tsne_dim: 3                   # 2 (PNG) | 3 (HTML interactif, nécessite plotly)
+perplexity: 30.0
+n_neighbors: 15
+min_dist: 0.1
+no_umap: false                # true = ne calcule pas l'UMAP
+
+# ================================================= 6 · DEGSEA (DESeq2 + GSEA par cluster)
+run_degsea: y                 # y | n — DESeq2 + GSEA par cluster (étape longue). counts bruts + symboles HGNC
+
+# Collections de gene sets pour le GSEA : un dictionnaire {nom: chemin.gmt}.
+# Commenter la ligne pour ne pas utiliser une collection. Si toutes commentées.
+gsea_collections:
+  # c1: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c1.gmt   # Positional — bandes cytogénétiques (300)
+  # c2: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c2.gmt   # Curated — Reactome/KEGG/WikiPathways… (6495)
+  # c3: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c3.gmt   # Regulatory targets — TFT + miRNA (3713)
+  # c4: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c4.gmt   # Computational cancer — CGN + CM (858)
+  # c5: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c5.gmt   # Ontology — GO + HPO (28339, TRÈS LENT)
+  # c6: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c6.gmt   # Oncogenic (189)
+  # c7: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c7.gmt   # Immunologic — ImmuneSigDB + vaccins (5219)
+  # c8: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c8.gmt   # Cell type — single-cell (830)
+  h:  /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/h.gmt    # Hallmark (50)
+  # sigGeNeHetX: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/sigGeNeHetX.gmt  # Custom immun (164)
+  signatures_select: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/signatures_select.gmt  # Custom curées
+
+degsea_mode: ova             # ova (one-vs-all) | ovo (one-vs-one) | both
+degsea_all_k: y              # y | n — si y : DEGSEA calculé pour TOUS les k [k_min..k_max]
+                             #   (tables/degsea/k<k>/ par k + panneau DEGSEA alignable sur chaque k
+                             #   dans le rapport). Très coûteux. Défaut n : seul le k final.
+gsea_gene_sets: ~/.cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt  # .gmt unique de repli (si gsea_collections vide)
+gsea_permutations: 1000       # permutations du GSEA pré-classé
+gsea_heatmap_pval: 0.05       # heatmap : garde tous les pathways à p-valeur nominale < ce seuil dans >= 1 cluster
+
+# ================================================= 7 · Projection de signatures (scoring + association clinique)
+compute_signatures: y         # y | n — score les signatures par tumeur (ssGSEA + expression moyenne) et teste l'association aux variables cliniques
+
+# Sources de signatures à projeter, HARMONISÉES : chacune a sa propre nomenclature,
+# on les ramène toutes à {signature: gènes}. Ajoute une entrée pour une nouvelle
+# source, aucun changement de code requis.
+#   format: gmt  -> fichier .gmt standard
+#   format: csv  -> une signature par ligne ; colonnes name_col / genes_col / detail_col
+#                   et séparateur des gènes genes_sep
+signature_sources:
+  select:                     # signatures curées à la main (Ayers anti-PD1, CAF, ICA, PREDIMEL…)
+    format: gmt
+    path: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/signatures_select.gmt
+  sigGeNeHetX:                # signatures immunes maison (Neutro-atlas)
+    format: gmt
+    path: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/sigGeNeHetX.gmt
+  IPRES:                      # résistance anti-PD1 (Hugo et al. 2016) — CSV
+    format: csv
+    path: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/IPRES/IPRES.csv
+    name_col: Geneset
+    genes_col: Gene Listing
+    detail_col: Detail
+    genes_sep: ";"
+
+sig_corr_method: spearman     # variables continues : spearman | pearson (catégorielles = Wilcoxon)
+sig_top_n: 8                  # nb de top signatures affichées par variable
+sig_pval: 0.05                # seuil FDR pour retenir une signature comme significative
+
+# ================================================= 8 · Déconvolution (omnideconv / immunedeconv)
+run_deconv: y                 # y | n — batterie de déconvolution (étape longue ; R en sous-processus)
+
+# Référence single-cell (uniquement pour DWLS / BayesPrism ; les 4 autres n'en ont pas besoin).
+# format: rds (Seurat/SingleCellExperiment) ; counts_csv prévu pour l'avenir.
+deconv_reference:
+  format: rds
+  path: /mnt/d/00_PUBLIC_DATA/00_DATASETS/02_SingleCell/01_MELANOMA/GSE269936/GSE269936_ref_melan_sc.rds
+  celltype_col: cell_type     # colonne des types cellulaires (14 types : B, CD8 T, Tumor, Fibroblast…)
+  batch_col: patient_sample   # colonne batch/échantillon (36) pour la correction d'effet lot
+  max_cells_per_type: 200     # sous-échantillonnage de la référence (tractabilité DWLS/BayesPrism)
+
+# Méthodes : `enabled` + paramètres propres à chacune. Tout activé par défaut ;
+# les paramètres inconnus d'une méthode sont ignorés (filtrés côté R).
+deconv_methods:
+  mcp_counter: {enabled: true}                            # scores d'abondance (sans référence)
+  xcell:       {enabled: false}                            # scores d'enrichissement, 64 types (sans référence)
+  quantiseq:   {enabled: true, tumor: true}               # fractions absolues (tumor=true retire "uncharacterized")
+  epic:        {enabled: false, tumor: true}               # fractions (signature TRef adaptée aux tumeurs)
+  dwls:        {enabled: false, dwls_method: mast_optimized}  # fractions, via référence single-cell
+  bayesprism:  {enabled: false}                            # fractions, via référence single-cell — TRÈS LENT
+
+# ================================================= 10 · Rapport d'analyse (HTML interactif)
+create_report: y              # y | n — génère outdir/report.html (rapport autonome de tous les résultats)
+
+# ================================================= Divers (transversal : parallélisation, graine)
+parallel: y                   # y (défaut) = parallélise consensus/Jaccard/DEGSEA/embeddings sur n_jobs ; n = tout séquentiel (n_jobs=1)
+n_jobs: -1                    # -1 = tous les cœurs (ignoré si parallel=n)
+seed: 42
+log_file: run.log             # journal horodaté de la progression (relatif à outdir si non absolu)
