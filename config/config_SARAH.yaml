@@ -91,7 +91,7 @@ degsea_all_k: y              # y | n — si y : DEGSEA calculé pour TOUS les k 
                              #   dans le rapport). Très coûteux. Défaut n : seul le k final.
 gsea_gene_sets: ~/.cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt  # .gmt unique de repli (si gsea_collections vide)
 gsea_permutations: 1000       # permutations du GSEA pré-classé
-gsea_heatmap_pval: 0.05       # heatmap : garde tous les pathways à p-valeur nominale < ce seuil dans >= 1 cluster
+gsea_heatmap_pval: 0.05       # heatmap : garde les pathways à FDR q-valeur GSEA < ce seuil dans >= 1 cluster (0.25 = convention GSEA)
 
 # ================================================= 7 · Projection de signatures (scoring + association clinique)
 compute_signatures: y         # y | n — score les signatures par tumeur (ssGSEA + expression moyenne) et teste l'association aux variables cliniques

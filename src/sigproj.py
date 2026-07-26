@@ -39,6 +39,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .stats_utils import benjamini_hochberg as _bh
+from .stats_utils import is_categorical as _is_categorical
+from .stats_utils import stars as _stars
+
 logger = logging.getLogger(__name__)
 
 
@@ -159,30 +163,6 @@ def score_mean_expression(expr_samples_x_genes: pd.DataFrame,
 # --------------------------------------------------------------------------
 # 7.2  Association aux variables cliniques
 # --------------------------------------------------------------------------
-def _bh(pvals: np.ndarray) -> np.ndarray:
-    """Correction Benjamini-Hochberg (FDR) -> q-valeurs."""
-    p = np.asarray(pvals, dtype=float)
-    n = p.size
-    if n == 0:
-        return p
-    order = np.argsort(p)
-    ranked = p[order] * n / (np.arange(n) + 1)
-    q = np.minimum.accumulate(ranked[::-1])[::-1]
-    out = np.empty(n)
-    out[order] = np.clip(q, 0, 1)
-    return out
-
-
-def _is_categorical(series: pd.Series, max_levels: int = 6) -> bool | None:
-    """True = catégorielle, False = continue, None = inexploitable (vide)."""
-    s = series.dropna()
-    if s.empty:
-        return None
-    if not pd.api.types.is_numeric_dtype(s):
-        return True
-    return s.nunique() <= max_levels        # numérique à peu de niveaux -> catégoriel
-
-
 def associate(scores: pd.DataFrame, metadata: pd.DataFrame,
               corr_method: str = "spearman", min_group: int = 3,
               max_levels: int = 6) -> pd.DataFrame:
@@ -242,13 +222,6 @@ def associate(scores: pd.DataFrame, metadata: pd.DataFrame,
         df["padj"] = _bh(df["pvalue"].to_numpy())
         df = df.sort_values("pvalue").reset_index(drop=True)
     return df
-
-
-def _stars(p) -> str:
-    """Notation étoilée d'une p-valeur : *** < 0.001, ** < 0.01, * < 0.05."""
-    if p is None or not np.isfinite(p):
-        return ""
-    return "***" if p < 1e-3 else "**" if p < 1e-2 else "*" if p < 0.05 else "ns"
 
 
 def group_pvals(score_row, groups, min_group: int = 3) -> dict:
@@ -318,8 +291,14 @@ def stratified_signature_tests(scores: dict, cluster_labels_by_k: dict,
     `scores` : `{method: DataFrame signatures × tumeurs}` (colonnes = ordre des
     tumeurs). `cluster_labels_by_k` : `{k: labels}` alignés sur ces colonnes.
 
+    **Correction FDR (BH)** dans chaque bloc (method, stratification, k, type de
+    test) — one-vs-rest et pairwise séparément : les q-valeurs corrigent le
+    balayage de **toutes les signatures** d'une même vue. Les étoiles du rapport
+    reflètent la FDR (`ovrq`/`pairq`), la p-valeur brute reste disponible.
+
     Renvoie `(tests, tidy_df)` avec ``tests[method][stratKey][kkey][signature] =
-    {"ovr": {modalité: p}, "pair": {a: {b: p}}}`` où ``stratKey`` vaut
+    {"ovr": {modalité: p}, "pair": {a: {b: p}}, "ovrq": {modalité: q},
+    "pairq": {a: {b: q}}}`` où ``stratKey`` vaut
     ``"__cluster__"`` (alors ``kkey = str(k)``) ou le nom de la variable (alors
     ``kkey = "*"``). Les **clés de modalité sont exactement celles des boxplots** :
     ``"C<label>"`` pour les clusters, ``str(valeur)`` pour les variables cliniques.
@@ -329,21 +308,45 @@ def stratified_signature_tests(scores: dict, cluster_labels_by_k: dict,
     tidy = []
 
     def _fill(mat, groups, m, stratify_by, kval):
-        d = {}
-        for sig in mat.index:
-            row = mat.loc[sig].to_numpy()
-            ovr = group_pvals(row, groups, min_group)
-            pair = pair_pvals(row, groups, min_group)
-            d[str(sig)] = {"ovr": ovr, "pair": pair}
-            for grp, p in ovr.items():
+        # 1) p-valeurs brutes de toutes les signatures pour ce bloc
+        d = {str(sig): {"ovr": group_pvals(mat.loc[sig].to_numpy(), groups, min_group),
+                        "pair": pair_pvals(mat.loc[sig].to_numpy(), groups, min_group)}
+             for sig in mat.index}
+        # 2) FDR (BH) DANS ce bloc (method, stratify_by, k), séparément one-vs-rest
+        #    et pairwise -> familles de tests cohérentes avec une vue du rapport.
+        for kind, qkey in (("ovr", "ovrq"), ("pair", "pairq")):
+            idx, ps = [], []
+            for sig, dd in d.items():
+                if kind == "ovr":
+                    for grp, p in dd["ovr"].items():
+                        if p is not None:
+                            idx.append((sig, grp)); ps.append(p)
+                else:
+                    for a, inner in dd["pair"].items():
+                        for b, p in inner.items():
+                            if p is not None:
+                                idx.append((sig, a, b)); ps.append(p)
+                dd[qkey] = {}
+            q = _bh(np.asarray(ps)) if ps else []
+            for t, qv in zip(idx, q):
+                if kind == "ovr":
+                    d[t[0]]["ovrq"][t[1]] = float(qv)
+                else:
+                    d[t[0]]["pairq"].setdefault(t[1], {})[t[2]] = float(qv)
+        # 3) table longue (les étoiles reflètent la FDR)
+        for sig, dd in d.items():
+            for grp, p in dd["ovr"].items():
+                qv = dd["ovrq"].get(grp)
                 tidy.append(dict(method=m, stratify_by=stratify_by, k=kval,
-                                 signature=str(sig), test_type="one_vs_rest",
-                                 comparison=grp, pvalue=p, stars=_stars(p)))
-            for a, inner in pair.items():
+                                 signature=sig, test_type="one_vs_rest", comparison=grp,
+                                 pvalue=p, padj=qv, stars=_stars(qv)))
+            for a, inner in dd["pair"].items():
                 for b, p in inner.items():
+                    qv = dd["pairq"].get(a, {}).get(b)
                     tidy.append(dict(method=m, stratify_by=stratify_by, k=kval,
-                                     signature=str(sig), test_type="pairwise",
-                                     comparison=f"{a} vs {b}", pvalue=p, stars=_stars(p)))
+                                     signature=sig, test_type="pairwise",
+                                     comparison=f"{a} vs {b}", pvalue=p, padj=qv,
+                                     stars=_stars(qv)))
         return d
 
     # ---- clusters : un test par k

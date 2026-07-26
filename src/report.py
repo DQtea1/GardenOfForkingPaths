@@ -24,16 +24,18 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .stats_utils import is_continuous
+
 logger = logging.getLogger(__name__)
 
 _TEMPLATE = Path(__file__).with_name("report_template.html")
 
+# seuil d'affichage des annotations cliniques du rapport (cf. stats_utils : par contexte)
+_META_MAX_LEVELS = 8
 
-def _is_continuous(series: pd.Series, max_levels: int = 8) -> bool:
-    s = series.dropna()
-    if s.empty:
-        return False
-    return pd.api.types.is_numeric_dtype(s) and s.nunique() > max_levels
+
+def _is_continuous(series: pd.Series) -> bool:
+    return is_continuous(series, _META_MAX_LEVELS)
 
 
 def _b64img(path: Path) -> str:
@@ -86,13 +88,19 @@ def _link_stability(Z, dend, stab_by_id):
     return out
 
 
-def _gather(result, k_final, outdir, coords, meta, sig_scores, sig_tests, deconv,
-            degsea_by_k, linkage_method, min_cluster_size, k_criterion,
-            branch_stability_by_k):
+def _gather(res, outdir):
     from scipy.cluster.hierarchy import dendrogram, linkage
     from scipy.spatial.distance import squareform
 
     from . import metrics as mt
+
+    # déballage du conteneur (cf. results.PipelineResults)
+    result, k_final = res.result, res.k_final
+    coords, meta = res.coords, res.meta
+    sig_scores, sig_tests, deconv = res.sig_scores, res.sig_tests, res.deconv
+    degsea_by_k, branch_stability_by_k = res.degsea_by_k, res.branch_stability_by_k
+    linkage_method, min_cluster_size, k_criterion = (
+        res.linkage_method, res.min_cluster_size, res.k_criterion)
 
     # stabilité Jaccard par k : {k: {id de nœud -> score}} (pour l'arbre de chaque k)
     stab_by_id_per_k = {}
@@ -158,9 +166,13 @@ def _gather(result, k_final, outdir, coords, meta, sig_scores, sig_tests, deconv
     #   {method:{stratKey:{kkey:{sig:{"ovr":{group:p},"pair":{a:{b:p}}}}}}}
     #   stratKey "__cluster__" : kkey = str(k) ; variable clinique : kkey = "*"
     def _clean_sig(o):
-        return {"ovr": {str(g): _clean(p) for g, p in (o.get("ovr") or {}).items()},
-                "pair": {str(a): {str(b): _clean(p) for b, p in inner.items()}
-                         for a, inner in (o.get("pair") or {}).items()}}
+        def _mm(key):   # {group: val} nettoyé
+            return {str(g): _clean(p) for g, p in (o.get(key) or {}).items()}
+        def _nn(key):   # {a: {b: val}} nettoyé
+            return {str(a): {str(b): _clean(p) for b, p in inner.items()}
+                    for a, inner in (o.get(key) or {}).items()}
+        return {"ovr": _mm("ovr"), "pair": _nn("pair"),
+                "ovrq": _mm("ovrq"), "pairq": _nn("pairq")}   # q = FDR (BH)
     data["sigTests"] = {}
     for method, strat in (sig_tests or {}).items():
         dm = {}
@@ -252,29 +264,10 @@ def _gather(result, k_final, outdir, coords, meta, sig_scores, sig_tests, deconv
         if p.exists():
             data["preAnalysis"].append({"title": title, "img": _b64img(p)})
 
-    return data
-
-
-def build_report(result, k_final, outdir, *, coords=None, meta=None,
-                 sig_scores=None, sig_tests=None, deconv=None, degsea_by_k=None,
-                 branch_stability_by_k=None, assoc=None, corr=None, min_cluster_size=10,
-                 k_criterion="both", linkage_method="average") -> Path:
-    """Construit `outdir/report.html`. Voir le module pour les entrées.
-
-    `degsea_by_k` : dict {k: {collection: matrice NES}} — un seul k (k_final) en
-    mode normal, tous les k si le run a activé `--degsea_all_k y`.
-    `sig_tests` : tests de Wilcoxon (voir `sigproj.stratified_signature_tests`),
-    pour les étoiles de significativité au-dessus des boxplots.
-    `branch_stability_by_k` : dict `{k: stability.BranchStability}` — affiche la
-    stabilité Jaccard des branches sur l'arbre consensus de **chaque** k.
-    """
-    outdir = Path(outdir)
-    data = _gather(result, k_final, outdir, coords, meta, sig_scores, sig_tests,
-                   deconv, degsea_by_k, linkage_method, min_cluster_size, k_criterion,
-                   branch_stability_by_k)
-    data["assoc"] = assoc or {}
+    data["assoc"] = res.assoc or {}
 
     # 9b corrélations : table précalculée complète (heatmap bloc×bloc + scatter)
+    corr = res.corr
     data["corr"] = {}
     if corr and "table" in corr and len(corr["table"]):
         tab, blk = corr["table"], corr["block"]
@@ -287,6 +280,13 @@ def build_report(result, k_final, outdir, *, coords=None, meta=None,
                  for r in tab.itertuples()]
         data["corr"] = {"method": corr.get("method", "spearman"),
                         "blocks": blocks, "pairs": pairs}
+    return data
+
+
+def build_report(res, outdir) -> Path:
+    """Construit `outdir/report.html` à partir d'un `results.PipelineResults`."""
+    outdir = Path(outdir)
+    data = _gather(res, outdir)
     html = _TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(data, ensure_ascii=False))
     out = outdir / "report.html"

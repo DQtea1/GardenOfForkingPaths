@@ -97,6 +97,14 @@
   .cttbl th{background:var(--surface2);color:var(--ink2);font-weight:600;text-align:right}
   .cttbl thead th,.cttbl tbody th{text-align:left}
   .cttbl .tot{background:var(--surface2);font-weight:700;color:var(--ink)}
+  .tip{position:fixed;z-index:60;background:#111;color:#fff;font:11px ui-monospace;padding:4px 7px;
+    border-radius:5px;pointer-events:none;display:none;max-width:340px;line-height:1.4}
+  .bubble{position:fixed;z-index:61;background:var(--surface);border:1px solid var(--line);border-radius:9px;
+    box-shadow:0 8px 24px rgba(0,0,0,.16);padding:10px 26px 10px 12px;font:12px var(--sans);
+    max-width:320px;max-height:60vh;overflow:auto;display:none}
+  .bubble h4{margin:0 0 5px;font:600 12px var(--sans);color:var(--accent)}
+  .bubble .row{display:flex;justify-content:space-between;gap:14px;color:var(--ink2);padding:1px 0}
+  .bubble .cls{position:absolute;right:6px;top:4px;cursor:pointer;color:var(--ink2);border:0;background:none;font-size:16px;line-height:1}
   .frow{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   .fvarname{font:600 11px var(--sans);color:var(--ink2);margin-right:2px}
   .fchip{font:12px var(--sans);color:var(--ink2);display:inline-flex;align-items:center;gap:3px;
@@ -171,8 +179,8 @@
         <label><span>Wilcoxon 2 à 2 (barres)</span><input type="checkbox" id="boPair"></label>
         <div class="muted" style="font-size:11px;line-height:1.45;margin-top:2px">
           ★ Wilcoxon — décoché : 1 modalité vs reste (étoiles) ; coché : 2 à 2 (barres)<br>
-          * p&lt;0.05&nbsp; ** p&lt;0.01&nbsp; *** p&lt;0.001 · <b>ns</b> = groupe &lt; 3 / non testé<br>
-          <i>Filtre actif → tests recalculés en direct (Mann-Whitney).</i></div>
+          seuils sur la <b>FDR</b> : * q&lt;0.05&nbsp; ** q&lt;0.01&nbsp; *** q&lt;0.001 · <b>ns</b> = &lt; 3 / non testé<br>
+          <i>Filtre actif → tests recalculés en direct (p brute, sans FDR).</i></div>
       </div>
     </div>
     <div class="muted" style="margin-top:10px">Heatmap des scores (ssGSEA) alignée sur les patients (ordre du k choisi) :</div>
@@ -188,7 +196,7 @@
       <label>Forme par :</label><select id="emShape"></select>
       <label>Taille par :</label><select id="emSize"></select>
     </div>
-    <div class="flexrow">
+    <div class="flexrow" style="justify-content:center">
       <canvas id="emCanvas"></canvas>
       <div class="legend" id="emLegend" style="flex-direction:column;align-items:flex-start"></div>
     </div>
@@ -309,6 +317,13 @@ function availablePanels(){
   return items;
 }
 
+// tooltip (survol) + bulle (clic) partagés
+function _el(id,cls){let e=$(id);if(!e){e=document.createElement("div");e.id=id;e.className=cls;document.body.appendChild(e);}return e;}
+function _clinHtml(oi){const vars=Object.keys(DATA.meta||{});
+  if(!vars.length)return "<div class='muted'>Aucune variable clinique.</div>";
+  return vars.map(v=>{let x=DATA.meta[v][oi];
+    if(x==null)x="—";else if(DATA.metaTypes[v]==="continuous"&&typeof x==="number")x=(+x).toFixed(2);
+    return "<div class='row'><span>"+v+"</span><b>"+x+"</b></div>";}).join("");}
 function drawCentral(){
   const host=$("stack-center");host.innerHTML="";
   const k=curK, per=DATA.perK[String(k)], order=per.order, C=DATA.consensus[String(k)];
@@ -321,6 +336,25 @@ function drawCentral(){
     for(let j=0;j<N;j++){ctx.fillStyle=consCol(rowD[order[j]]/100);ctx.fillRect(LM+j*cw,CTB+i*ch,Math.ceil(cw),Math.ceil(ch));}}
   drawClusterSeparators(ctx,per,order,cw,CTB,side,"x");
   drawClusterSeparators(ctx,per,order,ch,LM,side,"y",CTB);
+  // ---- interactivité : survol = ID tumeur(s) + consensus ; clic = variables cliniques
+  cv.style.cursor="crosshair";
+  const cellAt=e=>{const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+    if(mx<LM||my<CTB)return null;const j=Math.floor((mx-LM)/cw),i=Math.floor((my-CTB)/ch);
+    return (i<0||i>=N||j<0||j>=N)?null:[order[i],order[j]];};
+  cv.onmousemove=e=>{const cell=cellAt(e),t=_el("tip","tip");if(!cell){t.style.display="none";return;}
+    const oi=cell[0],oj=cell[1],val=(C[oi][oj]/100).toFixed(2);
+    t.innerHTML=(oi===oj?"tumeur <b>"+SAMPLES[oi]+"</b>"
+      :"ligne <b>"+SAMPLES[oi]+"</b> × colonne <b>"+SAMPLES[oj]+"</b>")
+      +"<br>consensus index : <b>"+val+"</b>";
+    t.style.display="block";t.style.left=Math.min(e.clientX+13,window.innerWidth-350)+"px";t.style.top=(e.clientY+15)+"px";};
+  cv.onmouseleave=()=>{_el("tip","tip").style.display="none";};
+  cv.onclick=e=>{const cell=cellAt(e);if(!cell)return;const oi=cell[0],oj=cell[1],b=_el("bubble","bubble");
+    let h="<button class='cls'>×</button><h4>"+SAMPLES[oi]+"</h4>"+_clinHtml(oi);
+    if(oj!==oi)h+="<h4 style='margin-top:9px'>"+SAMPLES[oj]+"</h4>"+_clinHtml(oj);
+    b.innerHTML=h;b.style.display="block";
+    b.style.left=Math.min(e.clientX+13,window.innerWidth-330)+"px";
+    b.style.top=Math.min(e.clientY+15,window.innerHeight-Math.min(260,b.scrollHeight+20))+"px";
+    b.querySelector(".cls").onclick=ev=>{ev.stopPropagation();b.style.display="none";};};
 }
 function blocks(per,order){const b=[];let i=0;const lab=order.map(o=>per.labels[o]);
   while(i<N){let j=i;while(j<N&&lab[j]===lab[i])j++;b.push([lab[i],i,j]);i=j;}return b;}
@@ -514,6 +548,10 @@ function showMenu(side,anchor){
 }
 document.querySelectorAll(".addbtn").forEach(b=>b.onclick=e=>showMenu(b.dataset.side,b));
 document.addEventListener("click",e=>{if(openMenu&&!openMenu.contains(e.target)&&!e.target.classList.contains("addbtn")){openMenu.remove();openMenu=null;}});
+// clic hors bulle / Échap ferme la bulle clinique (clic sur la matrice = remplacement, géré par le canvas)
+document.addEventListener("click",e=>{const b=$("bubble");
+  if(b&&b.style.display==="block"&&!b.contains(e.target)&&!(e.target.closest&&e.target.closest("#stack-center")))b.style.display="none";});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){const b=$("bubble");if(b)b.style.display="none";const t=$("tip");if(t)t.style.display="none";}});
 fillKSelect($("kSelect"),curK);
 $("kSelect").onchange=e=>{curK=+e.target.value;render();};
 
@@ -582,10 +620,11 @@ function drawBox(cv,groups,tst){const opt=boxOptions();
   const cxs=keys.map((k,idx)=>ML+34+idx*92);
   // ---- barres pairwise significatives + empilage en niveaux (paires larges au-dessus)
   let bars=[],nLev=0;
-  if(opt.pair&&tst&&tst.pair){
+  const psrc=tst&&(tst.pairq||tst.pair);   // pairq = FDR (précalculé) ; sinon p brut (live)
+  if(opt.pair&&psrc){
     for(let i=0;i<keys.length;i++)for(let j=i+1;j<keys.length;j++){
       if(!boxes[i]||!boxes[j])continue;
-      const p=pairP(tst.pair,keys[i],keys[j]);if(p==null||p>=0.05)continue;
+      const p=pairP(psrc,keys[i],keys[j]);if(p==null||p>=0.05)continue;
       bars.push({i,j,p,xi:cxs[i],xj:cxs[j]});}
     bars.sort((a,b)=>a.xi-b.xi||a.xj-b.xj);   // tri par extrémité gauche = empilage minimal
     const occ=[];bars.forEach(br=>{let L=0;
@@ -622,11 +661,11 @@ function drawBox(cv,groups,tst){const opt=boxOptions();
       groups[k].filter(x=>x!=null).forEach(v=>{const jx=(rnd()-0.5)*bw*0.92*opt.jitter;
         ctx.beginPath();ctx.arc(cx+jx,y(v),opt.radius,0,7);ctx.fill();ctx.stroke();});
       ctx.globalAlpha=1;}
-    // one-vs-rest au-dessus de la moustache haute (mode par défaut) :
-    // étoiles si significatif, "ns" en gris si groupe trop petit / non testé
-    if(!opt.pair&&tst&&tst.ovr){const p=tst.ovr[k];ctx.textAlign="center";
-      if(p==null){ctx.fillStyle="#999";ctx.font="10px ui-sans-serif";ctx.fillText("ns",cx,y(b.max)-8);}
-      else{const stx=starStr(p);if(stx){ctx.fillStyle="#111";ctx.font="bold 13px ui-sans-serif";ctx.fillText(stx,cx,y(b.max)-8);}}
+    // one-vs-rest au-dessus de la moustache haute (mode par défaut) : étoiles
+    // depuis la FDR (ovrq, précalculé) ou la p brute (live) ; "ns" si non testé
+    if(!opt.pair&&tst&&tst.ovr){const sv=tst.ovrq?(k in tst.ovrq?tst.ovrq[k]:null):tst.ovr[k];ctx.textAlign="center";
+      if(sv==null){ctx.fillStyle="#999";ctx.font="10px ui-sans-serif";ctx.fillText("ns",cx,y(b.max)-8);}
+      else{const stx=starStr(sv);if(stx){ctx.fillStyle="#111";ctx.font="bold 13px ui-sans-serif";ctx.fillText(stx,cx,y(b.max)-8);}}
       ctx.textAlign="left";}
     ctx.fillStyle="#33414a";ctx.font="10px ui-monospace";ctx.textAlign="center";
     ctx.fillText((k+"").slice(0,11),cx,H-20);ctx.fillText("n="+b.n,cx,H-8);ctx.textAlign="left";});

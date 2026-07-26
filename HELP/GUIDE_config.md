@@ -199,7 +199,7 @@ Caractérise chaque cluster après le clustering. **Étape longue**, désactivé
 | `gsea_gene_sets` | Chemin d'un `.gmt` **unique** (défaut = hallmarks MSigDB). Gènes en **symboles HGNC**. |
 | `gsea_collections` | Pour tester **plusieurs collections** : un **dictionnaire** `{nom: chemin.gmt}` (ex. `c2: …/c2.gmt`, `h: …/h.gmt`). Chaque `.gmt` donne son propre GSEA (DESeq2 mutualisé). Désactive une collection en commentant sa ligne ou avec `{enabled: false, path: …}`. Remplace `gsea_gene_sets` s'il y en a au moins une. Fichiers absents ignorés (avertissement). *(La forme héritée `load_<nom>: chemin.gmt` reste acceptée.)* |
 | `gsea_permutations` | `1000` (défaut). Baisse à `200`–`500` pour aller plus vite pendant la mise au point. |
-| `gsea_heatmap_pval` | Seuil de p-valeur nominale (défaut `0.05`) pour les heatmaps `gsea_ova_heatmap_<collection>.png` : elles contiennent **tous** les pathways significatifs (p < seuil) dans au moins un cluster. Baisse-le (`0.01`) pour plus strict. |
+| `gsea_heatmap_pval` | Seuil de **FDR q-valeur GSEA** (permutations, défaut `0.05`) pour les heatmaps `gsea_ova_heatmap_<collection>.png` : elles contiennent **tous** les pathways significatifs **après correction** (q < seuil) dans au moins un cluster. Convention GSEA usuelle : `0.25`. |
 
 ⚠️ Double-dipping : p-valeurs anticonservatives (mêmes données pour définir les clusters et les tester). Lecture descriptive, pas inférentielle.
 

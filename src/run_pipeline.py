@@ -41,6 +41,7 @@ from src import purity as pur
 from src import report as rp
 from src import sigproj as sp
 from src import stability as st
+from src.results import PipelineResults
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -147,9 +148,10 @@ def build_parser() -> argparse.ArgumentParser:
     deg.add_argument("--gsea_permutations", type=int, default=1000,
                      help="nombre de permutations du GSEA pré-classé (défaut 1000).")
     deg.add_argument("--gsea_heatmap_pval", type=float, default=0.05,
-                     help="seuil de p-valeur (nominale GSEA) pour inclure un "
-                          "pathway dans la heatmap one-vs-all : tous les pathways "
-                          "significatifs dans >= 1 cluster (défaut 0.05).")
+                     help="seuil de **FDR q-valeur GSEA** (permutations) pour inclure "
+                          "un pathway dans la heatmap one-vs-all : tous ceux "
+                          "significatifs après correction dans >= 1 cluster (défaut 0.05). "
+                          "Convention GSEA usuelle : 0.25.")
 
     sig = p.add_argument_group("projection de signatures (scoring + association clinique)")
     sig.add_argument("--compute_signatures", choices=["y", "n"], default="n",
@@ -335,8 +337,34 @@ def parse_args(argv=None):
     merged["ordinal_variables"] = ordinal_variables   # {variable: [modalités ordonnées] | None}
     return argparse.Namespace(**merged)
 
+from dataclasses import dataclass, field
 
-def main(argv=None) -> int:
+
+@dataclass
+class _Ctx:
+    """État partagé du run : chaque étape lit/écrit ses champs (cf. results.PipelineResults)."""
+    args: object; log: object; outdir: Path; t_start: float; eff_n_jobs: int
+    raw: object = None
+    X_df: object = None
+    result: object = None
+    k_final: object = None
+    labels: object = None
+    items: object = None
+    coords: object = None
+    color_var: object = None
+    nes: object = None
+    bs: object = None
+    sig_scores: object = None
+    sig_tests: object = None
+    assoc: object = None
+    corr: object = None
+    k_values: tuple = ()
+    bs_by_k: dict = field(default_factory=dict)
+    degsea_by_k: dict = field(default_factory=dict)
+    deconv: dict = field(default_factory=dict)
+
+
+def _setup(argv) -> _Ctx:
     # ------------------------------------------ 0. configuration & démarrage
     args = parse_args(argv)
 
@@ -373,7 +401,11 @@ def main(argv=None) -> int:
     eff_n_jobs = args.n_jobs if args.parallel == "y" else 1
     if args.parallel == "n":
         log.info("Parallélisation désactivée (--parallel n) : n_jobs=1 partout.")
+    return _Ctx(args=args, log=log, outdir=outdir, t_start=t_start, eff_n_jobs=eff_n_jobs)
 
+
+def _load_data(c: _Ctx) -> None:
+    args, log = c.args, c.log
     # ---------------------------------------------------------------- 1. data
     raw = pp.load_matrix(args.counts, genes_in_rows=not args.samples_in_rows)
     X_df = pp.preprocess(
@@ -389,7 +421,12 @@ def main(argv=None) -> int:
         norm_method=args.norm_method,
     )
     log.info("Matrice prétraitée : %d tumeurs x %d gènes", *X_df.shape)
+    c.raw, c.X_df = raw, X_df
 
+
+def _purity_filter(c: _Ctx) -> None:
+    args, log, outdir = c.args, c.log, c.outdir
+    raw, X_df = c.raw, c.X_df
     # ------------------------------------- 1a. pureté tumorale (PUREE) + filtrage
     purity_thr = pur.parse_threshold(args.purity_threshold)
     if purity_thr is not None:
@@ -413,7 +450,12 @@ def main(argv=None) -> int:
             log.info("Matrice après filtrage pureté : %d tumeurs x %d gènes", *X_df.shape)
         else:
             log.info("Aucune tumeur retirée au seuil de pureté %.2f.", purity_thr)
+    c.X_df = X_df
 
+
+def _outlier_filter(c: _Ctx) -> None:
+    args, log, outdir = c.args, c.log, c.outdir
+    X_df = c.X_df
     # ------------------------------------------- 1b. filtrage d'outliers (ACP)
     if args.outlier_sd_threshold and args.outlier_sd_threshold > 0:
         keep, pca_diag = pp.pca_outliers(
@@ -433,7 +475,12 @@ def main(argv=None) -> int:
             log.info("Matrice après filtrage : %d tumeurs x %d gènes", *X_df.shape)
         else:
             log.info("Aucun outlier ACP au seuil %.1f SD.", args.outlier_sd_threshold)
+    c.X_df = X_df
 
+
+def _consensus(c: _Ctx) -> None:
+    args, eff_n_jobs = c.args, c.eff_n_jobs
+    X_df = c.X_df
     # ------------------------------------------------- 2. consensus clustering
     k_values = tuple(range(args.k_min, args.k_max + 1))
     result = cc.consensus_clustering(
@@ -451,7 +498,12 @@ def main(argv=None) -> int:
         random_state=args.seed,
         n_jobs=eff_n_jobs,
     )
+    c.k_values, c.result = k_values, result
 
+
+def _diagnostics_k(c: _Ctx) -> None:
+    args, log, outdir = c.args, c.log, c.outdir
+    result, k_values = c.result, c.k_values
     # ------------------------------------------------------- 3. diagnostics k
     tab = mt.summary(result)
     tab.to_csv(outdir / "tables" / "k_selection.csv", index=False)
@@ -468,7 +520,12 @@ def main(argv=None) -> int:
     pl.plot_tracking(result, outdir / "figures")
     for k in k_values:
         pl.plot_consensus_heatmap(result, k, outdir / "figures", args.linkage)
+    c.k_final = k_final
 
+
+def _partition(c: _Ctx) -> None:
+    args, outdir = c.args, c.outdir
+    result, k_final = c.result, c.k_final
     # --------------------------------------------------- 4. partition finale
     labels = result.labels(k_final, args.linkage)
     items = mt.item_consensus(result, k_final)
@@ -486,7 +543,12 @@ def main(argv=None) -> int:
     pd.DataFrame(result.distance(k_final), index=result.sample_names,
                  columns=result.sample_names).to_csv(
         outdir / "tables" / f"consensus_distance_k{k_final}.csv.gz", compression="gzip")
+    c.labels, c.items = labels, items
 
+
+def _branch_stability(c: _Ctx) -> None:
+    args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
+    X_df, result, k_values, labels, k_final = c.X_df, c.result, c.k_values, c.labels, c.k_final
     # ------------------------------------ 4b. stabilité des branches (Jaccard)
     bs = None
     bs_by_k = {}
@@ -512,7 +574,12 @@ def main(argv=None) -> int:
             n_stable, len(bs_tab), k_final,
             finals.to_string(index=False) if len(finals) else "(aucun cluster == branche)",
         )
+    c.bs, c.bs_by_k = bs, bs_by_k
 
+
+def _embeddings(c: _Ctx) -> None:
+    args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
+    result, k_final, labels, items = c.result, c.k_final, c.labels, c.items
     # ----------------------------------------------------- 5. t-SNE et UMAP
     D = result.distance(k_final)
     coords = emb.embeddings_table(
@@ -546,7 +613,12 @@ def main(argv=None) -> int:
         ct = pd.crosstab(labels, var.values)
         ct.to_csv(outdir / "tables" / f"crosstab_{args.color_by}_k{k_final}.csv")
         log.info("Croisement cluster x %s :\n%s", args.color_by, ct.to_string())
+    c.coords, c.color_var = coords, color_var
 
+
+def _degsea(c: _Ctx) -> None:
+    args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
+    raw, result, k_values, k_final = c.raw, c.result, c.k_values, c.k_final
     # ------------------------------------------------ 6. DEGSEA (DESeq2 + GSEA)
     nes = None
     nes_by_coll = {}
@@ -588,7 +660,12 @@ def main(argv=None) -> int:
                        next(iter(nes_by_coll)))
             nes = nes_by_coll[key]
         log.info("DEGSEA terminé : tables dans %s", outdir / "tables" / "degsea")
+    c.nes, c.degsea_by_k = nes, degsea_by_k
 
+
+def _signatures(c: _Ctx) -> None:
+    args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
+    raw, result, k_values = c.raw, c.result, c.k_values
     # ------------------------------------------ 7. projection de signatures
     sig_scores = None
     sig_tests = None
@@ -633,14 +710,19 @@ def main(argv=None) -> int:
                 sig_tests_tidy.to_csv(
                     outdir / "tables" / "signatures" / "signature_group_tests.csv",
                     index=False)
-                n_sig = int((sig_tests_tidy["pvalue"] < 0.05).sum())
+                n_sig = int((sig_tests_tidy["padj"] < 0.05).sum())
                 log.info("Projection 7.2bis : %d tests de Wilcoxon (score x modalité, "
                          "one-vs-rest + pairwise, tous k), %d significatifs "
-                         "(p < 0.05) -> %s", len(sig_tests_tidy), n_sig,
+                         "(FDR < 0.05) -> %s", len(sig_tests_tidy), n_sig,
                          outdir / "tables" / "signatures" / "signature_group_tests.csv")
             log.info("Projection de signatures terminée : tables dans %s",
                      outdir / "tables" / "signatures")
+    c.sig_scores, c.sig_tests = sig_scores, sig_tests
 
+
+def _deconvolution(c: _Ctx) -> None:
+    args, log, outdir = c.args, c.log, c.outdir
+    raw, result, labels = c.raw, c.result, c.labels
     # ------------------------------------------------- 8. déconvolution (R)
     deconv = {}
     if args.run_deconv == "y":
@@ -660,7 +742,12 @@ def main(argv=None) -> int:
                                   outdir / "figures")
         log.info("Déconvolution terminée : tables dans %s",
                  outdir / "tables" / "deconvolution")
+    c.deconv = deconv
 
+
+def _chi2(c: _Ctx) -> None:
+    args, log, outdir = c.args, c.log, c.outdir
+    result, k_values, k_final = c.result, c.k_values, c.k_final
     # ------------------ 9a. khi² d'indépendance (cluster/clinique catégoriel)
     assoc = None
     if args.run_chi2 == "y" and args.metadata:
@@ -673,7 +760,12 @@ def main(argv=None) -> int:
             mc_resamples=args.chi2_mc_resamples, seed=args.seed)
     elif args.run_chi2 == "y":
         log.info("9a. Khi² : pas de métadonnées (--metadata) — étape sautée.")
+    c.assoc = assoc
 
+
+def _correlations(c: _Ctx) -> None:
+    args, outdir = c.args, c.outdir
+    sig_scores, deconv, result = c.sig_scores, c.deconv, c.result
     # ------------------ 9b. corrélations entre variables continues (patient)
     corr = None
     if args.run_correlations == "y":
@@ -684,7 +776,12 @@ def main(argv=None) -> int:
         corr = co.run_correlations(
             sig_scores, deconv or None, meta_corr, result.sample_names, outdir,
             method=args.corr_method, all_pairs=(args.corr_all_pairs == "y"))
+    c.corr = corr
 
+
+def _synthesis(c: _Ctx) -> None:
+    args, log, outdir = c.args, c.log, c.outdir
+    result, k_final, bs, items, color_var, nes = c.result, c.k_final, c.bs, c.items, c.color_var, c.nes
     # ------------------------------- 9. figure de synthèse (tout combiné)
     pl.plot_cluster_overview(
         result, k_final, outdir / "figures", linkage_method=args.linkage,
@@ -694,24 +791,31 @@ def main(argv=None) -> int:
     )
     log.info("Figure de synthèse : cluster_overview_k%d.png", k_final)
 
+
+def _report(c: _Ctx) -> None:
+    args, log, outdir = c.args, c.log, c.outdir
+    result, k_final, coords, sig_scores, sig_tests, deconv, degsea_by_k, bs_by_k, assoc, corr = c.result, c.k_final, c.coords, c.sig_scores, c.sig_tests, c.deconv, c.degsea_by_k, c.bs_by_k, c.assoc, c.corr
     # ------------------------------ 10. rapport d'analyse HTML interactif
     if args.create_report == "y":
         report_meta = None
         if args.metadata:
             report_meta = pd.read_csv(args.metadata, sep=None, engine="python",
                                       index_col=0).reindex(result.sample_names)
-        rp.build_report(
-            result, k_final, outdir,
+        results = PipelineResults(
+            result=result, k_final=k_final, linkage_method=args.linkage,
+            min_cluster_size=args.min_cluster_size, k_criterion=args.k_criterion,
             coords=coords, meta=report_meta, sig_scores=sig_scores,
             sig_tests=sig_tests, deconv=(deconv or None),
             degsea_by_k=(degsea_by_k or None),
-            branch_stability_by_k=(bs_by_k or None), assoc=(assoc or None),
-            corr=(corr or None),
-            min_cluster_size=args.min_cluster_size, k_criterion=args.k_criterion,
-            linkage_method=args.linkage,
-        )
+            branch_stability_by_k=(bs_by_k or None),
+            assoc=(assoc or None), corr=(corr or None))
+        rp.build_report(results, outdir)
         log.info("Rapport d'analyse : %s", outdir / "report.html")
 
+
+def _save(c: _Ctx) -> None:
+    args, log, outdir, t_start = c.args, c.log, c.outdir, c.t_start
+    k_final = c.k_final
     # --------------------------------------------- 11. sauvegarde du run
     with open(outdir / "run_params.json", "w") as fh:
         json.dump({**vars(args), "outdir": str(args.outdir), "k_final": k_final},
@@ -720,6 +824,26 @@ def main(argv=None) -> int:
     dt = time.perf_counter() - t_start
     log.info("================ Terminé en %dh %02dm %02ds — résultats dans %s ================",
              int(dt // 3600), int(dt % 3600 // 60), int(dt % 60), outdir.resolve())
+
+
+def main(argv=None) -> int:
+    c = _setup(argv)
+    _load_data(c)
+    _purity_filter(c)
+    _outlier_filter(c)
+    _consensus(c)
+    _diagnostics_k(c)
+    _partition(c)
+    _branch_stability(c)
+    _embeddings(c)
+    _degsea(c)
+    _signatures(c)
+    _deconvolution(c)
+    _chi2(c)
+    _correlations(c)
+    _synthesis(c)
+    _report(c)
+    _save(c)
     return 0
 
 

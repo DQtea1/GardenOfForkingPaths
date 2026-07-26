@@ -27,7 +27,10 @@ calculée **à partir de la distance consensus**, pas de l'expression brute.
     ├── degsea.py                    # DESeq2 + GSEA par cluster (one-vs-all / one-vs-one)
     ├── sigproj.py                   # projection de signatures (ssGSEA/moyenne) + tests Wilcoxon
     ├── deconv.py + deconvolve.R     # déconvolution (omnideconv / immunedeconv, R en sous-processus)
-    ├── catassoc.py                  # khi² d'indépendance (cluster/clinique) + résidus ajustés
+    ├── catassoc.py                  # 9a khi² d'indépendance (cluster/clinique) + résidus ajustés
+    ├── correlate.py                 # 9b corrélations continues (clinique × signatures/déconv)
+    ├── stats_utils.py               # utilitaires partagés : FDR (BH), type de variable, étoiles
+    ├── results.py                   # PipelineResults : conteneur des sorties (-> rapport)
     ├── report.py + report_template.html  # rapport HTML interactif autonome
     └── plots.py                     # heatmaps, tracking plot, nuages, dendro stabilité
 ```

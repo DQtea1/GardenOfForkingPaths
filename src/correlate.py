@@ -30,28 +30,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .stats_utils import benjamini_hochberg as _bh
+from .stats_utils import is_continuous as _is_continuous
+
 logger = logging.getLogger(__name__)
-
-
-def _bh(pvals: np.ndarray) -> np.ndarray:
-    """Correction Benjamini-Hochberg (FDR) -> q-valeurs."""
-    p = np.asarray(pvals, dtype=float)
-    n = p.size
-    if n == 0:
-        return p
-    order = np.argsort(p)
-    ranked = p[order] * n / (np.arange(n) + 1)
-    q = np.minimum.accumulate(ranked[::-1])[::-1]
-    out = np.empty(n)
-    out[order] = np.clip(q, 0, 1)
-    return out
-
-
-def _is_continuous(series: pd.Series, max_levels: int = 6) -> bool:
-    s = series.dropna()
-    if s.empty:
-        return False
-    return pd.api.types.is_numeric_dtype(s) and s.nunique() > max_levels
 
 
 def assemble_features(sig_scores: dict | None, deconv: dict | None,

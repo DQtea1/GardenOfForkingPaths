@@ -36,23 +36,10 @@ import numpy as np
 import pandas as pd
 from scipy.stats import chi2_contingency, fisher_exact
 
-from .sigproj import _is_categorical
+from .stats_utils import benjamini_hochberg as _bh
+from .stats_utils import is_categorical as _is_categorical
 
 logger = logging.getLogger(__name__)
-
-
-def _bh(pvals: np.ndarray) -> np.ndarray:
-    """Correction Benjamini-Hochberg (FDR) -> q-valeurs."""
-    p = np.asarray(pvals, dtype=float)
-    n = p.size
-    if n == 0:
-        return p
-    order = np.argsort(p)
-    ranked = p[order] * n / (np.arange(n) + 1)
-    q = np.minimum.accumulate(ranked[::-1])[::-1]
-    out = np.empty(n)
-    out[order] = np.clip(q, 0, 1)
-    return out
 
 
 def _chi2_stat(obs: np.ndarray) -> float:

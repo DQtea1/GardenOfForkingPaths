@@ -232,7 +232,7 @@ def run_degsea(
 
     summary_rows: list[dict] = []
     ova_nes = defaultdict(dict)     # collection -> {cluster: Series(NES)}
-    ova_pval = defaultdict(dict)    # collection -> {cluster: Series(p-val)}
+    ova_fdr = defaultdict(dict)     # collection -> {cluster: Series(FDR q-val du GSEA)}
     for tag, scheme, gseas in results:
         cluster_id = tag.split("_vs_rest")[0] if scheme == "one-vs-all" else None
         for coll, gsea in gseas.items():
@@ -242,7 +242,7 @@ def run_degsea(
             if cluster_id is not None:
                 g = gsea.set_index("Term")
                 ova_nes[coll][cluster_id] = g["NES"]
-                ova_pval[coll][cluster_id] = g["NOM p-val"]
+                ova_fdr[coll][cluster_id] = g["FDR q-val"]   # FDR (permutations GSEA), pas p brute
 
     if summary_rows:
         pd.DataFrame(summary_rows).to_csv(base / "gsea_summary.csv", index=False)
@@ -251,10 +251,10 @@ def run_degsea(
 
     nes_by_collection: dict = {}
     for coll in ova_nes:
-        m = _nes_matrix(ova_nes[coll], ova_pval[coll], heatmap_pval)
+        m = _nes_matrix(ova_nes[coll], ova_fdr[coll], heatmap_pval)
         if not m.empty:
             nes_by_collection[coll] = m
-            logger.info("DEGSEA [%s] : %d pathways significatifs (p < %.3g).",
+            logger.info("DEGSEA [%s] : %d pathways significatifs (FDR q < %.3g).",
                         coll, len(m), heatmap_pval)
     return nes_by_collection
 
@@ -269,15 +269,16 @@ def _collect(res2d: pd.DataFrame, collection: str, contrast: str, scheme: str,
             for _, r in sig.iterrows()]
 
 
-def _nes_matrix(ova_nes: dict, ova_pval: dict, pval_max: float = 0.05) -> pd.DataFrame:
+def _nes_matrix(ova_nes: dict, ova_fdr: dict, fdr_max: float = 0.05) -> pd.DataFrame:
     """Matrice pathways × clusters (NES one-vs-all) pour la heatmap.
 
-    Ne garde que les pathways **significatifs** (p-valeur nominale du GSEA
-    `< pval_max`) dans au moins un cluster, triés par |NES| max décroissant.
+    Ne garde que les pathways **significatifs après correction** (FDR q-valeur du
+    GSEA, issue des permutations, `< fdr_max`) dans au moins un cluster, triés par
+    |NES| max décroissant.
     """
     nes = pd.DataFrame(ova_nes)
-    pval = pd.DataFrame(ova_pval).reindex(index=nes.index, columns=nes.columns)
-    sig = (pval < pval_max).any(axis=1)
+    fdr = pd.DataFrame(ova_fdr).reindex(index=nes.index, columns=nes.columns)
+    sig = (fdr < fdr_max).any(axis=1)
     kept = nes.loc[sig]
     order = kept.abs().max(axis=1).sort_values(ascending=False).index
     return kept.loc[order]
