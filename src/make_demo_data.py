@@ -11,6 +11,7 @@ La simulation reproduit trois difficultés réelles :
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -22,7 +23,7 @@ FRAC_ATYPICAL = 0.12
 SEED = 42
 
 
-def main() -> None:
+def main(outdir: str | Path = "data") -> None:
     rng = np.random.default_rng(SEED)
     subtype = np.concatenate([[i] * n for i, n in enumerate(SUBTYPE_SIZES)])
     rng.shuffle(subtype)
@@ -67,7 +68,7 @@ def main() -> None:
         genes[j] = name
         counts[:, j] *= 50
 
-    out = Path("data"); out.mkdir(exist_ok=True)
+    out = Path(outdir); out.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(counts.T, index=genes, columns=samples).to_csv(
         out / "demo_counts.tsv", sep="\t")
     pd.DataFrame(
@@ -76,9 +77,12 @@ def main() -> None:
          "atypical": np.isin(np.arange(N_SAMPLES), atyp)}
     ).set_index("sample").to_csv(out / "demo_metadata.tsv", sep="\t")
 
-    print(f"data/demo_counts.tsv     {counts.T.shape[0]} gènes x {N_SAMPLES} tumeurs")
-    print(f"data/demo_metadata.tsv   vérité terrain : 4 sous-types, {n_atyp} atypiques")
+    print(f"{out}/demo_counts.tsv     {counts.T.shape[0]} gènes x {N_SAMPLES} tumeurs")
+    print(f"{out}/demo_metadata.tsv   vérité terrain : 4 sous-types, {n_atyp} atypiques")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--outdir", default="data",
+                        help="dossier de sortie pour demo_counts.tsv / demo_metadata.tsv")
+    main(parser.parse_args().outdir)

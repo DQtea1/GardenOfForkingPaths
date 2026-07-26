@@ -28,18 +28,18 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from consensus_rnaseq import catassoc as ca
-from consensus_rnaseq import consensus as cc
-from consensus_rnaseq import deconv as dc
-from consensus_rnaseq import degsea as dg
-from consensus_rnaseq import embedding as emb
-from consensus_rnaseq import metrics as mt
-from consensus_rnaseq import plots as pl
-from consensus_rnaseq import preprocessing as pp
-from consensus_rnaseq import purity as pur
-from consensus_rnaseq import report as rp
-from consensus_rnaseq import sigproj as sp
-from consensus_rnaseq import stability as st
+from src import catassoc as ca
+from src import consensus as cc
+from src import deconv as dc
+from src import degsea as dg
+from src import embedding as emb
+from src import metrics as mt
+from src import plots as pl
+from src import preprocessing as pp
+from src import purity as pur
+from src import report as rp
+from src import sigproj as sp
+from src import stability as st
 
 
 def build_parser() -> argparse.ArgumentParser:
