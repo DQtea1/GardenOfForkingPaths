@@ -257,8 +257,8 @@ def _gather(result, k_final, outdir, coords, meta, sig_scores, sig_tests, deconv
 
 def build_report(result, k_final, outdir, *, coords=None, meta=None,
                  sig_scores=None, sig_tests=None, deconv=None, degsea_by_k=None,
-                 branch_stability_by_k=None, min_cluster_size=10, k_criterion="both",
-                 linkage_method="average") -> Path:
+                 branch_stability_by_k=None, assoc=None, min_cluster_size=10,
+                 k_criterion="both", linkage_method="average") -> Path:
     """Construit `outdir/report.html`. Voir le module pour les entrées.
 
     `degsea_by_k` : dict {k: {collection: matrice NES}} — un seul k (k_final) en
@@ -272,6 +272,7 @@ def build_report(result, k_final, outdir, *, coords=None, meta=None,
     data = _gather(result, k_final, outdir, coords, meta, sig_scores, sig_tests,
                    deconv, degsea_by_k, linkage_method, min_cluster_size, k_criterion,
                    branch_stability_by_k)
+    data["assoc"] = assoc or {}
     html = _TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(data, ensure_ascii=False))
     out = outdir / "report.html"

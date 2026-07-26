@@ -242,6 +242,7 @@ def parse_args(argv=None):
     signature_sources: dict = {}
     deconv_methods: dict = {}
     deconv_reference: dict = {}
+    ordinal_variables: dict = {}
 
     # 1. YAML : écrase les défauts, uniquement pour des clés connues
     if args.config:
@@ -280,6 +281,16 @@ def parse_args(argv=None):
         if isinstance(config.get("deconv_reference"), dict):
             deconv_reference = config["deconv_reference"]
             unknown.discard("deconv_reference")
+        # variables ORDINALES pour le test de tendance (9a). Deux formes :
+        #   dict {stade: [I, II, III], grade: [G1, G2, G3]}  (ordre explicite, recommandé)
+        #   liste [stade, grade]                             (ordre = tri des modalités)
+        if "ordinal_variables" in config:
+            ov = config["ordinal_variables"]
+            if isinstance(ov, dict):
+                ordinal_variables = {str(k): (list(v) if v else None) for k, v in ov.items()}
+            elif isinstance(ov, (list, tuple)):
+                ordinal_variables = {str(k): None for k in ov}
+            unknown.discard("ordinal_variables")
 
         # 1b. Autres clés inconnues : avertissement non bloquant (fonctions à venir,
         #     p. ex. human_pathways, IPRES flat — remplacé par signature_sources).
@@ -307,6 +318,7 @@ def parse_args(argv=None):
     merged["signature_sources"] = signature_sources   # {nom: {format, path, ...}}
     merged["deconv_methods"] = deconv_methods         # {méthode: {enabled, ...}}
     merged["deconv_reference"] = deconv_reference     # {format, path, celltype_col, ...}
+    merged["ordinal_variables"] = ordinal_variables   # {variable: [modalités ordonnées] | None}
     return argparse.Namespace(**merged)
 
 
@@ -636,12 +648,14 @@ def main(argv=None) -> int:
                  outdir / "tables" / "deconvolution")
 
     # ------------------ 9a. khi² d'indépendance (cluster/clinique catégoriel)
+    assoc = None
     if args.run_chi2 == "y" and args.metadata:
         meta_chi = pd.read_csv(args.metadata, sep=None, engine="python",
                                index_col=0).reindex(result.sample_names)
         cluster_labels_by_k = {k: result.labels(k, args.linkage) for k in k_values}
-        ca.run_categorical_association(
+        assoc = ca.run_categorical_association(
             cluster_labels_by_k, meta_chi, result.sample_names, outdir, k_final,
+            ordinal=args.ordinal_variables,
             mc_resamples=args.chi2_mc_resamples, seed=args.seed)
     elif args.run_chi2 == "y":
         log.info("9a. Khi² : pas de métadonnées (--metadata) — étape sautée.")
@@ -666,7 +680,7 @@ def main(argv=None) -> int:
             coords=coords, meta=report_meta, sig_scores=sig_scores,
             sig_tests=sig_tests, deconv=(deconv or None),
             degsea_by_k=(degsea_by_k or None),
-            branch_stability_by_k=(bs_by_k or None),
+            branch_stability_by_k=(bs_by_k or None), assoc=(assoc or None),
             min_cluster_size=args.min_cluster_size, k_criterion=args.k_criterion,
             linkage_method=args.linkage,
         )

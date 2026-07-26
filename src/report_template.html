@@ -67,6 +67,9 @@
   .legend .sw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-1px}
   .muted{color:var(--ink2);font-size:.82rem}
   .flexrow{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+  .warn{margin:10px 0;padding:9px 12px;border:1px solid #e6b8bd;background:#fbecec;
+    border-radius:8px;color:#8a2a30;font-size:12.5px;line-height:1.45;display:none}
+  .warn.on{display:block}
   .boxopts{border:1px solid var(--line);border-radius:9px;padding:10px 12px;min-width:190px;
     background:var(--surface);display:flex;flex-direction:column;gap:9px;font:13px var(--sans)}
   .boxopts .hd{font:600 12px var(--sans);color:var(--ink2);text-transform:uppercase;letter-spacing:.03em}
@@ -97,6 +100,7 @@
     <button class="subtab active" data-sub="unsup">Non-supervisé</button>
     <button class="subtab" data-sub="sigdet">Signatures détaillé</button>
     <button class="subtab" data-sub="embed">t-SNE / UMAP</button>
+    <button class="subtab" data-sub="assoc">Associations</button>
   </div>
 
   <div class="sub active" id="sub-unsup">
@@ -157,6 +161,18 @@
     <div class="flexrow">
       <canvas id="emCanvas"></canvas>
       <div class="legend" id="emLegend" style="flex-direction:column;align-items:flex-start"></div>
+    </div>
+  </div>
+
+  <div class="sub" id="sub-assoc">
+    <div class="warn" id="asWarn"></div>
+    <div class="ctl">
+      <label>k (clusters) :</label><select id="asK"></select>
+      <label>Croisement :</label><select id="asPair"></select>
+    </div>
+    <div class="flexrow">
+      <canvas id="asCanvas"></canvas>
+      <div class="legend" id="asInfo" style="flex-direction:column;align-items:flex-start"></div>
     </div>
   </div>
 </div>
