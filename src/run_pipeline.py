@@ -28,7 +28,6 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-<<<<<<< HEAD
 from src import catassoc as ca
 from src import consensus as cc
 from src import deconv as dc
@@ -41,20 +40,6 @@ from src import purity as pur
 from src import report as rp
 from src import sigproj as sp
 from src import stability as st
-=======
-import catassoc as ca
-import consensus as cc
-import deconv as dc
-import degsea as dg
-import embedding as emb
-import metrics as mt
-import plots as pl
-import preprocessing as pp
-import purity as pur
-import report as rp
-import sigproj as sp
-import stability as st
->>>>>>> 32f5237f38dfa4922fd1dc1256e7b12045bc87f3
 
 
 def build_parser() -> argparse.ArgumentParser:

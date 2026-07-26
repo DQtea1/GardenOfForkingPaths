@@ -39,15 +39,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 
-<<<<<<< HEAD
 from src import consensus as cc
 from src import metrics as mt
 from src import preprocessing as pp
-=======
-import consensus as cc
-import metrics as mt
-import preprocessing as pp
->>>>>>> 32f5237f38dfa4922fd1dc1256e7b12045bc87f3
 
 
 def permute_genes(X: np.ndarray, rng: np.random.Generator) -> np.ndarray:
