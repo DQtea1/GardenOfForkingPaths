@@ -6,70 +6,72 @@ calculée **à partir de la distance consensus**, pas de l'expression brute.
 
 ```
 .
-├── run_pipeline.py                  # pipeline complet (CLI)
-├── config.yaml                      # tous les paramètres du pipeline (--config)
-├── GUIDE_config.md                  # comment régler chaque paramètre (algo, distance, linkage…)
-├── pipeline_map.html                # carte interactive du processus (3 granularités + params)
-├── null_check.py                    # contrôle par modèle nul — à ne pas sauter
-├── make_demo_data.py                # 500 tumeurs simulées, 4 sous-types + atypiques
-├── requirements.txt
-└── src/consensus_rnaseq/
+├── config/                          # fichiers de configuration (--config)
+│   ├── config_SARAH.yaml            # tous les paramètres, cohorte SARAH (modèle commenté)
+│   └── config_PREDIMEL.yaml         # idem, cohorte PREDIMEL
+├── HELP/
+│   ├── GUIDE_config.md              # comment régler chaque paramètre (algo, distance, linkage…)
+│   └── pipeline_map.html            # carte interactive du processus (3 granularités + params)
+├── README.md
+└── src/                             # tout le code (imports à plat ; lancer python src/<script>.py)
+    ├── run_pipeline.py              # pipeline complet (CLI)
+    ├── null_check.py                # contrôle par modèle nul — à ne pas sauter
+    ├── make_demo_data.py            # 500 tumeurs simulées, 4 sous-types + atypiques
+    ├── requirements.txt
     ├── preprocessing.py             # filtrage, VST/logCPM, gènes variables, centrage, outliers ACP
     ├── purity.py                    # pureté tumorale (PUREE) + filtrage
     ├── consensus.py                 # cœur : rééchantillonnage + matrice consensus
     ├── metrics.py                   # CDF, Δ(K), PAC, item/cluster consensus, silhouette
-    ├── stability.py                 # stabilité Jaccard des branches (bootstrap gènes)
+    ├── stability.py                 # stabilité Jaccard des branches (bootstrap gènes, tous k)
     ├── embedding.py                 # t-SNE / UMAP 2D/3D sur distance précalculée
     ├── degsea.py                    # DESeq2 + GSEA par cluster (one-vs-all / one-vs-one)
+    ├── sigproj.py                   # projection de signatures (ssGSEA/moyenne) + tests Wilcoxon
+    ├── deconv.py + deconvolve.R     # déconvolution (omnideconv / immunedeconv, R en sous-processus)
+    ├── catassoc.py                  # khi² d'indépendance (cluster/clinique) + résidus ajustés
+    ├── report.py + report_template.html  # rapport HTML interactif autonome
     └── plots.py                     # heatmaps, tracking plot, nuages, dendro stabilité
 ```
 
 ## Démarrage rapide
 
+Les scripts se lancent depuis la racine du dépôt (`python src/<script>.py …`) ;
+le dossier `src/` est mis automatiquement sur le `sys.path`.
+
 ```bash
-pip install -r requirements.txt
+pip install -r src/requirements.txt
 
 # 1. jeu de démonstration, pour valider l'installation (~30 s)
-python make_demo_data.py
-python run_pipeline.py --counts data/demo_counts.tsv \
+python src/make_demo_data.py
+python src/run_pipeline.py --counts data/demo_counts.tsv \
     --metadata data/demo_metadata.tsv --color-by true_subtype \
     --outdir results/demo --n-resamples 300 --k-max 7
 
-python /home/quentin/01_PROJETS/14_ConsensusClusterBulk/src/consensus_rnaseq/run_pipeline.py \
-    --counts /mnt/d/03_SARAH_projet/00_DATA/01_BULK/01_MERGED_BULKS/00_Unfiltered/RNAseq_counts.csv \
-    --metadata /mnt/d/03_SARAH_projet/00_DATA/02_CLINIC/clinique_itd.csv \
-    --color-by histo_classe \
-    --outdir results/SARAH \
-    --n-top-genes 1000 \
-    --n-resamples 1000 \
-    --k-max 30 \
-    --k-final 7 \
-    --compute_jaccard y \
-    --t-SNE_dim 3 
+# cohorte SARAH — le plus simple est de passer par le fichier de config dédié :
+python src/run_pipeline.py --config config/config_SARAH.yaml
 
 # 2. tes données (counts bruts, gènes en lignes)
-python run_pipeline.py --counts data/counts.tsv --outdir results/run01 \
+python src/run_pipeline.py --counts data/counts.tsv --outdir results/run01 \
     --n-resamples 1000 --k-max 10 --n-top-genes 5000
 
 # 3. contrôle nul, obligatoire avant toute interprétation
-python null_check.py --counts data/counts.tsv --outdir results/run01/null
+python src/null_check.py --counts data/counts.tsv --outdir results/run01/null
 ```
 
 ## Fichier de configuration
 
-Plutôt que de tout passer en ligne de commande, on peut remplir `config.yaml`
-(un modèle commenté listant *tous* les paramètres) et lancer :
+Plutôt que de tout passer en ligne de commande, on peut remplir un fichier de
+`config/` (un modèle commenté listant *tous* les paramètres) et lancer :
 
 ```bash
-python run_pipeline.py --config config.yaml
+python src/run_pipeline.py --config config/config_SARAH.yaml
 ```
 
-Priorité : défauts internes < `config.yaml` < ligne de commande. Un paramètre
+Priorité : défauts internes < fichier `--config` < ligne de commande. Un paramètre
 saisi au terminal l'emporte donc toujours sur le YAML — pratique pour rejouer un
 run en changeant un seul réglage :
 
 ```bash
-python run_pipeline.py --config config.yaml --k-max 12 --compute_jaccard n
+python src/run_pipeline.py --config config/config_SARAH.yaml --k-max 12 --compute_jaccard n
 ```
 
 Les clés du YAML utilisent des underscores (`n_top_genes`, `color_by`,

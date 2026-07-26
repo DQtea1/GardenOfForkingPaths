@@ -92,7 +92,7 @@ def _gather(result, k_final, outdir, coords, meta, sig_scores, sig_tests, deconv
     from scipy.cluster.hierarchy import dendrogram, linkage
     from scipy.spatial.distance import squareform
 
-    from . import metrics as mt
+    import metrics as mt
 
     # stabilité Jaccard par k : {k: {id de nœud -> score}} (pour l'arbre de chaque k)
     stab_by_id_per_k = {}
