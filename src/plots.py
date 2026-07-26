@@ -14,9 +14,9 @@ from matplotlib.patches import Patch
 from scipy.cluster.hierarchy import dendrogram, leaves_list, linkage
 from scipy.spatial.distance import squareform
 
-from .consensus import ConsensusResult
-from .metrics import consensus_cdf, delta_k, pac
-from .stability import BranchStability
+from consensus import ConsensusResult
+from metrics import consensus_cdf, delta_k, pac
+from stability import BranchStability
 
 CONSENSUS_CMAP = LinearSegmentedColormap.from_list(
     "consensus", ["#ffffff", "#c6dbef", "#4292c6", "#08306b"]

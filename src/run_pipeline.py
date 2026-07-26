@@ -26,20 +26,20 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from consensus_rnaseq import catassoc as ca
-from consensus_rnaseq import consensus as cc
-from consensus_rnaseq import deconv as dc
-from consensus_rnaseq import degsea as dg
-from consensus_rnaseq import embedding as emb
-from consensus_rnaseq import metrics as mt
-from consensus_rnaseq import plots as pl
-from consensus_rnaseq import preprocessing as pp
-from consensus_rnaseq import purity as pur
-from consensus_rnaseq import report as rp
-from consensus_rnaseq import sigproj as sp
-from consensus_rnaseq import stability as st
+import catassoc as ca
+import consensus as cc
+import deconv as dc
+import degsea as dg
+import embedding as emb
+import metrics as mt
+import plots as pl
+import preprocessing as pp
+import purity as pur
+import report as rp
+import sigproj as sp
+import stability as st
 
 
 def build_parser() -> argparse.ArgumentParser:

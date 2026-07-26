@@ -32,16 +32,16 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 
-from consensus_rnaseq import consensus as cc
-from consensus_rnaseq import metrics as mt
-from consensus_rnaseq import preprocessing as pp
+import consensus as cc
+import metrics as mt
+import preprocessing as pp
 
 
 def permute_genes(X: np.ndarray, rng: np.random.Generator) -> np.ndarray:

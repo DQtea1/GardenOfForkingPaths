@@ -36,7 +36,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import chi2_contingency, fisher_exact
 
-from .sigproj import _is_categorical
+from sigproj import _is_categorical
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ def run_categorical_association(
     de résidus par variable clinique (cluster k_final), et un `chi2_summary.csv`
     (toutes paires, tous k, avec FDR). Renvoie la table de synthèse.
     """
-    from . import plots as pl
+    import plots as pl
 
     meta = metadata.reindex(sample_names)
     # variables cliniques catégorielles exploitables (2..max_levels modalités)

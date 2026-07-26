@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import silhouette_samples, silhouette_score
 
-from .consensus import ConsensusResult
+from consensus import ConsensusResult
 
 logger = logging.getLogger(__name__)
 
