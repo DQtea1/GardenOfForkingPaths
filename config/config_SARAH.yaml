@@ -148,6 +148,19 @@ run_chi2: y                   # y | n — croise cluster (chaque k) × clinique 
                               #   (khi², Fisher/Monte-Carlo en repli, V de Cramér, résidus ajustés). Léger.
 chi2_mc_resamples: 2000       # permutations du khi² de Monte-Carlo (repli des tables R×C non conformes à Cochran)
 
+# Variables ORDINALES : un croisement impliquant une ordinale et un axe scorable
+# (ordinal ou binaire) utilise un TEST DE TENDANCE (Cochran-Armitage / linéaire)
+# au lieu du khi² nominal. Donner l'ordre explicite des modalités (recommandé) :
+ordinal_variables:
+  # stade: [I, II, III, IV]
+  # grade: [G1, G2, G3]
+  # (forme courte : `ordinal_variables: [stade, grade]` -> ordre = tri des modalités)
+
+# ================================================= 9b · Corrélations (variables continues par patient)
+run_correlations: y           # y | n — corrèle clinique continue × signatures/déconv + signatures × déconv
+corr_method: spearman         # spearman (robuste, défaut) | pearson
+corr_all_pairs: n             # y = aussi signature×signature et déconv×déconv (redondant/compositionnel)
+
 # ================================================= 10 · Rapport d'analyse (HTML interactif)
 create_report: y              # y | n — génère outdir/report.html (rapport autonome de tous les résultats)
 

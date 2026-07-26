@@ -42,6 +42,21 @@
     padding:3px 12px;cursor:pointer}
   .addbtn:hover{background:var(--accent2)}
   .stack{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:8px;overflow-x:auto}
+  /* Non-supervisé : vignettes accolées, sans bordure ni barre de défilement, pour
+     suivre l'alignement des patients d'un panneau à l'autre. Grille 3×3 : la
+     matrice au centre, panneaux haut/bas alignés sur ses COLONNES et gauche/droite
+     sur ses LIGNES. */
+  .usgrid{display:grid;grid-template-columns:auto auto auto;align-items:start;justify-items:start;width:max-content;max-width:100%}
+  .usstack{font-size:0}                       /* haut/bas : empilage vertical */
+  .usstack-h{display:flex;flex-direction:row;align-items:flex-start;font-size:0}  /* gauche/droite */
+  .usstack .panel,.usstack-h .panel{margin:0;cursor:grab}
+  .usstack canvas,.usstack-h canvas{display:block}
+  .vttl{position:absolute;top:1px;left:1px;writing-mode:vertical-rl;font:600 10px var(--mono);
+    color:var(--ink2);z-index:2;white-space:nowrap;background:rgba(255,255,255,.65)}
+  /* zones de dépôt (drag & drop) : élargies pendant un glissement pour être visées */
+  .dragging .usstack{min-height:22px}
+  .dragging .usstack-h{min-width:22px}
+  .usstack.dragover,.usstack-h.dragover{outline:2px dashed var(--accent);outline-offset:-2px;background:rgba(20,184,166,.06)}
   .panel{position:relative;margin:0}
   .panel .rm{position:absolute;right:2px;top:1px;font:700 12px var(--mono);color:#c0392b;background:#fff;
     border:1px solid var(--line);border-radius:4px;cursor:pointer;padding:0 5px;z-index:2}
@@ -76,6 +91,12 @@
   .boxopts label{display:flex;align-items:center;gap:7px;justify-content:space-between;color:var(--ink2)}
   .boxopts input[type=range]{width:96px}
   .boxopts .val{font:11px ui-monospace;color:var(--ink2);min-width:26px;text-align:right}
+  .cttbl{border-collapse:collapse;font:12px var(--mono);color:var(--ink)}
+  .cttbl caption{font:600 11px var(--sans);color:var(--ink2);text-align:left;padding:0 0 5px}
+  .cttbl th,.cttbl td{border:1px solid var(--line);padding:3px 9px;text-align:right;white-space:nowrap}
+  .cttbl th{background:var(--surface2);color:var(--ink2);font-weight:600;text-align:right}
+  .cttbl thead th,.cttbl tbody th{text-align:left}
+  .cttbl .tot{background:var(--surface2);font-weight:700;color:var(--ink)}
   .frow{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   .fvarname{font:600 11px var(--sans);color:var(--ink2);margin-right:2px}
   .fchip{font:12px var(--sans);color:var(--ink2);display:inline-flex;align-items:center;gap:3px;
@@ -101,19 +122,28 @@
     <button class="subtab" data-sub="sigdet">Signatures détaillé</button>
     <button class="subtab" data-sub="embed">t-SNE / UMAP</button>
     <button class="subtab" data-sub="assoc">Associations</button>
+    <button class="subtab" data-sub="corr">Corrélations</button>
   </div>
 
   <div class="sub active" id="sub-unsup">
     <div class="ctl">
       <label>k (trié par PAC croissant) :</label>
       <select id="kSelect"></select>
-      <span class="muted">Empile des panneaux alignés sur les patients avec les boutons <b>+</b>.</span>
+      <span class="muted">Ajoute des panneaux (haut/bas = alignés sur les colonnes, gauche/droite = sur les lignes de la matrice). <b>Glisse-dépose</b> une vignette pour la déplacer/réorganiser.</span>
     </div>
-    <div class="addbar"><button class="addbtn" data-side="top">+ panneau au-dessus</button></div>
-    <div id="stack-top"></div>
-    <div class="stack" id="stack-center"></div>
-    <div id="stack-bottom"></div>
-    <div class="addbar"><button class="addbtn" data-side="bottom">+ panneau en dessous</button></div>
+    <div class="addbar">
+      <button class="addbtn" data-side="top">+ haut</button>
+      <button class="addbtn" data-side="bottom">+ bas</button>
+      <button class="addbtn" data-side="left">+ gauche</button>
+      <button class="addbtn" data-side="right">+ droite</button>
+    </div>
+    <div class="usgrid">
+      <div id="stack-top"    class="usstack"   style="grid-row:1;grid-column:2"></div>
+      <div id="stack-left"   class="usstack-h" style="grid-row:2;grid-column:1;justify-self:end"></div>
+      <div id="stack-center" class="usstack"   style="grid-row:2;grid-column:2"></div>
+      <div id="stack-right"  class="usstack-h" style="grid-row:2;grid-column:3;justify-self:start"></div>
+      <div id="stack-bottom" class="usstack"   style="grid-row:3;grid-column:2"></div>
+    </div>
     <div class="legend" id="unsupLegend"></div>
   </div>
 
@@ -171,8 +201,28 @@
       <label>Croisement :</label><select id="asPair"></select>
     </div>
     <div class="flexrow">
+      <div id="asTable" style="overflow:auto;max-width:100%"></div>
       <canvas id="asCanvas"></canvas>
       <div class="legend" id="asInfo" style="flex-direction:column;align-items:flex-start"></div>
+    </div>
+  </div>
+
+  <div class="sub" id="sub-corr">
+    <div class="warn" id="coWarn"></div>
+    <div class="ctl">
+      <label>Lignes :</label><select id="coRow"></select>
+      <label>Colonnes :</label><select id="coCol"></select>
+      <label>Trier :</label><select id="coSort"><option value="rho">|ρ| max</option><option value="name">nom</option></select>
+      <label>|ρ| min <span class="val" id="coThrV">0.00</span></label><input type="range" id="coThr" min="0" max="1" step="0.05" value="0">
+      <label><input type="checkbox" id="coSig"> FDR ≤ 0,05 seulement</label>
+      <input type="text" id="coFilter" placeholder="filtrer les noms…" style="min-width:150px">
+    </div>
+    <div class="flexrow">
+      <div style="overflow:auto;max-width:100%"><canvas id="coCanvas"></canvas></div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <canvas id="coScatter"></canvas>
+        <div class="legend" id="coInfo" style="flex-direction:column;align-items:flex-start"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -221,13 +271,20 @@ function fitCanvas(cv,w,h){const dpr=window.devicePixelRatio||1;cv.style.width=w
   cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);const ctx=cv.getContext("2d");ctx.setTransform(dpr,0,0,dpr,0,0);return ctx;}
 
 const LM=175, RM=14;   // marges gauche (labels) / droite — partagées => colonnes alignées
-function plotW(){return Math.max(320,($("stack-center").clientWidth||900)-LM-RM);}
+// Côté de la matrice de consensus = largeur = hauteur (CARRÉE, non étirée). La MÊME
+// largeur de colonne cw = usSide()/N est partagée par tous les panneaux -> les
+// patients restent alignés verticalement. Bornée pour ne pas remplir la page.
+const CTB=14;   // bande de titre de la matrice = décalage vertical partagé (alignement des lignes)
+function usSide(){const h=$("sub-unsup");const a=((h&&h.clientWidth)||900)-LM-RM;return Math.max(200,Math.min(a,600));}
 
 /* =========================================================
    ONGLET RÉSULTATS — Non-supervisé (heatmaps alignées)
    ========================================================= */
 let curK=DATA.ks[0].k;
-let topPanels=[], bottomPanels=["clusters"];   // panneaux additionnels
+// panneaux additionnels par côté ; gauche/droite alignés sur les LIGNES de la matrice
+const P={top:[], bottom:["clusters"], left:[], right:[]};
+function sideArr(s){return P[s];}
+let dragSrc=null;   // {side, type} de la vignette en cours de glissement
 
 function kInfo(k){const o=DATA.ks.find(x=>x.k===k);return o?`k=${k} · PAC=${o.pac.toFixed(3)}`:`k=${k}`;}
 // Sélecteur de k : rouge si le plus petit cluster < min_cluster_size
@@ -255,15 +312,15 @@ function availablePanels(){
 function drawCentral(){
   const host=$("stack-center");host.innerHTML="";
   const k=curK, per=DATA.perK[String(k)], order=per.order, C=DATA.consensus[String(k)];
-  const W=plotW(), cw=W/N, side=Math.min(W,520), ch=side/N;
+  const side=usSide(), cw=side/N, ch=cw;   // cellules carrées (cw==ch) ; CTB = bande de titre
   const wrap=document.createElement("div");wrap.className="panel";
   const cv=document.createElement("canvas");wrap.appendChild(cv);host.appendChild(wrap);
-  const ctx=fitCanvas(cv,LM+W+RM,side+22);
-  ctx.fillStyle="#5a6b73";ctx.font="11px ui-monospace";ctx.fillText("Matrice de consensus — "+kInfo(k),6,14);
-  for(let i=0;i<N;i++){const ri=order[i];const rowD=C[ri];
-    for(let j=0;j<N;j++){ctx.fillStyle=consCol(rowD[order[j]]/100);ctx.fillRect(LM+j*cw,20+i*ch,Math.ceil(cw),Math.ceil(ch));}}
-  drawClusterSeparators(ctx,per,order,cw,20,side,"x");
-  drawClusterSeparators(ctx,per,order,ch,LM,W,"y",20);
+  const ctx=fitCanvas(cv,LM+side+RM,side+CTB);
+  ctx.fillStyle="#5a6b73";ctx.font="11px ui-monospace";ctx.fillText("Matrice de consensus — "+kInfo(k),6,CTB-3);
+  for(let i=0;i<N;i++){const ri=order[i],rowD=C[ri];
+    for(let j=0;j<N;j++){ctx.fillStyle=consCol(rowD[order[j]]/100);ctx.fillRect(LM+j*cw,CTB+i*ch,Math.ceil(cw),Math.ceil(ch));}}
+  drawClusterSeparators(ctx,per,order,cw,CTB,side,"x");
+  drawClusterSeparators(ctx,per,order,ch,LM,side,"y",CTB);
 }
 function blocks(per,order){const b=[];let i=0;const lab=order.map(o=>per.labels[o]);
   while(i<N){let j=i;while(j<N&&lab[j]===lab[i])j++;b.push([lab[i],i,j]);i=j;}return b;}
@@ -274,23 +331,71 @@ function drawClusterSeparators(ctx,per,order,cw,off,len,axis,off2){
     else{ctx.moveTo(off,off2+i*cw);ctx.lineTo(off+len,off2+i*cw);}ctx.stroke();});
 }
 
-/* ---- dessin d'un panneau additionnel (aligné colonnes) ---- */
+/* ---- panneaux VERTICAUX (gauche/droite) : patients en LIGNES, y = CTB + i*cw ;
+   axe des features horizontal. Alignés sur les lignes de la matrice. ---- */
+function vFit(cv,W,extra){return fitCanvas(cv,W,CTB+usSide()+(extra||0));}
+function drawVStrip(cv,order,cw,W,colAt){const ctx=vFit(cv,W);
+  for(let i=0;i<N;i++){const c=colAt(order[i]);if(c){ctx.fillStyle=c;ctx.fillRect(1,CTB+i*cw,W-2,Math.ceil(cw));}}}
+function drawVMeta(cv,order,cw,v){const vals=DATA.meta[v],cont=DATA.metaTypes[v]==="continuous";
+  let lo=0,hi=1;if(cont){const f=vals.filter(x=>x!=null);lo=Math.min(...f);hi=Math.max(...f);}
+  const cats=cont?null:[...new Set(vals.filter(x=>x!=null))];
+  drawVStrip(cv,order,cw,18,o=>{const x=vals[o];return x==null?"#eee":cont?viridis((x-lo)/((hi-lo)||1)):CAT[cats.indexOf(x)%CAT.length];});}
+function drawVItem(cv,per,order,cw){const W=46,ctx=vFit(cv,W),mx=W-3,side=usSide();
+  for(let i=0;i<N;i++){const v=per.item[order[i]];if(v==null)continue;
+    ctx.fillStyle=clusterCol(per.labels[order[i]]);ctx.fillRect(0,CTB+i*cw,v*mx,Math.ceil(cw));}
+  ctx.strokeStyle="#bbb";ctx.beginPath();ctx.moveTo(0.8*mx,CTB);ctx.lineTo(0.8*mx,CTB+side);ctx.stroke();}
+function vHeatLabels(ctx,names,colW,yTop){ctx.font=Math.min(10,colW)+"px ui-monospace";ctx.fillStyle="#33414a";
+  ctx.textAlign="left";ctx.textBaseline="middle";
+  for(let r=0;r<names.length;r++){ctx.save();ctx.translate(r*colW+colW/2,yTop+3);ctx.rotate(Math.PI/2);
+    ctx.fillText((names[r]||"").slice(0,18),0,0);ctx.restore();}
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";}
+function drawVHeat(cv,order,cw,rows,names){let vmax=0;rows.forEach(r=>r.forEach(x=>{if(x!=null)vmax=Math.max(vmax,Math.abs(x));}));vmax=vmax||1;
+  const colW=Math.max(4,Math.min(16,Math.floor(320/rows.length))),W=rows.length*colW+2,side=usSide(),lab=colW>=8?92:0;
+  const ctx=vFit(cv,W,lab);
+  for(let r=0;r<rows.length;r++)for(let i=0;i<N;i++){const x=rows[r][order[i]];
+    ctx.fillStyle=x==null?"#eee":rdbu(x,vmax);ctx.fillRect(r*colW,CTB+i*cw,Math.ceil(colW),Math.ceil(cw));}
+  if(lab)vHeatLabels(ctx,names,colW,CTB+side);}
+function drawVDegsea(cv,per,order,cw,coll){const dk=DATA.degsea[String(curK)];
+  if(!dk||!dk[coll]){const ctx=vFit(cv,60);ctx.fillStyle="#c0392b";ctx.font="10px ui-monospace";
+    ctx.save();ctx.translate(12,CTB+4);ctx.rotate(Math.PI/2);ctx.fillText("DEGSEA absent (k="+curK+")",0,0);ctx.restore();return;}
+  const d=dk[coll],cl=d.clusters,nes=d.nes;
+  const amp=nes.map((row,i)=>[i,Math.max(...row.map(x=>x==null?0:Math.abs(x)))]).sort((a,b)=>b[1]-a[1]).slice(0,30).map(a=>a[0]);
+  const cmap={};cl.forEach((c,j)=>cmap[c]=j);
+  const rows=amp.map(fi=>{const a=new Array(N);for(let o=0;o<N;o++){const j=cmap[per.labels[o]];a[o]=(j==null)?null:nes[fi][j];}return a;});
+  drawVHeat(cv,order,cw,rows,amp.map(fi=>d.terms[fi]));}
+
+/* ---- fabrique d'une vignette (horizontale = haut/bas, verticale = gauche/droite) ---- */
 function makePanel(type,side){
-  const per=DATA.perK[String(curK)],order=per.order,W=plotW(),cw=W/N;
-  const wrap=document.createElement("div");wrap.className="panel";
+  const vert=(side==="left"||side==="right");
+  const per=DATA.perK[String(curK)],order=per.order,W=usSide(),cw=W/N;
+  const wrap=document.createElement("div");wrap.className="panel";wrap.draggable=true;
+  wrap.addEventListener("dragstart",ev=>{dragSrc={side,type};document.body.classList.add("dragging");
+    if(ev.dataTransfer){ev.dataTransfer.effectAllowed="move";ev.dataTransfer.setData("text/plain",type);}});
+  wrap.addEventListener("dragend",()=>{document.body.classList.remove("dragging");
+    document.querySelectorAll(".dragover").forEach(x=>x.classList.remove("dragover"));});
   const rm=document.createElement("button");rm.className="rm";rm.textContent="✕";
-  rm.onclick=()=>{const arr=side==="top"?topPanels:bottomPanels;const i=arr.indexOf(type);if(i>=0)arr.splice(i,1);render();};
-  const ttl=document.createElement("div");ttl.className="ttl";
+  rm.onclick=()=>{const a=sideArr(side),i=a.indexOf(type);if(i>=0)a.splice(i,1);render();};
+  const ttl=document.createElement("div");ttl.className=vert?"vttl":"ttl";
   const cv=document.createElement("canvas");wrap.appendChild(cv);wrap.appendChild(ttl);wrap.appendChild(rm);
 
   const kind=type.split(":")[0], arg=type.split(":")[1];
-  if(kind==="tree"){ttl.textContent="Arbre consensus";drawTree(cv,per,W,cw);}
-  else if(kind==="clusters"){ttl.textContent="Clusters";drawClustersBar(cv,per,order,W,cw);}
-  else if(kind==="item"){ttl.textContent="Item consensus";drawItem(cv,per,order,W,cw);}
-  else if(kind==="meta"){ttl.textContent="Clinique : "+arg;drawMetaRow(cv,order,W,cw,arg);}
-  else if(kind==="sig"){ttl.textContent="Signatures ("+arg+")";drawMatrix(cv,order,W,cw,DATA.signatures[arg].values,DATA.signatures[arg].names,true);}
-  else if(kind==="deconv"){ttl.textContent="Déconvolution ("+arg+")";drawMatrix(cv,order,W,cw,DATA.deconv[arg].values,DATA.deconv[arg].types,true);}
-  else if(kind==="degsea"){ttl.textContent="DEGSEA OVA ("+arg+")";drawDegsea(cv,per,order,W,cw,arg);}
+  if(vert){
+    if(kind==="tree"){ttl.textContent="Arbre";drawVTree(cv,per,cw,side);}
+    else if(kind==="clusters"){ttl.textContent="Clusters";drawVStrip(cv,order,cw,18,o=>clusterCol(per.labels[o]));}
+    else if(kind==="item"){ttl.textContent="Item consensus";drawVItem(cv,per,order,cw);}
+    else if(kind==="meta"){ttl.textContent=arg;drawVMeta(cv,order,cw,arg);}
+    else if(kind==="sig"){ttl.textContent="Sig. "+arg;drawVHeat(cv,order,cw,zrows(DATA.signatures[arg].values),DATA.signatures[arg].names);}
+    else if(kind==="deconv"){ttl.textContent="Déconv. "+arg;drawVHeat(cv,order,cw,zrows(DATA.deconv[arg].values),DATA.deconv[arg].types);}
+    else if(kind==="degsea"){ttl.textContent="DEGSEA "+arg;drawVDegsea(cv,per,order,cw,arg);}
+  }else{
+    if(kind==="tree"){ttl.textContent="Arbre consensus";drawTree(cv,per,W,cw);}
+    else if(kind==="clusters"){ttl.textContent="Clusters";drawClustersBar(cv,per,order,W,cw);}
+    else if(kind==="item"){ttl.textContent="Item consensus";drawItem(cv,per,order,W,cw);}
+    else if(kind==="meta"){ttl.textContent="Clinique : "+arg;drawMetaRow(cv,order,W,cw,arg);}
+    else if(kind==="sig"){ttl.textContent="Signatures ("+arg+")";drawMatrix(cv,order,W,cw,DATA.signatures[arg].values,DATA.signatures[arg].names,true);}
+    else if(kind==="deconv"){ttl.textContent="Déconvolution ("+arg+")";drawMatrix(cv,order,W,cw,DATA.deconv[arg].values,DATA.deconv[arg].types,true);}
+    else if(kind==="degsea"){ttl.textContent="DEGSEA OVA ("+arg+")";drawDegsea(cv,per,order,W,cw,arg);}
+  }
   return wrap;
 }
 // couleur de stabilité Jaccard (seuils de Hennig 2007)
@@ -317,6 +422,21 @@ function drawTree(cv,per,W,cw){
     const bx=lx+48+i*54;ctx.fillStyle=sg[0];ctx.fillRect(bx,ly-4,9,9);
     ctx.fillStyle="#5a6b73";ctx.fillText(sg[1],bx+11,ly);});
   ctx.textAlign="left";ctx.textBaseline="alphabetic";
+}
+// arbre en LIGNE (gauche/droite) : feuilles alignées sur les lignes de la matrice
+function drawVTree(cv,per,cw,side){const ic=per.icoord,dc=per.dcoord,stab=per.stability;
+  let maxx=0,maxy=0;ic.forEach(a=>a.forEach(v=>maxx=Math.max(maxx,v)));dc.forEach(a=>a.forEach(v=>maxy=Math.max(maxy,v)));
+  const Wt=118,sideL=usSide(),ctx=vFit(cv,Wt);const flip=(side==="right");
+  const px=h=>flip?4+(h/(maxy||1))*(Wt-8):Wt-4-(h/(maxy||1))*(Wt-8);   // hauteur -> x (feuilles côté matrice)
+  const py=v=>CTB+(v/(maxx||1))*sideL;                                  // position feuille -> y
+  ctx.strokeStyle="#555";ctx.lineWidth=1;
+  for(let l=0;l<ic.length;l++){const xs=ic[l],ys=dc[l];ctx.beginPath();
+    ctx.moveTo(px(ys[0]),py(xs[0]));ctx.lineTo(px(ys[1]),py(xs[1]));ctx.lineTo(px(ys[2]),py(xs[2]));ctx.lineTo(px(ys[3]),py(xs[3]));ctx.stroke();}
+  if(!stab)return;
+  for(let l=0;l<ic.length;l++){const s=stab[l];if(s==null)continue;
+    const ax=px(dc[l][1]),ay=py((ic[l][1]+ic[l][2])/2);
+    ctx.fillStyle=stabCol(s);ctx.beginPath();ctx.arc(ax,ay,3.5,0,7);ctx.fill();
+    ctx.strokeStyle="#fff";ctx.lineWidth=0.8;ctx.stroke();}
 }
 function drawClustersBar(cv,per,order,W,cw){const H=20,ctx=fitCanvas(cv,LM+W+RM,H);
   for(let i=0;i<N;i++){ctx.fillStyle=clusterCol(per.labels[order[i]]);ctx.fillRect(LM+i*cw,2,Math.ceil(cw),16);}}
@@ -357,10 +477,23 @@ function drawDegsea(cv,per,order,W,cw,coll){
     if(rowH>=8){ctx.fillStyle="#33414a";ctx.fillText(terms[amp[r]].slice(0,26),LM-5,2+r*rowH+rowH/2);}}
   ctx.textAlign="left";ctx.textBaseline="alphabetic";}
 
-function renderStack(hostId,arr){const host=$(hostId);host.innerHTML="";arr.forEach(t=>{
-  const wrap=document.createElement("div");wrap.className="stack";wrap.style.marginBottom="6px";
-  wrap.appendChild(makePanel(t,hostId==="stack-top"?"top":"bottom"));host.appendChild(wrap);});}
-function render(){drawCentral();renderStack("stack-top",topPanels);renderStack("stack-bottom",bottomPanels);drawUnsupLegend();}
+function renderStack(side){const host=$("stack-"+side);host.innerHTML="";
+  P[side].forEach(t=>host.appendChild(makePanel(t,side)));}
+function render(){drawCentral();["top","bottom","left","right"].forEach(renderStack);drawUnsupLegend();}
+/* ---- glisser-déposer : réorganiser / déplacer une vignette entre les 4 côtés ---- */
+function usInsertIndex(side,e){const kids=[...$("stack-"+side).children],vert=(side==="left"||side==="right");
+  for(let i=0;i<kids.length;i++){const r=kids[i].getBoundingClientRect();
+    if((vert?e.clientX:e.clientY)<(vert?(r.left+r.right)/2:(r.top+r.bottom)/2))return i;}
+  return kids.length;}
+function usDrop(tgt,e){e.preventDefault();if(!dragSrc)return;const {side:src,type}=dragSrc;dragSrc=null;
+  if(src!==tgt&&P[tgt].includes(type)){render();return;}      // déjà présent de ce côté
+  const si=P[src].indexOf(type);if(si<0){render();return;}
+  let j=usInsertIndex(tgt,e);P[src].splice(si,1);if(src===tgt&&si<j)j--;
+  P[tgt].splice(Math.max(0,Math.min(P[tgt].length,j)),0,type);render();}
+["top","bottom","left","right"].forEach(side=>{const host=$("stack-"+side);
+  host.addEventListener("dragover",e=>{if(dragSrc){e.preventDefault();host.classList.add("dragover");}});
+  host.addEventListener("dragleave",e=>{if(!host.contains(e.relatedTarget))host.classList.remove("dragover");});
+  host.addEventListener("drop",e=>{host.classList.remove("dragover");usDrop(side,e);});});
 function drawUnsupLegend(){$("unsupLegend").innerHTML=
   '<span><i class="sw" style="background:'+consCol(1)+'"></i>consensus élevé</span>'+
   '<span><i class="sw" style="background:#e15759"></i>NES/valeur ↑ (rouge)</span>'+
@@ -375,7 +508,7 @@ function showMenu(side,anchor){
   const items=availablePanels();const groups={};items.forEach(it=>{(groups[it.grp]=groups[it.grp]||[]).push(it);});
   for(const g in groups){const gl=document.createElement("div");gl.className="grp";gl.textContent=g;m.appendChild(gl);
     groups[g].forEach(it=>{const b=document.createElement("button");b.textContent=it.label;
-      b.onclick=()=>{const arr=side==="top"?topPanels:bottomPanels;if(!arr.includes(it.id))arr.push(it.id);m.remove();openMenu=null;render();};m.appendChild(b);});}
+      b.onclick=()=>{const arr=sideArr(side);if(!arr.includes(it.id))arr.push(it.id);m.remove();openMenu=null;render();};m.appendChild(b);});}
   document.body.appendChild(m);const r=anchor.getBoundingClientRect();
   m.style.left=Math.min(r.left,window.innerWidth-260)+"px";m.style.top=(r.bottom+window.scrollY+4)+"px";openMenu=m;
 }
@@ -688,6 +821,164 @@ function renderEmbed(){
 })();
 
 /* =========================================================
+   Associations (khi² d'indépendance / test de tendance)
+   ========================================================= */
+function asGet(){const A=DATA.assoc;if(!A||!A.byClusterK)return null;const sel=$("asPair").value;
+  if(sel.indexOf("clus:")===0){const v=sel.slice(5),k=String(+$("asK").value);return (A.byClusterK[k]||{})[v]||null;}
+  if(sel.indexOf("clin:")===0)return A.byClinical[sel.slice(5)]||null;
+  return null;}
+function starRes(v){const a=Math.abs(v);return a>2.58?"**":a>1.96?"*":"";}
+function testLabel(t){return {chi2:"khi² de Pearson",fisher_exact:"Fisher exact",
+  chi2_montecarlo:"khi² de Monte-Carlo",trend:"test de tendance (Cochran-Armitage / linéaire-par-linéaire)"}[t]||t;}
+function asEsc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+// tableau de contingence (effectifs observés) + marginales (totaux ligne/colonne)
+function asCountsTable(d){const R=d.rows,C=d.cols,cnt=d.counts;
+  const rowTot=cnt.map(r=>r.reduce((a,b)=>a+b,0)),colTot=C.map((_,j)=>cnt.reduce((s,r)=>s+r[j],0));
+  const opt=$("asPair").selectedOptions[0];let cap=opt?opt.textContent:"";
+  if($("asPair").value.indexOf("clus:")===0)cap+=" (k="+(+$("asK").value)+")";
+  let t='<table class="cttbl"><caption>Effectifs observés — '+asEsc(cap)+'</caption><thead><tr><th></th>'
+    +C.map(c=>'<th>'+asEsc(c)+'</th>').join('')+'<th class="tot">Total</th></tr></thead><tbody>';
+  for(let i=0;i<R.length;i++)t+='<tr><th>'+asEsc(R[i])+'</th>'
+    +cnt[i].map(x=>'<td>'+x+'</td>').join('')+'<td class="tot">'+rowTot[i]+'</td></tr>';
+  t+='<tr><th class="tot">Total</th>'+colTot.map(x=>'<td class="tot">'+x+'</td>').join('')
+    +'<td class="tot">'+d.n+'</td></tr></tbody></table>';return t;}
+function renderAssoc(){
+  const d=asGet(),cv=$("asCanvas"),info=$("asInfo");
+  if(!d){fitCanvas(cv,380,60).fillText("Aucun croisement disponible.",12,26);info.innerHTML="";$("asTable").innerHTML="";return;}
+  $("asTable").innerHTML=asCountsTable(d);
+  const R=d.rows,C=d.cols,res=d.resid;
+  const ML=Math.max(64,...R.map(s=>s.length*7)),MT=26,
+        CW=Math.max(48,...C.map(s=>s.length*8+10)),CH=30;
+  const W=ML+C.length*CW+10,H=MT+R.length*CH+8,ctx=fitCanvas(cv,W,H);
+  let vmax=3;res.forEach(row=>row.forEach(x=>vmax=Math.max(vmax,Math.abs(x))));
+  ctx.font="11px ui-sans-serif";ctx.fillStyle="#33414a";ctx.textAlign="center";ctx.textBaseline="bottom";
+  C.forEach((c,j)=>ctx.fillText(c.slice(0,15),ML+j*CW+CW/2,MT-4));
+  ctx.textBaseline="middle";
+  for(let i=0;i<R.length;i++){ctx.fillStyle="#33414a";ctx.textAlign="right";ctx.fillText(R[i].slice(0,18),ML-6,MT+i*CH+CH/2);
+    for(let j=0;j<C.length;j++){const v=res[i][j];
+      ctx.fillStyle=rdbu(v,vmax);ctx.fillRect(ML+j*CW,MT+i*CH,CW-1,CH-1);
+      ctx.fillStyle=Math.abs(v)>vmax*0.55?"#fff":"#222";ctx.textAlign="center";
+      ctx.fillText(v.toFixed(1)+starRes(v),ML+j*CW+CW/2,MT+i*CH+CH/2);}}
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";
+  const cvv=d.cramers_v==null?"—":d.cramers_v.toFixed(2);
+  const eff=d.test==="trend"
+    ?("tendance r = "+(d.trend_r==null?"—":d.trend_r.toFixed(2))+(d.trend_r>0?" (croissante)":d.trend_r<0?" (décroissante)":""))
+    :("V de Cramér = "+cvv);
+  const sig=d.padj<0.001?"***":d.padj<0.01?"**":d.padj<0.05?"*":"ns";
+  info.innerHTML="<b>"+testLabel(d.test)+"</b>"
+    +"<div>p = "+d.pvalue.toExponential(2)+"</div>"
+    +"<div>p ajustée (FDR) = "+d.padj.toExponential(2)+" &nbsp;<b>"+sig+"</b></div>"
+    +"<div>"+eff+"</div>"
+    +"<div class='muted'>n = "+d.n+(d.conditions_met?"":" · conditions khi² non remplies")+"</div>"
+    +"<div style='margin-top:8px;font-weight:600;color:#3a444b'>Résidus ajustés (Haberman)</div>"
+    +'<div><i class="sw" style="background:'+rdbu(vmax,vmax)+'"></i> sur-représenté</div>'
+    +'<div><i class="sw" style="background:'+rdbu(-vmax,vmax)+'"></i> sous-représenté</div>'
+    +"<div class='muted'>* |r|&gt;1.96 &nbsp; ** |r|&gt;2.58</div>";
+}
+(function initAssoc(){
+  const A=DATA.assoc||{},warnEl=$("asWarn");
+  const nCl=(A.clusterVars||[]).length,nCli=(A.clinicalPairs||[]).length;
+  if(!nCl&&!nCli){warnEl.className="warn on";
+    warnEl.textContent="Pas d'analyse d'associations (métadonnées catégorielles absentes ou khi² désactivé).";return;}
+  if(A.warning){warnEl.className="warn on";warnEl.innerHTML="⚠ <b>Attention aux duplicats patient</b> — "+A.warning;}
+  const ks=Object.keys(A.byClusterK||{}).map(Number).sort((a,b)=>a-b),kSel=$("asK");
+  kSel.innerHTML="";ks.forEach(k=>{const o=document.createElement("option");o.value=k;
+    o.textContent="k="+k+(k===DATA.kFinal?" (final)":"");kSel.appendChild(o);});
+  kSel.value=String(ks.indexOf(DATA.kFinal)>=0?DATA.kFinal:(ks[0]||DATA.kFinal));
+  const ps=$("asPair");ps.innerHTML="";
+  if(nCl){const og=document.createElement("optgroup");og.label="Cluster × clinique";
+    A.clusterVars.forEach(v=>{const o=document.createElement("option");o.value="clus:"+v;o.textContent="cluster × "+v;og.appendChild(o);});ps.appendChild(og);}
+  if(nCli){const og=document.createElement("optgroup");og.label="Clinique × clinique";
+    A.clinicalPairs.forEach(p=>{const o=document.createElement("option");o.value="clin:"+p[0]+"|"+p[1];o.textContent=p[0]+" × "+p[1];og.appendChild(o);});ps.appendChild(og);}
+  kSel.onchange=renderAssoc;ps.onchange=renderAssoc;
+  renderAssoc();
+})();
+
+/* =========================================================
+   Corrélations (heatmap bloc×bloc triable/filtrable + scatter au clic)
+   ========================================================= */
+const CO={lut:new Map(),grid:null,sel:null};
+function coKey(a,b){return a<b?a+""+b:b+""+a;}
+function coPair(a,b){return CO.lut.get(coKey(a,b))||null;}
+function coShort(f){return f.replace(/^clinic:/,"").replace(/^ssgsea:/,"").replace(/^mean:/,"").replace(/^deconv:[^:]+:/,"");}
+function coBlockLabel(b){return {clinic:"Clinique",sig_ssgsea:"Signatures ssGSEA",sig_mean:"Signatures moyenne"}[b]||("Déconv. "+b.replace(/^deconv:/,""));}
+function coStars(q){return q==null?"":q<0.01?"**":q<0.05?"*":"";}
+// valeurs par patient d'une variable (réutilise DATA déjà présent, ordre SAMPLES)
+function coValues(feat){const p=feat.indexOf(":");if(p<0)return null;const kind=feat.slice(0,p),rest=feat.slice(p+1);
+  if(kind==="clinic")return DATA.meta[rest]||null;
+  if(kind==="ssgsea"||kind==="mean"){const S=DATA.signatures[kind];if(!S)return null;const r=S.names.indexOf(rest);return r<0?null:S.values[r];}
+  if(kind==="deconv"){const q=rest.indexOf(":");const m=rest.slice(0,q),ct=rest.slice(q+1);const D=DATA.deconv[m];if(!D)return null;const r=D.types.indexOf(ct);return r<0?null:D.values[r];}
+  return null;}
+function renderCorr(){const A=DATA.corr;if(!A||!A.blocks)return;
+  const rb=$("coRow").value,cb=$("coCol").value,thr=+$("coThr").value,sigOnly=$("coSig").checked,ft=$("coFilter").value.trim().toLowerCase();
+  let rows=(A.blocks[rb]||[]).slice(),cols=(A.blocks[cb]||[]).slice();
+  if(ft){rows=rows.filter(f=>coShort(f).toLowerCase().includes(ft));cols=cols.filter(f=>coShort(f).toLowerCase().includes(ft));}
+  const pass=(a,b)=>{const p=coPair(a,b);return p&&p.rho!=null&&Math.abs(p.rho)>=thr&&(!sigOnly||p.padj<=0.05);};
+  rows=rows.filter(a=>cols.some(b=>pass(a,b)));cols=cols.filter(b=>rows.some(a=>pass(a,b)));
+  if($("coSort").value==="rho"){const str=(f,oth)=>Math.max(0,...oth.map(o=>{const p=coPair(f,o);return p&&p.rho!=null?Math.abs(p.rho):0;}));
+    rows.sort((a,b)=>str(b,cols)-str(a,cols));cols.sort((a,b)=>str(b,rows)-str(a,rows));}
+  else{rows.sort((a,b)=>coShort(a).localeCompare(coShort(b)));cols.sort((a,b)=>coShort(a).localeCompare(coShort(b)));}
+  const cv=$("coCanvas");
+  if(!rows.length||!cols.length){fitCanvas(cv,460,60).fillText("Aucune corrélation pour cette combinaison / ce filtre (déconv×déconv et signature×signature ne sont pas calculées par défaut).",12,26);CO.grid=null;return;}
+  const CW=Math.max(15,Math.min(30,Math.floor(760/cols.length))),CH=CW,
+        ML=Math.max(80,...rows.map(f=>coShort(f).length*6.4)),MT=Math.max(56,...cols.map(f=>coShort(f).length*6.4));
+  const W=ML+cols.length*CW+8,H=MT+rows.length*CH+8,ctx=fitCanvas(cv,W,H);
+  ctx.font="10px ui-sans-serif";ctx.fillStyle="#33414a";ctx.textAlign="left";ctx.textBaseline="middle";
+  cols.forEach((c,j)=>{ctx.save();ctx.translate(ML+j*CW+CW/2+3,MT-5);ctx.rotate(-Math.PI/2);ctx.fillText(coShort(c).slice(0,24),0,0);ctx.restore();});
+  ctx.textAlign="right";rows.forEach((r,i)=>ctx.fillText(coShort(r).slice(0,26),ML-5,MT+i*CH+CH/2));
+  CO.grid={rows,cols,ML,MT,CW,CH};
+  for(let i=0;i<rows.length;i++)for(let j=0;j<cols.length;j++){const p=coPair(rows[i],cols[j]),x=ML+j*CW,y=MT+i*CH;
+    if(!p||p.rho==null){ctx.fillStyle="#f2f2f2";ctx.fillRect(x,y,CW-1,CH-1);continue;}
+    const dim=Math.abs(p.rho)<thr||(sigOnly&&!(p.padj<=0.05));
+    ctx.globalAlpha=dim?0.16:1;ctx.fillStyle=rdbu(p.rho,1);ctx.fillRect(x,y,CW-1,CH-1);
+    const st=coStars(p.padj);if(st&&!dim&&CW>=15){ctx.globalAlpha=1;ctx.fillStyle=Math.abs(p.rho)>0.55?"#fff":"#111";ctx.textAlign="center";ctx.fillText(st,x+CW/2,y+CH/2+3);ctx.textAlign="right";}}
+  ctx.globalAlpha=1;ctx.textAlign="left";ctx.textBaseline="alphabetic";
+  if(!CO.sel){outer:for(const a of rows)for(const b of cols){const p=coPair(a,b);if(p&&p.padj<=0.05){CO.sel=[a,b];break outer;}}}
+  drawCorrScatter();
+}
+function drawCorrScatter(){const cv=$("coScatter"),info=$("coInfo");
+  if(!CO.sel){fitCanvas(cv,300,70).fillText("Clique une cellule pour le nuage.",10,24);info.innerHTML="";return;}
+  const [a,b]=CO.sel,xa=coValues(a),xb=coValues(b),p=coPair(a,b);
+  if(!xa||!xb){fitCanvas(cv,300,60).fillText("Valeurs indisponibles.",10,24);info.innerHTML="";return;}
+  const W=300,H=300,M=38,ctx=fitCanvas(cv,W,H),pts=[];
+  for(let i=0;i<N;i++){const u=xa[i],v=xb[i];if(u!=null&&v!=null&&isFinite(u)&&isFinite(v))pts.push([u,v,i]);}
+  if(pts.length<3){ctx.fillText("Trop peu de points.",10,24);info.innerHTML="";return;}
+  const xs=pts.map(q=>q[0]),ys=pts.map(q=>q[1]),xl=Math.min(...xs),xh=Math.max(...xs),yl=Math.min(...ys),yh=Math.max(...ys);
+  const sx=u=>M+((u-xl)/((xh-xl)||1))*(W-M-10),sy=v=>H-M-((v-yl)/((yh-yl)||1))*(H-M-14);
+  ctx.strokeStyle="#ccc";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(M,8);ctx.lineTo(M,H-M);ctx.lineTo(W-8,H-M);ctx.stroke();
+  const per=DATA.perK[String(DATA.kFinal)];
+  pts.forEach(q=>{ctx.fillStyle=per?clusterCol(per.labels[q[2]]):"#3b82c4";ctx.globalAlpha=.82;ctx.beginPath();ctx.arc(sx(q[0]),sy(q[1]),2.6,0,7);ctx.fill();});
+  ctx.globalAlpha=1;
+  const n=pts.length,mx=xs.reduce((s,v)=>s+v,0)/n,my=ys.reduce((s,v)=>s+v,0)/n;let sxy=0,sxx=0;
+  for(const q of pts){sxy+=(q[0]-mx)*(q[1]-my);sxx+=(q[0]-mx)*(q[0]-mx);}
+  if(sxx>0){const b1=sxy/sxx,b0=my-b1*mx;ctx.strokeStyle="#c0392b";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(sx(xl),sy(b0+b1*xl));ctx.lineTo(sx(xh),sy(b0+b1*xh));ctx.stroke();}
+  ctx.fillStyle="#5a6b73";ctx.font="10px ui-sans-serif";ctx.textAlign="center";ctx.fillText(coShort(a).slice(0,36),W/2,H-6);
+  ctx.save();ctx.translate(11,H/2);ctx.rotate(-Math.PI/2);ctx.fillText(coShort(b).slice(0,36),0,0);ctx.restore();ctx.textAlign="left";
+  const mlab=(DATA.corr.method||"spearman")==="pearson"?"r de Pearson":"ρ de Spearman";
+  info.innerHTML="<b>"+coShort(b)+"</b> vs <b>"+coShort(a)+"</b>"
+    +"<div>"+mlab+" = "+(p&&p.rho!=null?p.rho.toFixed(3):"—")+"</div>"
+    +(p?"<div>p = "+p.p.toExponential(2)+"</div><div>FDR = "+p.padj.toExponential(2)+" &nbsp;<b>"+(p.padj<0.05?(p.padj<0.01?"**":"*"):"ns")+"</b></div><div class='muted'>n = "+p.n+"</div>":"")
+    +"<div class='muted' style='margin-top:6px'>points colorés par cluster (k final)</div>";
+}
+(function initCorr(){const A=DATA.corr,w=$("coWarn");
+  if(!A||!A.blocks||!Object.keys(A.blocks).length){w.className="warn on";
+    w.textContent="Pas d'analyse de corrélations (aucune variable continue par patient, ou étape 9b désactivée).";return;}
+  A.pairs.forEach(p=>CO.lut.set(coKey(p.a,p.b),p));
+  const bl=Object.keys(A.blocks),rs=$("coRow"),cs=$("coCol");
+  bl.forEach(b=>{const o=document.createElement("option");o.value=b;o.textContent=coBlockLabel(b)+" ("+A.blocks[b].length+")";
+    rs.appendChild(o);cs.appendChild(o.cloneNode(true));});
+  rs.value=bl.indexOf("clinic")>=0?"clinic":bl[0];
+  cs.value=bl.find(b=>b!==rs.value&&A.blocks[b].some(x=>A.blocks[rs.value].some(y=>coPair(x,y))))||bl.find(b=>b!==rs.value)||bl[0];
+  ["coRow","coCol","coSort","coSig"].forEach(id=>$(id).onchange=()=>{CO.sel=null;renderCorr();});
+  $("coThr").oninput=()=>{$("coThrV").textContent=(+$("coThr").value).toFixed(2);renderCorr();};
+  $("coFilter").oninput=renderCorr;
+  $("coCanvas").addEventListener("click",e=>{const g=CO.grid;if(!g)return;const r=$("coCanvas").getBoundingClientRect();
+    const j=Math.floor((e.clientX-r.left-g.ML)/g.CW),i=Math.floor((e.clientY-r.top-g.MT)/g.CH);
+    if(i>=0&&i<g.rows.length&&j>=0&&j<g.cols.length){CO.sel=[g.rows[i],g.cols[j]];drawCorrScatter();}});
+  renderCorr();
+})();
+
+/* =========================================================
    ONGLET TABLEAUX
    ========================================================= */
 let tblSort={col:-1,dir:1};
@@ -717,7 +1008,8 @@ document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{document.querySelect
   t.classList.add("active");document.querySelectorAll(".pane").forEach(p=>p.classList.remove("active"));$("pane-"+t.dataset.tab).classList.add("active");});
 document.querySelectorAll(".subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".subtab").forEach(x=>x.classList.remove("active"));
   t.classList.add("active");document.querySelectorAll(".sub").forEach(p=>p.classList.remove("active"));$("sub-"+t.dataset.sub).classList.add("active");
-  if(t.dataset.sub==="sigdet")renderSigDet();if(t.dataset.sub==="embed")renderEmbed();});
+  if(t.dataset.sub==="sigdet")renderSigDet();if(t.dataset.sub==="embed")renderEmbed();
+  if(t.dataset.sub==="assoc")renderAssoc();if(t.dataset.sub==="corr")renderCorr();});
 window.addEventListener("resize",()=>{clearTimeout(window.__rt);window.__rt=setTimeout(()=>{if($("sub-unsup").classList.contains("active"))render();},200);});
 
 render();

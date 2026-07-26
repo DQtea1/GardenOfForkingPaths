@@ -31,7 +31,7 @@ from joblib import Parallel, delayed
 from scipy.cluster.hierarchy import linkage, to_tree
 from scipy.spatial.distance import squareform
 
-from consensus import _draw, pairwise_distance
+from .consensus import _draw, pairwise_distance
 
 logger = logging.getLogger(__name__)
 

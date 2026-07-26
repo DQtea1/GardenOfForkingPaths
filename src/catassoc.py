@@ -36,7 +36,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import chi2_contingency, fisher_exact
 
-from sigproj import _is_categorical
+from .sigproj import _is_categorical
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +261,7 @@ def run_categorical_association(
     `chi2_summary.csv` (toutes paires, tous k, FDR). **Renvoie la structure prête
     pour le rapport** (`byClusterK`, `byClinical`, avertissement duplicats).
     """
-    import plots as pl
+    from . import plots as pl
 
     ordinal = ordinal or {}
     meta = metadata.reindex(sample_names)

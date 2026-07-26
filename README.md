@@ -13,7 +13,7 @@ calculée **à partir de la distance consensus**, pas de l'expression brute.
 │   ├── GUIDE_config.md              # comment régler chaque paramètre (algo, distance, linkage…)
 │   └── pipeline_map.html            # carte interactive du processus (3 granularités + params)
 ├── README.md
-└── src/                             # tout le code (imports à plat ; lancer python src/<script>.py)
+└── src/                             # package `src` (lancer depuis la racine : python src/<script>.py)
     ├── run_pipeline.py              # pipeline complet (CLI)
     ├── null_check.py                # contrôle par modèle nul — à ne pas sauter
     ├── make_demo_data.py            # 500 tumeurs simulées, 4 sous-types + atypiques

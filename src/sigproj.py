@@ -400,7 +400,7 @@ def run_signature_projection(
     """`expr` : tumeurs × gènes normalisé (tous gènes). `metadata` : tumeurs ×
     variables cliniques (ou None -> seul le scoring 7.1 est fait). Renvoie
     `{"ssgsea": df, "mean": df}` (signatures × tumeurs)."""
-    import plots as pl
+    from . import plots as pl
 
     sig_dir = Path(outdir) / "tables" / "signatures"
     sig_dir.mkdir(parents=True, exist_ok=True)

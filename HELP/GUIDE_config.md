@@ -240,8 +240,23 @@ Croise la **partition en clusters** (pour chaque k) avec chaque **variable clini
 |---|---|
 | `run_chi2` | `y` (défaut) / `n`. Pour chaque paire : tableau de contingence **avec marges**, **khi² de Pearson** d'indépendance, **V de Cramér** (taille d'effet) et **résidus standardisés ajustés** (Haberman : \|r\| > 1.96 / 2.58 = sur/sous-représentation à 5 %/1 %). **FDR (BH)** sur toutes les paires. |
 | `chi2_mc_resamples` | `2000` (défaut). Nombre de permutations du **khi² de Monte-Carlo**, utilisé en **repli** quand les conditions de Cochran ne sont pas remplies (> 20 % de cellules à effectif attendu < 5, ou un attendu < 1) sur une table **R×C** ; les tables **2×2** basculent alors sur le **test exact de Fisher**. |
+| `ordinal_variables` | Déclare les variables **ordinales** (stade, grade…). Un croisement impliquant une ordinale **et** un axe scorable (autre ordinale, ou variable **binaire**) utilise alors un **test de tendance** (Cochran-Armitage / linéaire-par-linéaire, ~χ²(1)) plutôt que le khi² nominal : il teste une évolution **monotone** de la proportion, plus puissant et plus juste pour de l'ordinal. Forme recommandée (ordre explicite) : `ordinal_variables: {stade: [I, II, III, IV], grade: [G1, G2, G3]}`. Forme courte `ordinal_variables: [stade, grade]` → l'ordre est le **tri** des modalités (à vérifier : `low/mid/high` se trie mal). Un croisement ordinale × nominale à > 2 modalités (p. ex. **cluster** à k>2) reste en khi². |
 
 Sorties (`tables/chi2/`) : `chi2_summary.csv` (toutes paires, tous k, test utilisé, p, V de Cramér, FDR, diagnostic des conditions) ; `<paire>__counts.csv` (contingence + marges) et `<paire>__adjresiduals.csv` (résidus ajustés) pour k_final et les paires cliniques. Figures : `figures/chi2_residuals_clusterK<k>_<var>.png` (heatmap des résidus, rouge = sur-représenté, bleu = sous-représenté, étoilé si significatif). *Note : pour des variables **ordinales** (stade, grade), un test de tendance serait plus puissant — le khi² nominal est un choix conservateur.*
+
+---
+
+## 9b · Corrélations (variables continues par patient)
+
+Corrèle deux à deux les variables **continues** à l'échelle du patient. **Léger**, activé par défaut.
+
+| Paramètre | Recommandation |
+|---|---|
+| `run_correlations` | `y` (défaut) / `n`. Assemble les variables continues — **clinique continue**, scores de **signatures** (ssGSEA + moyenne), scores de **déconvolution** — et corrèle : clinique × (signatures, déconv), signatures × déconv, clinique × clinique. **Spearman** + **FDR (BH)**, observations complètes par paire. Sauté si < 2 variables continues. |
+| `corr_method` | `spearman` (défaut, robuste — recommandé pour des scores bornés/asymétriques) ou `pearson`. |
+| `corr_all_pairs` | `n` (défaut) / `y`. Par défaut on **saute** signature × signature (ssGSEA/moyenne redondants) et **déconv × déconv** (fractions **compositionnelles** → corrélations négatives artéfactuelles). `y` les calcule quand même (à interpréter avec prudence : CLR / corrélation partielle). |
+
+Sorties : `tables/correlations/correlations.csv` (table longue : var1/bloc, var2/bloc, méthode, ρ, p, FDR, n), `correlations_clinic_matrix.csv` (matrice clinique × dérivés) et `figures/correlations_clinic.png` (heatmap ρ, ★ si FDR ≤ 0,05). ⚠️ La **pureté tumorale** confond expression et déconvolution : une corrélation forte peut la refléter.
 
 ---
 

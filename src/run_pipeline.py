@@ -26,10 +26,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import catassoc as ca
 from src import consensus as cc
+from src import correlate as co
 from src import deconv as dc
 from src import degsea as dg
 from src import embedding as emb
@@ -188,6 +189,19 @@ def build_parser() -> argparse.ArgumentParser:
     chi.add_argument("--chi2_mc_resamples", type=int, default=2000,
                      help="permutations du khi² de Monte-Carlo (repli des tables R×C "
                           "aux conditions de Cochran non remplies ; défaut 2000).")
+
+    cor = p.add_argument_group("corrélations continues (9b)")
+    cor.add_argument("--run_correlations", choices=["y", "n"], default="y",
+                     help="'y' (défaut) : corrèle deux à deux les variables CONTINUES "
+                          "par patient — clinique continue × signatures/déconvolution "
+                          "et signatures × déconvolution (Spearman + FDR). Léger. "
+                          "Sauté sans variable continue exploitable.")
+    cor.add_argument("--corr_method", choices=["spearman", "pearson"], default="spearman",
+                     help="méthode de corrélation (défaut spearman, robuste).")
+    cor.add_argument("--corr_all_pairs", choices=["y", "n"], default="n",
+                     help="'y' : calcule AUSSI signature×signature et déconv×déconv "
+                          "(redondant / compositionnel — à interpréter avec prudence). "
+                          "Défaut 'n'.")
 
     rep = p.add_argument_group("rapport d'analyse (HTML interactif)")
     rep.add_argument("--create_report", choices=["y", "n"], default="y",
@@ -660,6 +674,17 @@ def main(argv=None) -> int:
     elif args.run_chi2 == "y":
         log.info("9a. Khi² : pas de métadonnées (--metadata) — étape sautée.")
 
+    # ------------------ 9b. corrélations entre variables continues (patient)
+    corr = None
+    if args.run_correlations == "y":
+        meta_corr = None
+        if args.metadata:
+            meta_corr = pd.read_csv(args.metadata, sep=None, engine="python",
+                                    index_col=0).reindex(result.sample_names)
+        corr = co.run_correlations(
+            sig_scores, deconv or None, meta_corr, result.sample_names, outdir,
+            method=args.corr_method, all_pairs=(args.corr_all_pairs == "y"))
+
     # ------------------------------- 9. figure de synthèse (tout combiné)
     pl.plot_cluster_overview(
         result, k_final, outdir / "figures", linkage_method=args.linkage,
@@ -681,6 +706,7 @@ def main(argv=None) -> int:
             sig_tests=sig_tests, deconv=(deconv or None),
             degsea_by_k=(degsea_by_k or None),
             branch_stability_by_k=(bs_by_k or None), assoc=(assoc or None),
+            corr=(corr or None),
             min_cluster_size=args.min_cluster_size, k_criterion=args.k_criterion,
             linkage_method=args.linkage,
         )

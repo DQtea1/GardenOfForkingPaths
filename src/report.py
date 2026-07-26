@@ -92,7 +92,7 @@ def _gather(result, k_final, outdir, coords, meta, sig_scores, sig_tests, deconv
     from scipy.cluster.hierarchy import dendrogram, linkage
     from scipy.spatial.distance import squareform
 
-    import metrics as mt
+    from . import metrics as mt
 
     # stabilité Jaccard par k : {k: {id de nœud -> score}} (pour l'arbre de chaque k)
     stab_by_id_per_k = {}
@@ -257,7 +257,7 @@ def _gather(result, k_final, outdir, coords, meta, sig_scores, sig_tests, deconv
 
 def build_report(result, k_final, outdir, *, coords=None, meta=None,
                  sig_scores=None, sig_tests=None, deconv=None, degsea_by_k=None,
-                 branch_stability_by_k=None, assoc=None, min_cluster_size=10,
+                 branch_stability_by_k=None, assoc=None, corr=None, min_cluster_size=10,
                  k_criterion="both", linkage_method="average") -> Path:
     """Construit `outdir/report.html`. Voir le module pour les entrées.
 
@@ -273,6 +273,20 @@ def build_report(result, k_final, outdir, *, coords=None, meta=None,
                    deconv, degsea_by_k, linkage_method, min_cluster_size, k_criterion,
                    branch_stability_by_k)
     data["assoc"] = assoc or {}
+
+    # 9b corrélations : table précalculée complète (heatmap bloc×bloc + scatter)
+    data["corr"] = {}
+    if corr and "table" in corr and len(corr["table"]):
+        tab, blk = corr["table"], corr["block"]
+        blocks = {}
+        for f in corr["features"]:
+            blocks.setdefault(blk[f], []).append(str(f))
+        pairs = [{"a": str(r.var1), "b": str(r.var2),
+                  "rho": _clean(round(float(r.rho), 4)), "p": _clean(float(r.pvalue)),
+                  "padj": _clean(float(r.padj)), "n": int(r.n)}
+                 for r in tab.itertuples()]
+        data["corr"] = {"method": corr.get("method", "spearman"),
+                        "blocks": blocks, "pairs": pairs}
     html = _TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(data, ensure_ascii=False))
     out = outdir / "report.html"

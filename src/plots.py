@@ -14,9 +14,9 @@ from matplotlib.patches import Patch
 from scipy.cluster.hierarchy import dendrogram, leaves_list, linkage
 from scipy.spatial.distance import squareform
 
-from consensus import ConsensusResult
-from metrics import consensus_cdf, delta_k, pac
-from stability import BranchStability
+from .consensus import ConsensusResult
+from .metrics import consensus_cdf, delta_k, pac
+from .stability import BranchStability
 
 CONSENSUS_CMAP = LinearSegmentedColormap.from_list(
     "consensus", ["#ffffff", "#c6dbef", "#4292c6", "#08306b"]
@@ -671,4 +671,28 @@ def plot_chi2_residuals(res: dict, var_name: str, cluster_label: str,
     fig.text(0.5, 0.005, "⚠ khi² : suppose 1 tumeur/patient — duplicats patient "
              "→ p-valeurs sous-estimées", ha="center", va="bottom",
              fontsize=7, color="#a12622")
+    return _save(fig, outdir, fname, dpi=140)
+
+
+def plot_correlation_heatmap(rho: pd.DataFrame, padj: pd.DataFrame, method: str,
+                             outdir: Path, fname: str) -> Path:
+    """Heatmap des corrélations clinique (lignes) × variables dérivées (colonnes).
+
+    Rouge = corrélation positive, bleu = négative ; étoile si FDR significatif
+    (* q<0.05, ** q<0.01). `rho`/`padj` : mêmes index/colonnes."""
+    nr, nc = rho.shape
+    fig, ax = plt.subplots(figsize=(max(5.0, 0.34 * nc + 3.0),
+                                    max(2.4, 0.5 * nr + 1.4)))
+    im = ax.imshow(rho.values.astype(float), cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
+    ax.set_xticks(range(nc)); ax.set_xticklabels(rho.columns, rotation=90, fontsize=6)
+    ax.set_yticks(range(nr)); ax.set_yticklabels(rho.index, fontsize=8)
+    for i in range(nr):
+        for j in range(nc):
+            q = padj.values[i, j]
+            if np.isfinite(q) and q <= 0.05:
+                ax.text(j, i, "**" if q <= 0.01 else "*", ha="center", va="center",
+                        fontsize=7, color="#111")
+    ax.set_title(f"Corrélations {method} — clinique × variables dérivées "
+                 f"(★ FDR ≤ 0,05)", fontsize=9)
+    cbar = fig.colorbar(im, ax=ax, shrink=0.85); cbar.set_label("ρ")
     return _save(fig, outdir, fname, dpi=140)
