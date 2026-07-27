@@ -87,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
                             "`pip install stabilized-ica`.")
     ica_g.add_argument("--ica_n_components_min", type=int, default=6,
                        help="nombre minimal de composantes ICA à évaluer (MSTD).")
-    ica_g.add_argument("--ica_n_components_max", type=int, default=10,
+    ica_g.add_argument("--ica_n_components_max", type=int, default=8,
                        help="nombre maximal de composantes ICA à évaluer (MSTD).")
     ica_g.add_argument("--ica_n_components_step", type=int, default=1,
                        help="pas entre deux dimensions ICA testées (défaut 2).")
