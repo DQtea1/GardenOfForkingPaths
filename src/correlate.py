@@ -38,12 +38,15 @@ logger = logging.getLogger(__name__)
 
 def assemble_features(sig_scores: dict | None, deconv: dict | None,
                       metadata: pd.DataFrame | None, sample_names,
-                      max_levels: int = 6):
+                      max_levels: int = 6,
+                      extra_features: pd.DataFrame | None = None,
+                      extra_prefix: str = "ica"):
     """Matrice patients × variables continues, + tags de bloc et de famille.
 
     Familles : ``clinic`` (métadonnées continues), ``sig`` (signatures ssGSEA /
-    moyenne), ``deconv`` (types cellulaires). Blocs (plus fins) : ``clinic``,
-    ``sig_ssgsea``, ``sig_mean``, ``deconv:<méthode>``.
+    moyenne), ``deconv`` (types cellulaires) et, si fourni, ``extra`` (p. ex.
+    projections ICA). Blocs (plus fins) : ``clinic``, ``sig_ssgsea``,
+    ``sig_mean``, ``deconv:<méthode>``, ``extra_prefix``.
     """
     idx = [str(s) for s in sample_names]
     feats, block, family = {}, {}, {}
@@ -75,6 +78,17 @@ def assemble_features(sig_scores: dict | None, deconv: dict | None,
             feats[name] = pd.to_numeric(d.loc[ct], errors="coerce").to_numpy()
             block[name], family[name] = f"deconv:{method}", "deconv"
 
+    # Variables dérivées optionnelles déjà orientées patients × variables.
+    # C'est notamment le contrat des scores ICA (patients × composantes).
+    if extra_features is not None and extra_features.shape[1]:
+        d = extra_features.copy()
+        d.index = d.index.astype(str)
+        d = d.reindex(idx)
+        for feature in map(str, d.columns):
+            name = f"{extra_prefix}:{feature}"
+            feats[name] = pd.to_numeric(d[feature], errors="coerce").to_numpy()
+            block[name], family[name] = extra_prefix, "extra"
+
     feat_df = pd.DataFrame(feats, index=idx)
     return feat_df, block, family
 
@@ -85,6 +99,8 @@ def _keep_pair(fa: str, fb: str, all_pairs: bool) -> bool:
     if fa == "deconv" and fb == "deconv":   # compositionnel -> biais artéfactuel
         return False
     if fa == "sig" and fb == "sig":         # ssGSEA/moyenne de mêmes signatures -> redondant
+        return False
+    if fa == "extra" and fb == "extra":     # composantes d'une même projection -> redondant
         return False
     return True
 
@@ -128,15 +144,19 @@ def pairwise_correlations(feat_df: pd.DataFrame, block: dict, family: dict,
 def run_correlations(sig_scores: dict | None, deconv: dict | None,
                      metadata: pd.DataFrame | None, sample_names, outdir: Path, *,
                      method: str = "spearman", all_pairs: bool = False,
-                     min_n: int = 8, max_levels: int = 6, top_fig: int = 40) -> dict:
+                     min_n: int = 8, max_levels: int = 6, top_fig: int = 40,
+                     extra_features: pd.DataFrame | None = None,
+                     extra_prefix: str = "ica", output_subdir: str | None = None) -> dict:
     """Assemble les variables continues, corrèle deux à deux, sauve tables + figure.
 
     Renvoie une structure (blocs, table longue) réutilisable par le rapport.
     """
     from . import plots as pl
 
-    feat_df, block, family = assemble_features(sig_scores, deconv, metadata,
-                                               sample_names, max_levels)
+    feat_df, block, family = assemble_features(
+        sig_scores, deconv, metadata, sample_names, max_levels,
+        extra_features=extra_features, extra_prefix=extra_prefix,
+    )
     if feat_df.shape[1] < 2:
         logger.info("9b. Corrélations : moins de 2 variables continues à l'échelle "
                     "du patient — étape sautée.")
@@ -145,9 +165,11 @@ def run_correlations(sig_scores: dict | None, deconv: dict | None,
     n_clin = sum(1 for f in family.values() if f == "clinic")
     n_sig = sum(1 for f in family.values() if f == "sig")
     n_dec = sum(1 for f in family.values() if f == "deconv")
+    n_extra = sum(1 for f in family.values() if f == "extra")
     logger.info("9b. Corrélations (%s) : %d variables continues (clinique %d, "
-                "signatures %d, déconvolution %d)%s", method, feat_df.shape[1],
-                n_clin, n_sig, n_dec, "" if not all_pairs else " — TOUTES paires")
+                "signatures %d, déconvolution %d, %s %d)%s", method, feat_df.shape[1],
+                n_clin, n_sig, n_dec, extra_prefix, n_extra,
+                "" if not all_pairs else " — TOUTES paires")
     if n_dec and all_pairs:
         logger.warning("9b. Corrélations — déconv × déconv incluses (all_pairs) : "
                        "fractions COMPOSITIONNELLES, corrélations négatives possiblement "
@@ -155,11 +177,14 @@ def run_correlations(sig_scores: dict | None, deconv: dict | None,
                        "partielle recommandées).")
 
     tab = pairwise_correlations(feat_df, block, family, method, all_pairs, min_n)
-    cdir = Path(outdir) / "tables" / "correlations"
+    root = Path(outdir)
+    cdir = root / "tables" / (output_subdir or "") / "correlations"
     cdir.mkdir(parents=True, exist_ok=True)
     if not len(tab):
         logger.info("9b. Corrélations : aucune paire exploitable (n < %d).", min_n)
-        return {"features": list(feat_df.columns), "table": tab}
+        return {"features": list(feat_df.columns), "family": family, "block": block,
+                "method": method, "table": tab,
+                "values": {str(k): feat_df[k].tolist() for k in feat_df.columns}}
 
     tab = tab.sort_values("padj").reset_index(drop=True)
     tab.to_csv(cdir / "correlations.csv", index=False)
@@ -193,8 +218,10 @@ def run_correlations(sig_scores: dict | None, deconv: dict | None,
             keep = list(order.index[:top_fig])
             M, Pm = M[keep], Pm[keep]
             M.to_csv(cdir / "correlations_clinic_matrix.csv")
-            pl.plot_correlation_heatmap(M, Pm, method, cdir.parent.parent / "figures",
+            fdir = root / "figures" / (output_subdir or "")
+            pl.plot_correlation_heatmap(M, Pm, method, fdir,
                                         "correlations_clinic.png")
 
     return {"features": list(feat_df.columns), "family": family, "block": block,
-            "method": method, "table": tab}
+            "method": method, "table": tab,
+            "values": {str(k): feat_df[k].tolist() for k in feat_df.columns}}

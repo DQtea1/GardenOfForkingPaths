@@ -233,7 +233,7 @@ def run_categorical_association(
     cluster_labels_by_k: dict, metadata: pd.DataFrame, sample_names,
     outdir: Path, k_final: int, *, ordinal: dict | None = None,
     max_levels: int = 12, min_expected: int = 5, max_lowexp_frac: float = 0.2,
-    mc_resamples: int = 2000, seed: int = 0,
+    mc_resamples: int = 2000, seed: int = 0, output_subdir: str | None = None,
 ) -> dict:
     """Croise cluster (chaque k) × clinique et clinique × clinique.
 
@@ -247,6 +247,11 @@ def run_categorical_association(
     cliniques, une figure de résidus par variable (cluster k_final), et un
     `chi2_summary.csv` (toutes paires, tous k, FDR). **Renvoie la structure prête
     pour le rapport** (`byClusterK`, `byClinical`, avertissement duplicats).
+
+    `output_subdir`, s'il est renseigné, isole les fichiers sous
+    ``tables/<output_subdir>/chi2`` et ``figures/<output_subdir>``. Il permet aux
+    branches parallèles (p. ex. ICA) de produire leurs propres analyses sans
+    écraser les sorties du consensus clustering principal.
     """
     from . import plots as pl
 
@@ -273,8 +278,13 @@ def run_categorical_association(
         return sorted(meta[v].dropna().astype(str).unique())   # repli : tri
 
     ord_declared = [v for v in cat_vars if v in ordinal]
-    detail_dir = Path(outdir) / "tables" / "chi2"
-    figs = Path(outdir) / "figures"
+    root = Path(outdir)
+    if output_subdir:
+        detail_dir = root / "tables" / output_subdir / "chi2"
+        figs = root / "figures" / output_subdir
+    else:
+        detail_dir = root / "tables" / "chi2"
+        figs = root / "figures"
     logger.info("9a. Khi² d'indépendance : %d variable(s) catégorielle(s) (%s) × "
                 "clusters (k=%s) + paires cliniques%s",
                 len(cat_vars), ", ".join(cat_vars), list(sorted(cluster_labels_by_k)),

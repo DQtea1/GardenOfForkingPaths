@@ -22,13 +22,13 @@
   .tab:hover{color:var(--ink)}
   .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
   .subtabs{display:flex;gap:2px;padding:8px 16px 0;flex-wrap:wrap}
-  .subtab{padding:6px 12px;border:1px solid var(--line);background:var(--surface2);border-radius:7px 7px 0 0;
+  .subtab,.ica-subtab,.pre-subtab{padding:6px 12px;border:1px solid var(--line);background:var(--surface2);border-radius:7px 7px 0 0;
     color:var(--ink2);font:600 12px var(--sans);cursor:pointer;border-bottom:0}
-  .subtab.active{background:var(--surface);color:var(--accent);border-color:var(--accent)}
+  .subtab.active,.ica-subtab.active,.pre-subtab.active{background:var(--surface);color:var(--accent);border-color:var(--accent)}
   .pane{display:none;padding:14px 16px 60px}
   .pane.active{display:block}
-  .sub{display:none}
-  .sub.active{display:block}
+  .sub,.ica-sub,.pre-sub{display:none}
+  .sub.active,.ica-sub.active,.pre-sub.active{display:block}
   .ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0;padding:10px;
     background:var(--surface);border:1px solid var(--line);border-radius:9px}
   .ctl label{font:600 12px var(--sans);color:var(--ink2)}
@@ -42,7 +42,7 @@
     padding:3px 12px;cursor:pointer}
   .addbtn:hover{background:var(--accent2)}
   .stack{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:8px;overflow-x:auto}
-  /* Non-supervisé : vignettes accolées, sans bordure ni barre de défilement, pour
+  /* Consensus Clustering : vignettes accolées, sans bordure ni barre de défilement, pour
      suivre l'alignement des patients d'un panneau à l'autre. Grille 3×3 : la
      matrice au centre, panneaux haut/bas alignés sur ses COLONNES et gauche/droite
      sur ses LIGNES. */
@@ -118,7 +118,8 @@
 </header>
 
 <div class="tabs" id="tabs">
-  <button class="tab active" data-tab="results">Résultats</button>
+  <button class="tab active" data-tab="results">Résultats Consensus-Clustering</button>
+  <button class="tab" data-tab="ica">Résultats ICA</button>
   <button class="tab" data-tab="tables">Tableaux</button>
   <button class="tab" data-tab="pre">Pré-analyse</button>
 </div>
@@ -126,7 +127,7 @@
 <!-- ============ RÉSULTATS ============ -->
 <div class="pane active" id="pane-results">
   <div class="subtabs">
-    <button class="subtab active" data-sub="unsup">Non-supervisé</button>
+    <button class="subtab active" data-sub="unsup">Consensus Clustering</button>
     <button class="subtab" data-sub="sigdet">Signatures détaillé</button>
     <button class="subtab" data-sub="embed">t-SNE / UMAP</button>
     <button class="subtab" data-sub="assoc">Associations</button>
@@ -192,9 +193,9 @@
       <label>Projection :</label>
       <select id="emMethod"></select>
       <label>k :</label><select id="emK"></select>
-      <label>Colorer par :</label><select id="emColor"></select>
+      <label>Colorer par :</label><select id="emColorColl"></select><select id="emColor"></select>
       <label>Forme par :</label><select id="emShape"></select>
-      <label>Taille par :</label><select id="emSize"></select>
+      <label>Taille par :</label><select id="emSizeColl"></select><select id="emSize"></select>
     </div>
     <div class="flexrow" style="justify-content:center">
       <canvas id="emCanvas"></canvas>
@@ -235,6 +236,79 @@
   </div>
 </div>
 
+<!-- ============ RÉSULTATS ICA ============ -->
+<div class="pane" id="pane-ica">
+  <div class="subtabs">
+    <button class="ica-subtab active" data-ica-sub="proj">ICA proj</button>
+    <button class="ica-subtab" data-ica-sub="consensus">Consensus Clustering</button>
+    <button class="ica-subtab" data-ica-sub="embed">t-SNE / UMAP</button>
+    <button class="ica-subtab" data-ica-sub="assoc">Associations</button>
+    <button class="ica-subtab" data-ica-sub="corr">Correlations</button>
+  </div>
+
+  <div class="ica-sub active" id="ica-sub-proj">
+    <div class="warn" id="icaNotRun"></div>
+    <div class="ctl" id="icaDimCtl">
+      <label>Dimension ICA :</label><select id="icaDimSelect"></select>
+      <span class="muted" id="icaDimInfo"></span>
+    </div>
+    <div class="ctl" id="icaProjectionCtl">
+      <label>Axe X :</label><select id="icaProjX"></select>
+      <label>Axe Y :</label><select id="icaProjY"></select>
+      <label>Axe Z :</label><select id="icaProjZ"></select>
+    </div>
+    <div class="flexrow" style="justify-content:center">
+      <canvas id="icaProjCanvas"></canvas>
+      <div class="legend" id="icaProjLegend" style="flex-direction:column;align-items:flex-start"></div>
+    </div>
+    <div class="tblwrap" style="margin-top:14px"><table class="dt" id="icaGeneTable"></table></div>
+  </div>
+
+  <div class="ica-sub" id="ica-sub-consensus">
+    <div class="warn" id="icaConsensusWarn"></div>
+    <div class="ctl" id="icaConsensusCtl">
+      <label>Nombre de composantes ICA :</label><select id="icaConsensusDimSelect"></select>
+      <label>k (trié par PAC croissant) :</label><select id="icaConsensusKSelect"></select>
+      <span class="muted">Consensus indépendant sur les métasamples. Ajoutez des panneaux : haut/bas alignés sur les colonnes, gauche/droite sur les lignes. <b>Glissez-déposez</b> les vignettes pour les réorganiser.</span>
+    </div>
+    <div class="addbar" id="icaConsensusAddbar">
+      <button class="addbtn" data-ica-side="top">+ haut</button>
+      <button class="addbtn" data-ica-side="bottom">+ bas</button>
+      <button class="addbtn" data-ica-side="left">+ gauche</button>
+      <button class="addbtn" data-ica-side="right">+ droite</button>
+    </div>
+    <div class="usgrid" id="icaConsensusGrid">
+      <div id="ica-stack-top"    class="usstack"   style="grid-row:1;grid-column:2"></div>
+      <div id="ica-stack-left"   class="usstack-h" style="grid-row:2;grid-column:1;justify-self:end"></div>
+      <div id="ica-stack-center" class="usstack"   style="grid-row:2;grid-column:2"></div>
+      <div id="ica-stack-right"  class="usstack-h" style="grid-row:2;grid-column:3;justify-self:start"></div>
+      <div id="ica-stack-bottom" class="usstack"   style="grid-row:3;grid-column:2"></div>
+    </div>
+    <div class="legend" id="icaConsensusLegend"></div>
+  </div>
+
+  <div class="ica-sub" id="ica-sub-embed">
+    <div class="ctl" id="icaEmbedCtl">
+      <label>Projection :</label><select id="icaEmbedMethod"></select>
+      <label>k :</label><select id="icaEmbedK"></select>
+      <label>Colorer par :</label><select id="icaEmbedColorColl"></select><select id="icaEmbedColor"></select>
+      <label>Forme par :</label><select id="icaEmbedShape"></select>
+      <label>Taille par :</label><select id="icaEmbedSizeColl"></select><select id="icaEmbedSize"></select>
+    </div>
+    <div class="flexrow" style="justify-content:center"><canvas id="icaEmbedCanvas"></canvas><div class="legend" id="icaEmbedLegend" style="flex-direction:column;align-items:flex-start"></div></div>
+  </div>
+
+  <div class="ica-sub" id="ica-sub-assoc">
+    <div class="warn" id="icaAssocWarn"></div>
+    <div class="tblwrap"><table class="dt" id="icaAssocTable"></table></div>
+  </div>
+
+  <div class="ica-sub" id="ica-sub-corr">
+    <div class="warn" id="icaCorrWarn"></div>
+    <div class="tblwrap"><table class="dt" id="icaCorrTable"></table></div>
+  </div>
+</div>
+
 <!-- ============ TABLEAUX ============ -->
 <div class="pane" id="pane-tables">
   <div class="ctl">
@@ -246,7 +320,14 @@
 </div>
 
 <!-- ============ PRÉ-ANALYSE ============ -->
-<div class="pane" id="pane-pre"><div id="preList"></div></div>
+<div class="pane" id="pane-pre">
+  <div class="subtabs">
+    <button class="pre-subtab active" data-pre-sub="consensus">Consensus Clustering</button>
+    <button class="pre-subtab" data-pre-sub="ica">ICA</button>
+  </div>
+  <div class="pre-sub active" id="pre-sub-consensus"><div id="preList"></div></div>
+  <div class="pre-sub" id="pre-sub-ica"><div id="preIcaList"></div></div>
+</div>
 
 <script>
 const DATA = /*__DATA__*/null;
@@ -286,7 +367,7 @@ const CTB=14;   // bande de titre de la matrice = décalage vertical partagé (a
 function usSide(){const h=$("sub-unsup");const a=((h&&h.clientWidth)||900)-LM-RM;return Math.max(200,Math.min(a,600));}
 
 /* =========================================================
-   ONGLET RÉSULTATS — Non-supervisé (heatmaps alignées)
+   ONGLET RÉSULTATS — Consensus Clustering (heatmaps alignées)
    ========================================================= */
 let curK=DATA.ks[0].k;
 // panneaux additionnels par côté ; gauche/droite alignés sur les LIGNES de la matrice
@@ -324,6 +405,27 @@ function _clinHtml(oi){const vars=Object.keys(DATA.meta||{});
   return vars.map(v=>{let x=DATA.meta[v][oi];
     if(x==null)x="—";else if(DATA.metaTypes[v]==="continuous"&&typeof x==="number")x=(+x).toFixed(2);
     return "<div class='row'><span>"+v+"</span><b>"+x+"</b></div>";}).join("");}
+function _showTip(e,html,pad){const t=_el("tip","tip");t.innerHTML=html;t.style.display="block";
+  t.style.left=Math.min(e.clientX+13,window.innerWidth-(pad||200))+"px";t.style.top=(e.clientY+15)+"px";}
+function _hideTip(){_el("tip","tip").style.display="none";}
+function _showClinBubble(oi,e,oj){if(e&&e.stopPropagation)e.stopPropagation();   // le clic d'ouverture ne doit pas déclencher la fermeture globale
+  const b=_el("bubble","bubble");
+  let h="<button class='cls'>×</button><h4>"+SAMPLES[oi]+"</h4>"+_clinHtml(oi);
+  if(oj!=null&&oj!==oi)h+="<h4 style='margin-top:9px'>"+SAMPLES[oj]+"</h4>"+_clinHtml(oj);
+  b.innerHTML=h;b.style.display="block";
+  b.style.left=Math.min(e.clientX+13,window.innerWidth-330)+"px";
+  b.style.top=Math.min(e.clientY+15,window.innerHeight-Math.min(260,b.scrollHeight+20))+"px";
+  b.querySelector(".cls").onclick=ev=>{ev.stopPropagation();b.style.display="none";};}
+// survol/clic « patient » partagé par tous les panneaux alignés
+// axis "x" : patients en colonnes (haut/bas, offset LM) ; axis "y" : patients en lignes (gauche/droite, offset CTB)
+function _patientTip(cv,order,cw,axis){cv.style.cursor="pointer";
+  const idxAt=e=>{const r=cv.getBoundingClientRect();
+    const p=(axis==="x")?e.clientX-r.left-LM:e.clientY-r.top-CTB;
+    if(p<0)return -1;const i=Math.floor(p/cw);return (i<0||i>=N)?-1:i;};
+  cv.onmousemove=e=>{const i=idxAt(e);if(i<0){_hideTip();return;}
+    _showTip(e,"tumeur <b>"+SAMPLES[order[i]]+"</b>");};
+  cv.onmouseleave=_hideTip;
+  cv.onclick=e=>{const i=idxAt(e);if(i<0)return;_showClinBubble(order[i],e);};}
 function drawCentral(){
   const host=$("stack-center");host.innerHTML="";
   const k=curK, per=DATA.perK[String(k)], order=per.order, C=DATA.consensus[String(k)];
@@ -341,20 +443,13 @@ function drawCentral(){
   const cellAt=e=>{const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
     if(mx<LM||my<CTB)return null;const j=Math.floor((mx-LM)/cw),i=Math.floor((my-CTB)/ch);
     return (i<0||i>=N||j<0||j>=N)?null:[order[i],order[j]];};
-  cv.onmousemove=e=>{const cell=cellAt(e),t=_el("tip","tip");if(!cell){t.style.display="none";return;}
+  cv.onmousemove=e=>{const cell=cellAt(e);if(!cell){_hideTip();return;}
     const oi=cell[0],oj=cell[1],val=(C[oi][oj]/100).toFixed(2);
-    t.innerHTML=(oi===oj?"tumeur <b>"+SAMPLES[oi]+"</b>"
+    _showTip(e,(oi===oj?"tumeur <b>"+SAMPLES[oi]+"</b>"
       :"ligne <b>"+SAMPLES[oi]+"</b> × colonne <b>"+SAMPLES[oj]+"</b>")
-      +"<br>consensus index : <b>"+val+"</b>";
-    t.style.display="block";t.style.left=Math.min(e.clientX+13,window.innerWidth-350)+"px";t.style.top=(e.clientY+15)+"px";};
-  cv.onmouseleave=()=>{_el("tip","tip").style.display="none";};
-  cv.onclick=e=>{const cell=cellAt(e);if(!cell)return;const oi=cell[0],oj=cell[1],b=_el("bubble","bubble");
-    let h="<button class='cls'>×</button><h4>"+SAMPLES[oi]+"</h4>"+_clinHtml(oi);
-    if(oj!==oi)h+="<h4 style='margin-top:9px'>"+SAMPLES[oj]+"</h4>"+_clinHtml(oj);
-    b.innerHTML=h;b.style.display="block";
-    b.style.left=Math.min(e.clientX+13,window.innerWidth-330)+"px";
-    b.style.top=Math.min(e.clientY+15,window.innerHeight-Math.min(260,b.scrollHeight+20))+"px";
-    b.querySelector(".cls").onclick=ev=>{ev.stopPropagation();b.style.display="none";};};
+      +"<br>consensus index : <b>"+val+"</b>",350);};
+  cv.onmouseleave=_hideTip;
+  cv.onclick=e=>{const cell=cellAt(e);if(!cell)return;_showClinBubble(cell[0],e,cell[1]);};
 }
 function blocks(per,order){const b=[];let i=0;const lab=order.map(o=>per.labels[o]);
   while(i<N){let j=i;while(j<N&&lab[j]===lab[i])j++;b.push([lab[i],i,j]);i=j;}return b;}
@@ -430,6 +525,8 @@ function makePanel(type,side){
     else if(kind==="deconv"){ttl.textContent="Déconvolution ("+arg+")";drawMatrix(cv,order,W,cw,DATA.deconv[arg].values,DATA.deconv[arg].types,true);}
     else if(kind==="degsea"){ttl.textContent="DEGSEA OVA ("+arg+")";drawDegsea(cv,per,order,W,cw,arg);}
   }
+  // survol/clic patient sur les panneaux alignés (l'arbre est une structure, pas un patient unique)
+  if(kind!=="tree")_patientTip(cv,order,cw,vert?"y":"x");
   return wrap;
 }
 // couleur de stabilité Jaccard (seuils de Hennig 2007)
@@ -549,8 +646,8 @@ function showMenu(side,anchor){
 document.querySelectorAll(".addbtn").forEach(b=>b.onclick=e=>showMenu(b.dataset.side,b));
 document.addEventListener("click",e=>{if(openMenu&&!openMenu.contains(e.target)&&!e.target.classList.contains("addbtn")){openMenu.remove();openMenu=null;}});
 // clic hors bulle / Échap ferme la bulle clinique (clic sur la matrice = remplacement, géré par le canvas)
-document.addEventListener("click",e=>{const b=$("bubble");
-  if(b&&b.style.display==="block"&&!b.contains(e.target)&&!(e.target.closest&&e.target.closest("#stack-center")))b.style.display="none";});
+document.addEventListener("click",e=>{const b=$("bubble");   // le clic d'ouverture est stoppé (stopPropagation) => n'arrive pas ici
+  if(b&&b.style.display==="block"&&!b.contains(e.target))b.style.display="none";});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"){const b=$("bubble");if(b)b.style.display="none";const t=$("tip");if(t)t.style.display="none";}});
 fillKSelect($("kSelect"),curK);
 $("kSelect").onchange=e=>{curK=+e.target.value;render();};
@@ -725,7 +822,7 @@ function renderSigDet(){
 /* =========================================================
    t-SNE / UMAP — nuage 3D interactif (glisser = tourner, molette = zoom)
    ========================================================= */
-let emRot={x:0.35,y:0.6}, emZoom=1;
+let emRot={x:0.35,y:0.6}, emZoom=1, emProj=null;   // emProj : dernière projection écran des points (survol/clic)
 // marqueurs : une forme par catégorie clinique (glyphe pour la légende + tracé canvas)
 const MK=[
   {g:"●",d:(c,x,y,r)=>{c.beginPath();c.arc(x,y,r,0,7);c.fill();}},                                   // cercle
@@ -737,16 +834,19 @@ const MK=[
 ];
 
 // Registre des variables projetables sur les canaux couleur / forme / taille.
-// Chaque source : {label, grp, kind:'cat'|'cont', + accès aux valeurs par tumeur}.
+// Chaque source : {label, coll (collection = niveau 1 du menu en cascade),
+//                  kind:'cat'|'cont', + accès aux valeurs par tumeur}.
 let EMSRC=[];
 function buildEmSources(){const s=[];
-  s.push({label:"Cluster",grp:"Structure",kind:"cat",cluster:true});
-  for(const v in DATA.meta)s.push({label:v,grp:"Clinique",
+  s.push({label:"Cluster",coll:"Autre",kind:"cat",cluster:true});
+  for(const v in DATA.meta)s.push({label:v,coll:"Clinique",
     kind:DATA.metaTypes[v]==="continuous"?"cont":"cat",meta:v});
-  [["ssgsea","Signature ssGSEA"],["mean","Signature moyenne"]].forEach(([m,g])=>{const S=DATA.signatures[m];
-    if(S)S.names.forEach((nm,ri)=>s.push({label:nm,grp:g,kind:"cont",sigM:m,row:ri}));});
+  // ssGSEA / moyenne : une collection PAR SOURCE d'origine (IPRES, sigGeNeHetX, select…)
+  [["ssgsea","ssGSEA"],["mean","Moyenne"]].forEach(([m,g])=>{const S=DATA.signatures[m];
+    if(S)S.names.forEach((nm,ri)=>{const src=(S.sources&&S.sources[ri])||"";
+      s.push({label:nm,coll:src?g+" "+src:g,kind:"cont",sigM:m,row:ri});});});
   for(const m in DATA.deconv)DATA.deconv[m].types.forEach((t,ri)=>
-    s.push({label:t,grp:"Déconv. "+m,kind:"cont",decM:m,row:ri}));
+    s.push({label:t,coll:"Déconv. "+m,kind:"cont",decM:m,row:ri}));
   return s;}
 function emGet(id){const v=$(id).value;return (v===""||v==="none")?null:EMSRC[+v];}
 function emVals(src){if(!src)return null;
@@ -755,13 +855,28 @@ function emVals(src){if(!src)return null;
   if(src.sigM)return{cont:true,vals:DATA.signatures[src.sigM].values[src.row]};
   if(src.decM)return{cont:true,vals:DATA.deconv[src.decM].values[src.row]};
   return null;}
-// remplit un <select> (regroupé par grp) en ne gardant que les sources voulues
+// remplit un <select> (regroupé par collection) en ne gardant que les sources voulues
 function fillEmSelect(sel,pred,noneLabel){sel.innerHTML="";
   const none=document.createElement("option");none.value="none";none.textContent=noneLabel;sel.appendChild(none);
-  const groups={};EMSRC.forEach((src,i)=>{if(!pred(src))return;(groups[src.grp]=groups[src.grp]||[]).push(i);});
+  const groups={};EMSRC.forEach((src,i)=>{if(!pred(src))return;(groups[src.coll]=groups[src.coll]||[]).push(i);});
   for(const g in groups){const og=document.createElement("optgroup");og.label=g;
     groups[g].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=EMSRC[i].label;og.appendChild(o);});
     sel.appendChild(og);}}
+// menu EN CASCADE : niveau 1 = collection ; niveau 2 = signature de la collection.
+// `memSel` (id lu par emGet) porte l'indice EMSRC choisi ; "none" = canal désactivé.
+function fillEmCascade(collSel,memSel,pred,noneLabel,defColl){
+  const groups={};EMSRC.forEach((src,i)=>{if(!pred(src))return;(groups[src.coll]=groups[src.coll]||[]).push(i);});
+  collSel.innerHTML="";
+  const none=document.createElement("option");none.value="none";none.textContent=noneLabel;collSel.appendChild(none);
+  Object.keys(groups).forEach(coll=>{const o=document.createElement("option");o.value=coll;o.textContent=coll;collSel.appendChild(o);});
+  const fillMembers=()=>{const coll=collSel.value;memSel.innerHTML="";
+    if(coll==="none"||!groups[coll]){const o=document.createElement("option");o.value="none";o.textContent="—";
+      memSel.appendChild(o);memSel.value="none";memSel.style.display="none";renderEmbed();return;}
+    memSel.style.display="";
+    groups[coll].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=EMSRC[i].label;memSel.appendChild(o);});
+    memSel.value=groups[coll][0];renderEmbed();};
+  collSel.onchange=fillMembers;memSel.onchange=renderEmbed;
+  collSel.value=(defColl&&groups[defColl])?defColl:"none";fillMembers();}
 
 function renderEmbed(){
   const method=$("emMethod").value, pts=DATA.embed[method], cv=$("emCanvas");
@@ -822,6 +937,7 @@ function renderEmbed(){
   const sizeOf=(i,depth)=>{let base=3.2;if(szV){const v=szV.vals[i];
       base=v==null?2.0:2.0+4.6*((v-zlo)/((zhi-zlo)||1));}return base*(0.7+0.55*depth);};
   const proj=pts.map((p,i)=>{const q=P(p[0],p[1],p[2]);q.i=i;return q;});
+  emProj=proj;                                                        // cache pour survol/clic
   proj.sort((a,b)=>a.d-b.d);                                          // painter : loin -> près
   proj.forEach(q=>{const depth=(q.d/(ext*s)+1)/2;ctx.globalAlpha=0.55+0.45*depth;
     ctx.fillStyle=colorOf(q.i);shapeOf(q.i).d(ctx,q.x,q.y,sizeOf(q.i,depth));});
@@ -845,16 +961,23 @@ function renderEmbed(){
   const em=$("emMethod");Object.keys(DATA.embed).forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m.toUpperCase();em.appendChild(o);});
   fillKSelect($("emK"),DATA.kFinal);
   EMSRC=buildEmSources();
-  fillEmSelect($("emColor"),()=>true,             "— aucun (couleur unie) —");
-  fillEmSelect($("emShape"),s=>s.kind==="cat",    "— aucune (cercle) —");   // catégoriel seul
-  fillEmSelect($("emSize"), s=>s.kind==="cont",   "— aucune (taille fixe) —"); // continu seul
-  $("emColor").value="0";                          // couleur par défaut = Cluster
-  ["emColor","emShape","emSize","emMethod","emK"].forEach(id=>$(id).onchange=renderEmbed);
+  // couleur (tout) & taille (continu seul) : menu en cascade collection -> signature
+  fillEmCascade($("emColorColl"),$("emColor"),()=>true,           "— aucun (couleur unie) —","Autre"); // défaut = Cluster
+  fillEmCascade($("emSizeColl"), $("emSize"), s=>s.kind==="cont", "— aucune (taille fixe) —");
+  fillEmSelect($("emShape"),s=>s.kind==="cat",    "— aucune (cercle) —");   // forme : catégoriel seul (menu simple)
+  ["emShape","emMethod","emK"].forEach(id=>$(id).onchange=renderEmbed);
   // interaction 3D (rotation à la souris, zoom molette)
-  const cv=$("emCanvas");let drag=false,lx=0,ly=0;cv.style.cursor="grab";
-  cv.addEventListener("mousedown",e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.style.cursor="grabbing";});
+  const cv=$("emCanvas");let drag=false,moved=false,lx=0,ly=0;cv.style.cursor="grab";
+  const emNearest=e=>{if(!emProj)return null;const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+    let best=null,bd=1e9;emProj.forEach(q=>{const dx=q.x-mx,dy=q.y-my,d=dx*dx+dy*dy;if(d<bd){bd=d;best=q;}});
+    return (best&&bd<=110)?best:null;};   // rayon ~10 px
+  cv.addEventListener("mousedown",e=>{drag=true;moved=false;lx=e.clientX;ly=e.clientY;cv.style.cursor="grabbing";});
   window.addEventListener("mouseup",()=>{drag=false;cv.style.cursor="grab";});
-  window.addEventListener("mousemove",e=>{if(!drag)return;emRot.y+=(e.clientX-lx)*0.01;emRot.x+=(e.clientY-ly)*0.01;lx=e.clientX;ly=e.clientY;renderEmbed();});
+  window.addEventListener("mousemove",e=>{if(!drag)return;moved=true;emRot.y+=(e.clientX-lx)*0.01;emRot.x+=(e.clientY-ly)*0.01;lx=e.clientX;ly=e.clientY;renderEmbed();});
+  cv.addEventListener("mousemove",e=>{if(drag)return;const q=emNearest(e);
+    if(!q){_hideTip();cv.style.cursor="grab";return;}cv.style.cursor="pointer";_showTip(e,"tumeur <b>"+SAMPLES[q.i]+"</b>");});
+  cv.addEventListener("mouseleave",_hideTip);
+  cv.addEventListener("click",e=>{if(moved){moved=false;return;}const q=emNearest(e);if(q)_showClinBubble(q.i,e);});
   cv.addEventListener("wheel",e=>{e.preventDefault();emZoom*=(e.deltaY<0?1.1:0.9);emZoom=Math.max(0.3,Math.min(6,emZoom));renderEmbed();},{passive:false});
   renderEmbed();
 })();
@@ -1018,6 +1141,139 @@ function drawCorrScatter(){const cv=$("coScatter"),info=$("coInfo");
 })();
 
 /* =========================================================
+   ONGLET RÉSULTATS ICA — branche indépendante
+   ========================================================= */
+const ICA=DATA.ica||{status:"not_run",branches:{},topDimensions:[],preAnalysis:[]};
+let curIcaDim=null,curIcaK=null;
+const IP={top:[],bottom:["clusters"],left:[],right:[]};
+let icaDragSrc=null,icaOpenMenu=null;
+function icaBranch(){return curIcaDim==null?null:(ICA.branches||{})[String(curIcaDim)];}
+function icaFmt(v,d=3){return v==null||!isFinite(v)?"—":(+v).toFixed(d);}
+function icaTable(cols,rows){let h="<thead><tr>";cols.forEach(c=>h+="<th>"+esc(c)+"</th>");h+="</tr></thead><tbody>";
+  rows.forEach(r=>{h+="<tr>";r.forEach(v=>h+="<td>"+esc(v==null?"—":v)+"</td>");h+="</tr>";});return h+="</tbody>";}
+function icaRange(v){const a=v.filter(x=>x!=null&&isFinite(x));if(!a.length)return[-1,1];let lo=Math.min(...a),hi=Math.max(...a);if(lo===hi){lo-=1;hi+=1;}const p=(hi-lo)*.07;return[lo-p,hi+p];}
+function icaLabels(B,k){const c=B.consensus||{},p=(c.perK||{})[String(k==null?c.kFinal:k)];return p?p.labels:[];}
+function icaSetWarn(id,msg){const e=$(id);e.className=msg?"warn on":"warn";e.textContent=msg||"";}
+
+function icaKRecords(B){return ((B&&B.consensus&&B.consensus.ks)||[]).filter(o=>o&&o.k!=null);}
+function icaKInfo(B,k){const o=icaKRecords(B).find(x=>+x.k===+k);return o?"k="+o.k+" · PAC="+icaFmt(o.pac,3):"k="+k;}
+function icaFillKSelect(reset){const B=icaBranch(),Cx=(B&&B.consensus)||{},sel=$("icaConsensusKSelect"),rows=icaKRecords(B);sel.innerHTML="";
+  if(!rows.length){curIcaK=null;sel.disabled=true;return;}sel.disabled=false;
+  const preferred=(!reset&&rows.some(o=>+o.k===+curIcaK))?+curIcaK:+Cx.kFinal;
+  curIcaK=rows.some(o=>+o.k===+preferred)?+preferred:+rows[0].k;
+  rows.forEach(o=>{const op=document.createElement("option");op.value=o.k;let t="k="+o.k+"   ·   PAC="+icaFmt(o.pac,3);
+    const small=o.minClust<Cx.minClusterSize,best=+o.k===+Cx.bestBoth;
+    if(best){op.style.background="#cfe2ff";op.style.color="#0b3a82";t+="   ★ recommandé";}
+    else if(small){op.style.background="#f8d7da";op.style.color="#a12622";t+="   ⚠ petit cluster ("+o.minClust+")";}
+    op.textContent=t;sel.appendChild(op);});sel.value=String(curIcaK);}
+function icaScoreRows(B){const P=(B&&B.projection)||{},names=P.componentNames||[],scores=P.scores||[];
+  return names.map((_,j)=>scores.map(row=>row&&row[j]!=null?row[j]:null));}
+function icaDrawMetaRow(cv,B,order,W,cw,v){const vals=((B.meta||{})[v]||[]),cont=(B.metaTypes||{})[v]==="continuous",H=22,ctx=fitCanvas(cv,LM+W+RM,H);
+  const finite=vals.filter(x=>x!=null&&isFinite(x));let lo=0,hi=1;if(cont&&finite.length){lo=Math.min(...finite);hi=Math.max(...finite);}
+  const cats=cont?null:[...new Set(vals.filter(x=>x!=null))];
+  order.forEach((o,i)=>{const x=vals[o];ctx.fillStyle=x==null?"#eee":cont?viridis((x-lo)/((hi-lo)||1)):CAT[cats.indexOf(x)%CAT.length];ctx.fillRect(LM+i*cw,3,Math.ceil(cw),16);});
+  ctx.fillStyle="#5a6b73";ctx.font="10px ui-monospace";ctx.textAlign="right";ctx.fillText(v.slice(0,24),LM-6,15);ctx.textAlign="left";}
+function icaDrawVMeta(cv,B,order,cw,v){const vals=((B.meta||{})[v]||[]),cont=(B.metaTypes||{})[v]==="continuous",W=18,ctx=vFit(cv,W);
+  const finite=vals.filter(x=>x!=null&&isFinite(x));let lo=0,hi=1;if(cont&&finite.length){lo=Math.min(...finite);hi=Math.max(...finite);}
+  const cats=cont?null:[...new Set(vals.filter(x=>x!=null))];
+  order.forEach((o,i)=>{const x=vals[o];ctx.fillStyle=x==null?"#eee":cont?viridis((x-lo)/((hi-lo)||1)):CAT[cats.indexOf(x)%CAT.length];ctx.fillRect(1,CTB+i*cw,W-2,Math.ceil(cw));});}
+function icaDrawCentral(){const B=icaBranch(),host=$("ica-stack-center");host.innerHTML="";if(!B||curIcaK==null)return;
+  const Cx=B.consensus||{},per=(Cx.perK||{})[String(curIcaK)],C=(Cx.consensus||{})[String(curIcaK)];if(!per||!C||!C.length)return;
+  const n=B.n||N,order=per.order,side=usSide(),cw=side/n,ch=cw,wrap=document.createElement("div"),cv=document.createElement("canvas");wrap.className="panel";wrap.appendChild(cv);host.appendChild(wrap);
+  const ctx=fitCanvas(cv,LM+side+RM,side+CTB);ctx.fillStyle="#5a6b73";ctx.font="11px ui-monospace";ctx.fillText("Matrice de consensus ICA — m="+curIcaDim+" · "+icaKInfo(B,curIcaK),6,CTB-3);
+  for(let i=0;i<n;i++){const ri=order[i],row=C[ri];for(let j=0;j<n;j++){ctx.fillStyle=consCol((row[order[j]]||0)/100);ctx.fillRect(LM+j*cw,CTB+i*ch,Math.ceil(cw),Math.ceil(ch));}}
+  drawClusterSeparators(ctx,per,order,cw,CTB,side,"x");drawClusterSeparators(ctx,per,order,ch,LM,side,"y",CTB);
+  const sample=i=>((B.samples||[])[i]||SAMPLES[i]||("échantillon "+i));const cellAt=e=>{const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;if(mx<LM||my<CTB)return null;const j=Math.floor((mx-LM)/cw),i=Math.floor((my-CTB)/ch);return(i<0||i>=n||j<0||j>=n)?null:[order[i],order[j]];};
+  cv.onmousemove=e=>{const cell=cellAt(e);if(!cell){_hideTip();return;}const oi=cell[0],oj=cell[1],v=((C[oi][oj]||0)/100).toFixed(2);_showTip(e,(oi===oj?"tumeur <b>"+sample(oi)+"</b>":"ligne <b>"+sample(oi)+"</b> × colonne <b>"+sample(oj)+"</b>")+"<br>consensus index : <b>"+v+"</b>",350);};
+  cv.onmouseleave=_hideTip;cv.onclick=e=>{const cell=cellAt(e);if(cell)_showClinBubble(cell[0],e,cell[1]);};}
+function icaAvailablePanels(B){const out=[{id:"tree",label:"Arbre consensus",grp:"Structure"},{id:"clusters",label:"Barre de clusters",grp:"Structure"},{id:"item",label:"Item consensus (stabilité)",grp:"Structure"}];
+  Object.keys(B.meta||{}).forEach(v=>out.push({id:"meta:"+v,label:"Clinique : "+v,grp:"Clinique"}));
+  if((B.projection||{}).componentNames&&B.projection.componentNames.length)out.push({id:"scores",label:"Scores des métasamples ICA",grp:"ICA"});return out;}
+function icaMakePanel(type,side){const B=icaBranch(),Cx=(B&&B.consensus)||{},per=(Cx.perK||{})[String(curIcaK)],vert=(side==="left"||side==="right"),order=per.order,W=usSide(),cw=W/(B.n||N),rows=icaScoreRows(B);
+  const wrap=document.createElement("div"),rm=document.createElement("button"),ttl=document.createElement("div"),cv=document.createElement("canvas");wrap.className="panel";wrap.draggable=true;ttl.className=vert?"vttl":"ttl";rm.className="rm";rm.textContent="✕";wrap.appendChild(cv);wrap.appendChild(ttl);wrap.appendChild(rm);
+  wrap.addEventListener("dragstart",e=>{icaDragSrc={side,type};document.body.classList.add("dragging");if(e.dataTransfer){e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",type);}});wrap.addEventListener("dragend",()=>{document.body.classList.remove("dragging");document.querySelectorAll(".dragover").forEach(x=>x.classList.remove("dragover"));});
+  rm.onclick=()=>{const a=IP[side],i=a.indexOf(type);if(i>=0)a.splice(i,1);renderIcaConsensus();};const kind=type.split(":")[0],arg=type.split(":")[1];
+  if(vert){if(kind==="tree"){ttl.textContent="Arbre";drawVTree(cv,per,cw,side);}else if(kind==="clusters"){ttl.textContent="Clusters";drawVStrip(cv,order,cw,18,o=>clusterCol(per.labels[o]));}else if(kind==="item"){ttl.textContent="Item consensus";drawVItem(cv,per,order,cw);}else if(kind==="meta"){ttl.textContent=arg;icaDrawVMeta(cv,B,order,cw,arg);}else if(kind==="scores"){ttl.textContent="Métasamples ICA";drawVHeat(cv,order,cw,zrows(rows),(B.projection||{}).componentNames||[]);}}
+  else{if(kind==="tree"){ttl.textContent="Arbre consensus";drawTree(cv,per,W,cw);}else if(kind==="clusters"){ttl.textContent="Clusters";drawClustersBar(cv,per,order,W,cw);}else if(kind==="item"){ttl.textContent="Item consensus";drawItem(cv,per,order,W,cw);}else if(kind==="meta"){ttl.textContent="Clinique : "+arg;icaDrawMetaRow(cv,B,order,W,cw,arg);}else if(kind==="scores"){ttl.textContent="Métasamples ICA";drawMatrix(cv,order,W,cw,rows,(B.projection||{}).componentNames||[],true);}}
+  if(kind!=="tree")_patientTip(cv,order,cw,vert?"y":"x");return wrap;}
+function icaRenderStack(side){const host=$("ica-stack-"+side);host.innerHTML="";IP[side].forEach(t=>host.appendChild(icaMakePanel(t,side)));}
+function icaDrawLegend(){const B=icaBranch(),per=B&&B.consensus&&(B.consensus.perK||{})[String(curIcaK)],labels=per?per.labels:[];$("icaConsensusLegend").innerHTML='<span><i class="sw" style="background:'+consCol(1)+'"></i>consensus élevé</span>'+(labels.length?'<span class="muted">clusters : '+[...new Set(labels)].sort((a,b)=>a-b).map(l=>'<i class="sw" style="background:'+clusterCol(l)+'"></i>C'+l).join(" ")+'</span>':'');}
+function renderIcaConsensus(){const B=icaBranch();if(!B||curIcaK==null){icaSetWarn("icaConsensusWarn",ICA.message||"Aucun consensus ICA disponible.");return;}icaSetWarn("icaConsensusWarn","");icaDrawCentral();["top","bottom","left","right"].forEach(icaRenderStack);icaDrawLegend();}
+function icaInsertIndex(side,e){const kids=[...$("ica-stack-"+side).children],vert=(side==="left"||side==="right");for(let i=0;i<kids.length;i++){const r=kids[i].getBoundingClientRect();if((vert?e.clientX:e.clientY)<(vert?(r.left+r.right)/2:(r.top+r.bottom)/2))return i;}return kids.length;}
+function icaDrop(tgt,e){e.preventDefault();if(!icaDragSrc)return;const src=icaDragSrc.side,type=icaDragSrc.type;icaDragSrc=null;if(src!==tgt&&IP[tgt].includes(type)){renderIcaConsensus();return;}const i=IP[src].indexOf(type);if(i<0){renderIcaConsensus();return;}let j=icaInsertIndex(tgt,e);IP[src].splice(i,1);if(src===tgt&&i<j)j--;IP[tgt].splice(Math.max(0,Math.min(IP[tgt].length,j)),0,type);renderIcaConsensus();}
+function icaShowMenu(side,anchor){if(icaOpenMenu){icaOpenMenu.remove();icaOpenMenu=null;}const B=icaBranch();if(!B)return;const m=document.createElement("div"),groups={};m.className="menu";icaAvailablePanels(B).forEach(it=>(groups[it.grp]=groups[it.grp]||[]).push(it));Object.keys(groups).forEach(g=>{const h=document.createElement("div");h.className="grp";h.textContent=g;m.appendChild(h);groups[g].forEach(it=>{const b=document.createElement("button");b.textContent=it.label;b.onclick=()=>{if(!IP[side].includes(it.id))IP[side].push(it.id);m.remove();icaOpenMenu=null;renderIcaConsensus();};m.appendChild(b);});});document.body.appendChild(m);const r=anchor.getBoundingClientRect();m.style.left=Math.min(r.left,window.innerWidth-260)+"px";m.style.top=(r.bottom+window.scrollY+4)+"px";icaOpenMenu=m;}
+/* ---- Nuages 3D ICA : même géométrie et interactions que l'embedding historique. ---- */
+const ICA3D={projection:{x:.35,y:.6,zoom:1,proj:[]},embedding:{x:.35,y:.6,zoom:1,proj:[]}};
+let ICAEMSRC=[],icaEmbedDimension=null,ica3dBound=false;
+function icaDraw3DScene(cv,rawPoints,axes,state,colorOf,shapeOf,sizeOf){
+  const pts=(rawPoints||[]).map((p,i)=>({i,x:+p[0],y:+p[1],z:+p[2]})).filter(p=>isFinite(p.x)&&isFinite(p.y)&&isFinite(p.z));
+  if(!pts.length){fitCanvas(cv,400,80).fillText("Aucun point 3D disponible.",10,20);state.proj=[];return;}
+  const W=560,H=520,ctx=fitCanvas(cv,W,H),n=pts.length;let cx=0,cy=0,cz=0;
+  pts.forEach(p=>{cx+=p.x;cy+=p.y;cz+=p.z;});cx/=n;cy/=n;cz/=n;
+  let rmax=1e-6;pts.forEach(p=>{rmax=Math.max(rmax,Math.abs(p.x-cx),Math.abs(p.y-cy),Math.abs(p.z-cz));});
+  const ext=rmax*1.08,scale=(Math.min(W,H)*.34/ext)*state.zoom,cyy=Math.cos(state.y),syy=Math.sin(state.y),cxx=Math.cos(state.x),sxx=Math.sin(state.x);
+  const project=(x,y,z)=>{let X=(x-cx)*scale,Y=(y-cy)*scale,Z=(z-cz)*scale;const x1=X*cyy-Z*syy,z1=X*syy+Z*cyy,y2=Y*cxx-z1*sxx,z2=Y*sxx+z1*cxx;return{x:W/2+x1,y:H/2-y2,d:z2};};
+  const GRID="#e4e8eb",BOX="#c4cbd1",AX="#8a94a0",AXT="#5a636c",center=[cx,cy,cz];
+  const faceDepth=(a,sg)=>{const p=[...center];p[a]=center[a]+sg*ext;return project(p[0],p[1],p[2]).d;};
+  const wall=(fa,sg)=>{const N=4,f=center[fa]+sg*ext,other=[0,1,2].filter(a=>a!==fa),mk=(u,v)=>{const p=[0,0,0];p[fa]=f;p[other[0]]=center[other[0]]-ext+u;p[other[1]]=center[other[1]]-ext+v;return project(p[0],p[1],p[2]);};ctx.strokeStyle=GRID;ctx.lineWidth=1;for(let i=0;i<=N;i++){const t=2*ext*i/N,a=mk(t,0),b=mk(t,2*ext),e=mk(0,t),g=mk(2*ext,t);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.beginPath();ctx.moveTo(e.x,e.y);ctx.lineTo(g.x,g.y);ctx.stroke();}};
+  [0,1,2].forEach(a=>wall(a,faceDepth(a,-1)>faceDepth(a,1)?-1:1));
+  const corner=(i,j,k)=>project(cx+i*ext,cy+j*ext,cz+k*ext),S=[-1,1];ctx.strokeStyle=BOX;ctx.lineWidth=1;
+  for(const j of S)for(const k of S){const a=corner(-1,j,k),b=corner(1,j,k);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+  for(const i of S)for(const k of S){const a=corner(i,-1,k),b=corner(i,1,k);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+  for(const i of S)for(const j of S){const a=corner(i,j,-1),b=corner(i,j,1);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+  const corners=[];for(const i of S)for(const j of S)for(const k of S)corners.push({i,j,k,p:corner(i,j,k)});const origin=corners.reduce((a,b)=>b.p.d>a.p.d?b:a),sg=[origin.i,origin.j,origin.k];
+  ctx.font="11px ui-sans-serif";[0,1,2].forEach(ai=>{const nn=[...sg];nn[ai]=-nn[ai];const a=corner(sg[0],sg[1],sg[2]),b=corner(nn[0],nn[1],nn[2]);ctx.strokeStyle=AX;ctx.lineWidth=1.7;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.fillStyle=AXT;ctx.textAlign=b.x<a.x?"right":"left";ctx.fillText(axes[ai]||("axe "+(ai+1)),b.x+(b.x<a.x?-4:4),b.y+4);});ctx.textAlign="left";
+  const projected=pts.map(p=>{const q=project(p.x,p.y,p.z);q.i=p.i;return q;});state.proj=projected;projected.slice().sort((a,b)=>a.d-b.d).forEach(q=>{const depth=(q.d/(ext*scale)+1)/2;ctx.globalAlpha=.55+.45*depth;ctx.fillStyle=colorOf(q.i);shapeOf(q.i).d(ctx,q.x,q.y,sizeOf(q.i,depth));});ctx.globalAlpha=1;
+}
+function icaShowClinBubble(B,index,e){if(e&&e.stopPropagation)e.stopPropagation();const b=_el("bubble","bubble"),meta=B.meta||{},types=B.metaTypes||{};let h="<button class='cls'>×</button><h4>"+((B.samples||[])[index]||("tumeur "+index))+"</h4>";const vars=Object.keys(meta);h+=vars.length?vars.map(v=>{let x=meta[v][index];if(x==null)x="—";else if(types[v]==="continuous"&&typeof x==="number")x=(+x).toFixed(2);return "<div class='row'><span>"+v+"</span><b>"+x+"</b></div>";}).join(""):"<div class='muted'>Aucune variable clinique.</div>";b.innerHTML=h;b.style.display="block";b.style.left=Math.min(e.clientX+13,window.innerWidth-330)+"px";b.style.top=Math.min(e.clientY+15,window.innerHeight-Math.min(260,b.scrollHeight+20))+"px";b.querySelector(".cls").onclick=ev=>{ev.stopPropagation();b.style.display="none";};}
+function icaBind3D(id,state,redraw){const cv=$(id);let drag=false,moved=false,lx=0,ly=0;cv.style.cursor="grab";const nearest=e=>{const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;let best=null,dist=1e9;(state.proj||[]).forEach(q=>{const dx=q.x-mx,dy=q.y-my,d=dx*dx+dy*dy;if(d<dist){dist=d;best=q;}});return best&&dist<=110?best:null;};cv.addEventListener("mousedown",e=>{drag=true;moved=false;lx=e.clientX;ly=e.clientY;cv.style.cursor="grabbing";});window.addEventListener("mouseup",()=>{drag=false;cv.style.cursor="grab";});window.addEventListener("mousemove",e=>{if(!drag)return;moved=true;state.y+=(e.clientX-lx)*.01;state.x+=(e.clientY-ly)*.01;lx=e.clientX;ly=e.clientY;redraw();});cv.addEventListener("mousemove",e=>{if(drag)return;const q=nearest(e),B=icaBranch();if(!q||!B){_hideTip();cv.style.cursor="grab";return;}cv.style.cursor="pointer";_showTip(e,"tumeur <b>"+((B.samples||[])[q.i]||("tumeur "+q.i))+"</b>");});cv.addEventListener("mouseleave",_hideTip);cv.addEventListener("click",e=>{if(moved){moved=false;return;}const q=nearest(e),B=icaBranch();if(q&&B)icaShowClinBubble(B,q.i,e);});cv.addEventListener("wheel",e=>{e.preventDefault();state.zoom*=e.deltaY<0?1.1:.9;state.zoom=Math.max(.3,Math.min(6,state.zoom));redraw();},{passive:false});}
+function icaRebuildProjectionAxes(){const B=icaBranch(),names=(B&&B.projection&&B.projection.componentNames)||[],sels=[$("icaProjX"),$("icaProjY"),$("icaProjZ")];sels.forEach(s=>{s.innerHTML="";names.forEach(n=>{const o=document.createElement("option");o.value=n;o.textContent=n;s.appendChild(o);});});sels[0].value=names[0]||"";sels[1].value=names[Math.min(1,names.length-1)]||"";sels[2].value=names[Math.min(2,names.length-1)]||"";}
+const ICA_DIMENSION_ROLES={
+  mstd:{tag:"★ MSTD",bg:"#cfe2ff",fg:"#0b3a82"},
+  nearest_lower:{tag:"↓ dimension testée inférieure",bg:"#d1e7dd",fg:"#155724"},
+  nearest_higher:{tag:"↑ dimension testée supérieure",bg:"#d1e7dd",fg:"#155724"},
+  best_mean_stability:{tag:"~ meilleure stabilité moyenne",bg:"#fff3cd",fg:"#6b5200"}
+};
+function icaDimensionRoles(d){const q=ICA.quality||{},roles=(q.dimensionRoles||{})[String(d)];return Array.isArray(roles)&&roles.length?roles:(+d===+q.mostStableDimension?["mstd"]:[]);}
+function icaDimensionOption(d){const op=document.createElement("option"),roles=icaDimensionRoles(d),tags=roles.map(r=>(ICA_DIMENSION_ROLES[r]||{}).tag).filter(Boolean);
+  op.value=d;op.textContent="m = "+d+(tags.length?"   ·   "+tags.join(" · "):"");
+  // En cas de doublon de critères, tous les marqueurs restent textuels ; la
+  // MSTD a la priorité visuelle, puis les voisins, puis la stabilité moyenne.
+  const primary=["mstd","nearest_lower","nearest_higher","best_mean_stability"].find(r=>roles.includes(r));
+  const style=ICA_DIMENSION_ROLES[primary];if(style){op.style.background=style.bg;op.style.color=style.fg;}return op;}
+function icaSetDimension(value,resetK){curIcaDim=+value;icaEmbedDimension=null;["icaDimSelect","icaConsensusDimSelect"].forEach(id=>{const s=$(id);if(s)s.value=String(curIcaDim);});icaRebuildProjectionAxes();icaFillKSelect(resetK);}
+function renderIcaProjection(){const B=icaBranch();if(!B)return;const P=B.projection,ns=P.componentNames||[],scores=P.scores||[],xi=Math.max(0,ns.indexOf($("icaProjX").value)),yi=Math.max(0,ns.indexOf($("icaProjY").value)),zi=Math.max(0,ns.indexOf($("icaProjZ").value)),labs=icaLabels(B,(B.consensus||{}).kFinal),pts=scores.map(r=>[r[xi],r[yi],r[zi]]);
+  icaDraw3DScene($("icaProjCanvas"),pts,[ns[xi],ns[yi],ns[zi]],ICA3D.projection,i=>labs.length?clusterCol(labs[i]):"#0f766e",()=>MK[0],(_,depth)=>3.2*(.7+.55*depth));
+  $("icaProjLegend").innerHTML="<b>Projection ICA 3D · m="+curIcaDim+"</b><span>"+B.n+" tumeurs</span><span>Couleur : clusters ICA (k="+(B.consensus||{}).kFinal+")</span><span class='muted'>glisser = tourner · molette = zoom · survol/clic = tumeur</span>";
+  const rows=[];Object.keys(P.topGenes||{}).forEach(ic=>(P.topGenes[ic]||[]).slice(0,6).forEach(g=>rows.push([ic,g.gene,icaFmt(g.loading,4)])));
+  $("icaGeneTable").innerHTML=icaTable(["Composante","Top gène (|loading|)","Loading"],rows);
+}
+function icaBuildEmSources(B){const out=[{label:"Cluster",coll:"Autre",kind:"cat",cluster:true}];for(const v in B.meta||{})out.push({label:v,coll:"Clinique",kind:(B.metaTypes||{})[v]==="continuous"?"cont":"cat",meta:v});for(const m in DATA.signatures||{}){const S=DATA.signatures[m],group=m==="ssgsea"?"ssGSEA":m==="mean"?"Moyenne":m;(S.names||[]).forEach((nm,ri)=>{const src=(S.sources&&S.sources[ri])||"";out.push({label:nm,coll:src?group+" "+src:group,kind:"cont",sigM:m,row:ri});});}for(const m in DATA.deconv||{}){const D=DATA.deconv[m];(D.types||[]).forEach((t,ri)=>out.push({label:t,coll:"Déconv. "+m,kind:"cont",decM:m,row:ri}));}return out;}
+function icaEmGet(id){const value=$(id).value;return value===""||value==="none"?null:ICAEMSRC[+value];}
+function icaGlobalValues(B,values){const bySample=new Map(SAMPLES.map((sample,index)=>[String(sample),index]));return(B.samples||[]).map(sample=>{const index=bySample.get(String(sample));return index==null?null:values[index];});}
+function icaEmVals(B,src){if(!src)return null;if(src.cluster){const per=(B.consensus||{}).perK||{},p=per[String(+( $("icaEmbedK").value))];return p?{cont:false,vals:(p.labels||[]).map(v=>"C"+v)}:null;}if(src.meta!=null)return{cont:(B.metaTypes||{})[src.meta]==="continuous",vals:(B.meta||{})[src.meta]||[]};if(src.sigM){const S=(DATA.signatures||{})[src.sigM];return S?{cont:true,vals:icaGlobalValues(B,(S.values||[])[src.row]||[])}:null;}if(src.decM){const D=(DATA.deconv||{})[src.decM];return D?{cont:true,vals:icaGlobalValues(B,(D.values||[])[src.row]||[])}:null;}return null;}
+function icaFillEmSelect(sel,pred,noneLabel){sel.innerHTML="";const none=document.createElement("option");none.value="none";none.textContent=noneLabel;sel.appendChild(none);const groups={};ICAEMSRC.forEach((src,i)=>{if(pred(src))(groups[src.coll]=groups[src.coll]||[]).push(i);});for(const group in groups){const og=document.createElement("optgroup");og.label=group;groups[group].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=ICAEMSRC[i].label;og.appendChild(o);});sel.appendChild(og);}}
+function icaFillEmCascade(collSel,memberSel,pred,noneLabel,defaultColl){const groups={};ICAEMSRC.forEach((src,i)=>{if(pred(src))(groups[src.coll]=groups[src.coll]||[]).push(i);});collSel.innerHTML="";const none=document.createElement("option");none.value="none";none.textContent=noneLabel;collSel.appendChild(none);Object.keys(groups).forEach(group=>{const o=document.createElement("option");o.value=group;o.textContent=group;collSel.appendChild(o);});const fillMembers=redraw=>{const group=collSel.value;memberSel.innerHTML="";if(group==="none"||!groups[group]){const o=document.createElement("option");o.value="none";o.textContent="—";memberSel.appendChild(o);memberSel.value="none";memberSel.style.display="none";}else{memberSel.style.display="";groups[group].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=ICAEMSRC[i].label;memberSel.appendChild(o);});memberSel.value=groups[group][0];}if(redraw)renderIcaEmbed();};collSel.onchange=()=>fillMembers(true);memberSel.onchange=renderIcaEmbed;collSel.value=defaultColl&&groups[defaultColl]?defaultColl:"none";fillMembers(false);}
+function icaPrepareEmbed(B){if(icaEmbedDimension===curIcaDim)return;icaEmbedDimension=curIcaDim;ICAEMSRC=icaBuildEmSources(B);const method=$("icaEmbedMethod"),methods=Object.keys(B.embed||{});method.innerHTML="";methods.forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m.toUpperCase();method.appendChild(o);});method.onchange=renderIcaEmbed;const ksel=$("icaEmbedK"),rows=icaKRecords(B);ksel.innerHTML="";rows.forEach(o=>{const op=document.createElement("option");op.value=o.k;op.textContent=icaKInfo(B,o.k);ksel.appendChild(op);});ksel.value=String((B.consensus||{}).kFinal||((rows[0]||{}).k||"");ksel.onchange=renderIcaEmbed;icaFillEmCascade($("icaEmbedColorColl"),$("icaEmbedColor"),()=>true,"— aucun (couleur unie) —","Autre");icaFillEmCascade($("icaEmbedSizeColl"),$("icaEmbedSize"),s=>s.kind==="cont","— aucune (taille fixe) —");icaFillEmSelect($("icaEmbedShape"),s=>s.kind==="cat","— aucune (cercle) —");$("icaEmbedShape").onchange=renderIcaEmbed;}
+function renderIcaEmbed(){const B=icaBranch();if(!B)return;icaPrepareEmbed(B);const method=$("icaEmbedMethod").value,pts=(B.embed||{})[method]||[];if(!pts.length){fitCanvas($("icaEmbedCanvas"),1,1);$("icaEmbedLegend").textContent="Aucun embedding ICA disponible.";return;}const colSrc=icaEmGet("icaEmbedColor"),shapeSrc=icaEmGet("icaEmbedShape"),sizeSrc=icaEmGet("icaEmbedSize"),colV=icaEmVals(B,colSrc),shapeV=icaEmVals(B,shapeSrc),sizeV=icaEmVals(B,sizeSrc);let clo=0,chi=1,cats=[];if(colV){if(colV.cont){const f=colV.vals.filter(v=>v!=null&&isFinite(v));if(f.length){clo=Math.min(...f);chi=Math.max(...f);}}else cats=[...new Set(colV.vals.filter(v=>v!=null))];}const colorOf=i=>{if(!colV)return"#3b82c4";const v=colV.vals[i];return v==null?"#ccc":colV.cont?viridis((v-clo)/((chi-clo)||1)):CAT[cats.indexOf(v)%CAT.length];};const shapeCats=shapeV?[...new Set(shapeV.vals.filter(v=>v!=null))]:[],shapeOf=i=>{if(!shapeV||shapeV.vals[i]==null)return MK[0];return MK[shapeCats.indexOf(shapeV.vals[i])%MK.length];};let zlo=0,zhi=1;if(sizeV){const f=sizeV.vals.filter(v=>v!=null&&isFinite(v));if(f.length){zlo=Math.min(...f);zhi=Math.max(...f);}}const sizeOf=(i,depth)=>{let size=3.2;if(sizeV){const v=sizeV.vals[i];size=v==null?2:2+4.6*((v-zlo)/((zhi-zlo)||1));}return size*(.7+.55*depth);};icaDraw3DScene($("icaEmbedCanvas"),pts,[method.toUpperCase()+" 1",method.toUpperCase()+" 2",method.toUpperCase()+" 3"],ICA3D.embedding,colorOf,shapeOf,sizeOf);const HH='style="font-weight:600;margin-top:7px;color:#3a444b"';let out="<b>"+method.toUpperCase()+" 3D sur distance consensus ICA</b><div class='muted'>m="+curIcaDim+" · "+icaKInfo(B,+$("icaEmbedK").value)+" · glisser = tourner · molette = zoom</div>";if(colSrc){out+="<div "+HH+">Couleur : "+colSrc.label+"</div>";if(colV.cont){for(let t=4;t>=0;t--){const v=clo+(chi-clo)*t/4;out+='<div><i class="sw" style="background:'+viridis(t/4)+'"></i>'+(isFinite(v)?v.toFixed(2):"—")+"</div>";}}else cats.forEach((c,i)=>out+='<div><i class="sw" style="background:'+CAT[i%CAT.length]+'"></i>'+c+"</div>");}if(shapeSrc){out+="<div "+HH+">Forme : "+shapeSrc.label+"</div>";shapeCats.forEach((c,i)=>out+='<div><span style="font-size:14px;line-height:1;color:#33414a">'+MK[i%MK.length].g+"</span> "+c+"</div>");}if(sizeSrc)out+="<div "+HH+">Taille : "+sizeSrc.label+"</div><div class='muted'>"+(isFinite(zlo)?zlo.toFixed(2):"—")+" → "+(isFinite(zhi)?zhi.toFixed(2):"—")+" (petit → grand)</div>";$("icaEmbedLegend").innerHTML=out;}
+function renderIcaAssoc(){const B=icaBranch();if(!B)return;const A=B.assoc||{},per=(A.byClusterK||{})[String((B.consensus||{}).kFinal)]||{},rows=Object.keys(per).map(v=>{const o=per[v];return[v,o.test,icaFmt(o.pvalue,4),icaFmt(o.padj,4),icaFmt(o.cramers_v,3),o.n];});
+  icaSetWarn("icaAssocWarn",rows.length?"":"Aucune association catégorielle ICA disponible (métadonnées absentes, aucune variable catégorielle exploitable, ou étape désactivée).");$("icaAssocTable").innerHTML=icaTable(["Variable clinique","Test","p","FDR","V de Cramér","n"],rows);
+}
+function renderIcaCorr(){const B=icaBranch();if(!B)return;const C=B.corr||{},rows=(C.pairs||[]).filter(o=>(o.a||"").startsWith("ica:")||(o.b||"").startsWith("ica:")).map(o=>[o.a,o.b,icaFmt(o.rho),icaFmt(o.p,4),icaFmt(o.padj,4),o.n]);
+  icaSetWarn("icaCorrWarn",rows.length?"":"Aucune corrélation ICA disponible (il faut au moins une variable clinique continue et l'étape 9b active). ");$("icaCorrTable").innerHTML=icaTable(["Variable 1","Variable 2","ρ / r","p","FDR","n"],rows);
+}
+function renderIcaAll(){renderIcaProjection();renderIcaConsensus();renderIcaEmbed();renderIcaAssoc();renderIcaCorr();}
+function initICA(){const branches=ICA.branches||{},dims=(ICA.topDimensions&&ICA.topDimensions.length?ICA.topDimensions:Object.keys(branches)).map(String).filter(d=>branches[d]);
+  if(ICA.status!=="complete"||!dims.length){const msg=ICA.message||"Branche ICA non exécutée.";icaSetWarn("icaNotRun",msg);icaSetWarn("icaConsensusWarn",msg);["icaDimCtl","icaProjectionCtl","icaConsensusCtl","icaConsensusAddbar","icaConsensusGrid"].forEach(id=>$(id).style.display="none");icaSetWarn("icaAssocWarn",msg);icaSetWarn("icaCorrWarn",msg);return;}
+  const ds=$("icaDimSelect"),cd=$("icaConsensusDimSelect");[ds,cd].forEach(sel=>{sel.innerHTML="";dims.forEach(d=>sel.appendChild(icaDimensionOption(d)));});
+  icaSetDimension(dims[0],true);$("icaDimInfo").textContent="★ MSTD · ↓/↑ dimensions testées voisines · ~ meilleure stabilité moyenne · "+((ICA.quality||{}).nRuns||"?")+" runs / dimension";
+  ds.onchange=()=>{icaSetDimension(ds.value,true);renderIcaAll();};cd.onchange=()=>{icaSetDimension(cd.value,true);renderIcaAll();};$("icaConsensusKSelect").onchange=e=>{curIcaK=+e.target.value;renderIcaConsensus();};["icaProjX","icaProjY","icaProjZ"].forEach(id=>$(id).onchange=renderIcaProjection);
+  if(!ica3dBound){icaBind3D("icaProjCanvas",ICA3D.projection,renderIcaProjection);icaBind3D("icaEmbedCanvas",ICA3D.embedding,renderIcaEmbed);ica3dBound=true;}
+  document.querySelectorAll("#icaConsensusAddbar .addbtn").forEach(b=>b.onclick=()=>icaShowMenu(b.dataset.icaSide,b));["top","bottom","left","right"].forEach(side=>{const host=$("ica-stack-"+side);host.addEventListener("dragover",e=>{if(icaDragSrc){e.preventDefault();host.classList.add("dragover");}});host.addEventListener("dragleave",e=>{if(!host.contains(e.relatedTarget))host.classList.remove("dragover");});host.addEventListener("drop",e=>{host.classList.remove("dragover");icaDrop(side,e);});});
+  document.addEventListener("click",e=>{if(icaOpenMenu&&!icaOpenMenu.contains(e.target)&&!(e.target.closest&&e.target.closest("#icaConsensusAddbar .addbtn"))){icaOpenMenu.remove();icaOpenMenu=null;}});renderIcaAll();}
+function initPreICA(){const host=$("preIcaList"),list=ICA.preAnalysis||[];if(!list.length){host.innerHTML='<p class="muted">Aucune figure d’évaluation ICA produite.</p>';return;}list.forEach(o=>{const c=document.createElement("div");c.className="imgcard";c.innerHTML="<h3>"+esc(o.title)+"</h3>";const im=document.createElement("img");im.src=o.img;c.appendChild(im);host.appendChild(c);});}
+
+/* =========================================================
    ONGLET TABLEAUX
    ========================================================= */
 let tblSort={col:-1,dir:1};
@@ -1041,6 +1297,8 @@ function esc(s){return(""+s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 (function initPre(){const host=$("preList");if(!DATA.preAnalysis.length){host.innerHTML='<p class="muted">Aucune figure de pré-analyse.</p>';return;}
   DATA.preAnalysis.forEach(o=>{const c=document.createElement("div");c.className="imgcard";
     c.innerHTML="<h3>"+esc(o.title)+"</h3>";const im=document.createElement("img");im.src=o.img;c.appendChild(im);host.appendChild(c);});})();
+initPreICA();
+initICA();
 
 /* ---------- navigation onglets ---------- */
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
@@ -1049,7 +1307,13 @@ document.querySelectorAll(".subtab").forEach(t=>t.onclick=()=>{document.querySel
   t.classList.add("active");document.querySelectorAll(".sub").forEach(p=>p.classList.remove("active"));$("sub-"+t.dataset.sub).classList.add("active");
   if(t.dataset.sub==="sigdet")renderSigDet();if(t.dataset.sub==="embed")renderEmbed();
   if(t.dataset.sub==="assoc")renderAssoc();if(t.dataset.sub==="corr")renderCorr();});
-window.addEventListener("resize",()=>{clearTimeout(window.__rt);window.__rt=setTimeout(()=>{if($("sub-unsup").classList.contains("active"))render();},200);});
+document.querySelectorAll(".ica-subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".ica-subtab").forEach(x=>x.classList.remove("active"));
+  t.classList.add("active");document.querySelectorAll(".ica-sub").forEach(p=>p.classList.remove("active"));$("ica-sub-"+t.dataset.icaSub).classList.add("active");
+  if(t.dataset.icaSub==="proj")renderIcaProjection();if(t.dataset.icaSub==="consensus")renderIcaConsensus();
+  if(t.dataset.icaSub==="embed")renderIcaEmbed();if(t.dataset.icaSub==="assoc")renderIcaAssoc();if(t.dataset.icaSub==="corr")renderIcaCorr();});
+document.querySelectorAll(".pre-subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".pre-subtab").forEach(x=>x.classList.remove("active"));
+  t.classList.add("active");document.querySelectorAll(".pre-sub").forEach(p=>p.classList.remove("active"));$("pre-sub-"+t.dataset.preSub).classList.add("active");});
+window.addEventListener("resize",()=>{clearTimeout(window.__rt);window.__rt=setTimeout(()=>{if($("sub-unsup").classList.contains("active"))render();if($("ica-sub-consensus").classList.contains("active"))renderIcaConsensus();},200);});
 
 render();
 </script>

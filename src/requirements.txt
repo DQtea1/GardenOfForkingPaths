@@ -13,6 +13,7 @@ umap-learn>=0.5.4     # embeddings UMAP ; sans lui, le pipeline tourne avec --no
 plotly>=5.18          # embeddings 3D interactifs (--t-SNE_dim 3)
 gseapy>=1.1           # GSEA de l'étape DEGSEA (run_degsea=y)
 pyarrow>=14.0         # lecture de matrices au format parquet
+stabilized-ica>=2.0.0 # branche ICA stabilisée (MSTD, métagènes et projections)
 
 # --- Note : PUREE (pureté tumorale, purity_threshold) ---------------------
 # PUREE tourne en sous-processus dans son propre environnement (voir --puree_dir

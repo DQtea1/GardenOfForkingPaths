@@ -52,6 +52,15 @@ def _clean(v):
     return v
 
 
+def _clean_deep(v):
+    """Version récursive de `_clean` pour les métadonnées structurées ICA."""
+    if isinstance(v, dict):
+        return {str(k): _clean_deep(value) for k, value in v.items()}
+    if isinstance(v, (list, tuple, np.ndarray)):
+        return [_clean_deep(value) for value in v]
+    return _clean(v)
+
+
 def _link_stability(Z, dend, stab_by_id):
     """Rattache le score de stabilité Jaccard de chaque **branche** (nœud interne)
     à la liste `icoord`/`dcoord` du dendrogramme, dans le **même ordre** que celle-ci
@@ -88,6 +97,249 @@ def _link_stability(Z, dend, stab_by_id):
     return out
 
 
+def _consensus_payload(result, k_final: int, linkage_method: str,
+                       min_cluster_size: int, k_criterion: str,
+                       branch_stability_by_k: dict | None = None) -> dict:
+    """Sérialise un résultat consensus pour le rapport.
+
+    Le consensus historique et chaque branche ICA partagent ce contrat JSON. Le
+    helper évite que l'onglet ICA dépende des variables globales de la première
+    analyse et maintient une séparation stricte entre les deux branches.
+    """
+    from scipy.cluster.hierarchy import dendrogram, linkage
+    from scipy.spatial.distance import squareform
+
+    from . import metrics as mt
+
+    samples = [str(s) for s in result.sample_names]
+    kvals = sorted(result.consensus)
+    summ = mt.summary(result)
+    pac_by_k = {int(r.k): float(r.PAC) for r in summ.itertuples()}
+    minclust_by_k = {int(r.k): int(r.min_cluster_size) for r in summ.itertuples()}
+    ks_by_pac = sorted(kvals, key=lambda k: pac_by_k.get(k, 9.0))
+    try:
+        best_both = int(mt.suggest_k(result, min_cluster_size, method="both"))
+    except Exception:
+        best_both = int(k_final)
+
+    stab_by_id_per_k = {}
+    for k, bs in (branch_stability_by_k or {}).items():
+        stab_by_id_per_k[int(k)] = {int(i): float(s)
+                                    for i, s in zip(bs.node_ids, bs.stability)}
+
+    payload = {
+        "samples": samples, "n": len(samples), "kFinal": int(k_final),
+        "minClusterSize": int(min_cluster_size), "bestBoth": best_both,
+        "kCriterion": str(k_criterion),
+        "ks": [{"k": int(k), "pac": round(pac_by_k.get(k, float("nan")), 4),
+                "minClust": minclust_by_k.get(k, 0)} for k in ks_by_pac],
+        "perK": {}, "consensus": {},
+    }
+    for k in kvals:
+        order = [int(i) for i in result.order(k, linkage_method)]
+        labels = [int(x) for x in result.labels(k, linkage_method)]
+        item = mt.item_consensus(result, k)
+        imap = dict(zip(item["sample"].astype(str), item["item_consensus"]))
+        Z = linkage(squareform(result.distance(k), checks=False), method=linkage_method)
+        dend = dendrogram(Z, no_plot=True)
+        payload["perK"][str(k)] = {
+            "order": order, "labels": labels,
+            "item": [_clean(imap.get(s)) for s in samples],
+            "icoord": dend["icoord"], "dcoord": dend["dcoord"],
+        }
+        if int(k) in stab_by_id_per_k:
+            payload["perK"][str(k)]["stability"] = _link_stability(
+                Z, dend, stab_by_id_per_k[int(k)])
+        C = result.consensus[k]
+        payload["consensus"][str(k)] = [
+            [int(round(float(x) * 100)) for x in row] for row in C]
+    return payload
+
+
+def _corr_payload(corr) -> dict:
+    """Convertit les corrélations en JSON, y compris les valeurs nécessaires au
+    nuage de points de la branche ICA."""
+    if not corr or "table" not in corr or not len(corr["table"]):
+        return {}
+    tab, blk = corr["table"], corr.get("block", {})
+    blocks = {}
+    for f in corr.get("features", []):
+        if f in blk:
+            blocks.setdefault(blk[f], []).append(str(f))
+    pairs = [{"a": str(r.var1), "b": str(r.var2),
+              "rho": _clean(round(float(r.rho), 4)), "p": _clean(float(r.pvalue)),
+              "padj": _clean(float(r.padj)), "n": int(r.n)}
+             for r in tab.itertuples()]
+    values = {str(name): [_clean(v) for v in vals]
+              for name, vals in (corr.get("values") or {}).items()}
+    return {"method": corr.get("method", "spearman"), "blocks": blocks,
+            "pairs": pairs, "values": values}
+
+
+def _ica_preanalysis(outdir: Path) -> list[dict]:
+    """Embarque uniquement les cinq diagnostics ICA demandés dans le sous-onglet
+    Pré-analyse > ICA. Les figures de consensus ICA restent dans leurs résultats."""
+    titles = {
+        "ica_index_stability_distribution": "Distribution de l’indice de stabilité",
+        "ica_mean_stability": "Stabilité moyenne",
+        "ica_component_stability": "Stabilité des composantes ICA",
+        "ica_component_mds": "Mise à l’échelle multidimensionnelle des composantes ICA",
+        "ica_metagene_distribution": "Distribution des métagènes",
+    }
+    figdir = Path(outdir) / "figures" / "ica"
+    cards = []
+    if not figdir.exists():
+        return cards
+    for path in sorted(figdir.glob("*.png")):
+        stem = path.stem
+        key = next((k for k in titles if stem.startswith(k)), None)
+        if key:
+            cards.append({"title": titles[key], "img": _b64img(path)})
+    return cards
+
+
+def _ica_payload(ica, outdir: Path, *, linkage_method: str,
+                 min_cluster_size: int, k_criterion: str,
+                 fallback_meta: dict, fallback_meta_types: dict) -> dict:
+    """Construit le payload isolé de la branche ICA avec un état vide sûr."""
+    if not ica or not ica.get("result"):
+        enabled = bool(ica and ica.get("enabled"))
+        message = (
+            "L’ICA était demandée, mais aucun résultat n’a été transmis au rapport. "
+            "Consultez run.log pour l’erreur du pipeline."
+            if enabled else
+            "Branche ICA désactivée pour ce run (run_ica = n). Relancez le pipeline "
+            "avec --run_ica y pour produire les résultats ICA."
+        )
+        return {"status": "not_run", "message": message,
+                "quality": {}, "topDimensions": [], "branches": {},
+                "preAnalysis": []}
+
+    result = ica["result"]
+    scan = getattr(result, "scan_summary", None)
+    scan_rows = []
+    if isinstance(scan, pd.DataFrame):
+        for row in scan.to_dict(orient="records"):
+            scan_rows.append({str(k): _clean(v) for k, v in row.items()})
+    profiles_obj = getattr(result, "stability_profiles", {})
+    if isinstance(profiles_obj, pd.DataFrame):
+        profiles = {
+            str(int(dimension)): [_clean(v) for v in frame.sort_values("component_rank")["stability_index"]]
+            for dimension, frame in profiles_obj.groupby("n_components")
+        }
+    else:
+        profiles = {
+            str(k): [_clean(v) for v in values]
+            for k, values in (profiles_obj or {}).items()
+        }
+    selection = getattr(result, "selection", None)
+    selection_data = {}
+    if selection is not None:
+        selection_data = {str(k): _clean_deep(v) for k, v in vars(selection).items()}
+    top_dimensions = [int(d) for d in getattr(result, "persisted_dimensions", ())]
+    roles_obj = getattr(result, "dimension_roles", {}) or {}
+    dimension_roles = {
+        str(int(dimension)): [str(role) for role in roles]
+        for dimension, roles in roles_obj.items()
+    }
+    params = getattr(result, "params", {}) or {}
+    tested_dimensions = params.get("candidate_dimensions")
+    if tested_dimensions is None and isinstance(scan, pd.DataFrame) and "n_components" in scan:
+        tested_dimensions = scan["n_components"].dropna().astype(int).tolist()
+    payload = {
+        "status": "complete", "message": None,
+        "quality": {
+            "testedDimensions": [int(x) for x in (tested_dimensions or [])],
+            "nRuns": _clean(params.get("n_runs")),
+            "mostStableDimension": int(getattr(result, "mstd")),
+            "topDimensions": top_dimensions,
+            "dimensionRoles": dimension_roles,
+            "scan": scan_rows, "stabilityProfiles": profiles,
+            "selection": selection_data,
+        },
+        "topDimensions": top_dimensions, "branches": {},
+        "preAnalysis": _ica_preanalysis(outdir),
+    }
+
+    for dimension, branch in (ica.get("branches") or {}).items():
+        dim = int(dimension)
+        projection = branch["projection"].copy()
+        projection.index = projection.index.astype(str)
+        component_names = [str(c) for c in projection.columns]
+        stability = branch.get("stability")
+        if isinstance(stability, pd.DataFrame):
+            if {"component", "stability_index"}.issubset(stability.columns):
+                indexed = stability.set_index("component")["stability_index"]
+                comp_stability = [_clean(v) for v in indexed.reindex(component_names)]
+            else:
+                comp_stability = []
+        elif isinstance(stability, pd.Series):
+            comp_stability = [_clean(v) for v in stability.reindex(component_names)]
+        elif stability is None:
+            comp_stability = []
+        else:
+            comp_stability = [_clean(v) for v in stability]
+
+        top_genes = {}
+        metagenes = branch.get("metagenes")
+        if isinstance(metagenes, pd.DataFrame):
+            for component in component_names:
+                if component not in metagenes.index:
+                    continue
+                vals = pd.to_numeric(metagenes.loc[component], errors="coerce")
+                sel = vals.abs().sort_values(ascending=False).head(12).index
+                top_genes[component] = [
+                    {"gene": str(g), "loading": _clean(vals.loc[g])} for g in sel]
+
+        coords = branch.get("coords")
+        embed = {}
+        if isinstance(coords, pd.DataFrame) and "sample" in coords:
+            coord = coords.copy(); coord["sample"] = coord["sample"].astype(str)
+            coord = coord.set_index("sample").reindex(projection.index)
+            for name, (x, y, z) in {"tsne": ("tsne1", "tsne2", "tsne3"),
+                                    "umap": ("umap1", "umap2", "umap3")}.items():
+                if x in coord and y in coord and coord[x].notna().any():
+                    zz = coord[z] if z in coord else pd.Series(0.0, index=coord.index)
+                    embed[name] = [[_clean(a), _clean(b), _clean(c)]
+                                   for a, b, c in zip(coord[x], coord[y], zz)]
+
+        meta, meta_types = fallback_meta, fallback_meta_types
+        branch_meta = branch.get("meta")
+        if isinstance(branch_meta, pd.DataFrame):
+            meta, meta_types = {}, {}
+            m = branch_meta.copy(); m.index = m.index.astype(str)
+            m = m.reindex(projection.index)
+            for variable in map(str, m.columns):
+                col = m[variable]
+                if col.dropna().empty or (not _is_continuous(col) and col.nunique() > 40):
+                    continue
+                if _is_continuous(col):
+                    meta[variable] = [_clean(v) for v in pd.to_numeric(col, errors="coerce")]
+                    meta_types[variable] = "continuous"
+                else:
+                    meta[variable] = [None if pd.isna(v) else str(v) for v in col]
+                    meta_types[variable] = "categorical"
+
+        branch_samples = list(projection.index)
+        payload["branches"][str(dim)] = {
+            "samples": branch_samples, "n": int(len(projection)),
+            "selectionRoles": dimension_roles.get(str(dim), []),
+            "meta": meta, "metaTypes": meta_types,
+            "projection": {
+                "componentNames": component_names,
+                "scores": [[_clean(v) for v in projection.loc[s]] for s in projection.index],
+                "componentStability": comp_stability, "topGenes": top_genes,
+            },
+            "consensus": _consensus_payload(
+                branch["result"], branch["k_final"], linkage_method,
+                min_cluster_size, k_criterion,
+                branch.get("branch_stability_by_k")),
+            "embed": embed, "assoc": branch.get("assoc") or {},
+            "corr": _corr_payload(branch.get("corr")),
+        }
+    return payload
+
+
 def _gather(res, outdir):
     from scipy.cluster.hierarchy import dendrogram, linkage
     from scipy.spatial.distance import squareform
@@ -98,6 +350,7 @@ def _gather(res, outdir):
     result, k_final = res.result, res.k_final
     coords, meta = res.coords, res.meta
     sig_scores, sig_tests, deconv = res.sig_scores, res.sig_tests, res.deconv
+    sig_provenance = res.sig_provenance
     degsea_by_k, branch_stability_by_k = res.degsea_by_k, res.branch_stability_by_k
     linkage_method, min_cluster_size, k_criterion = (
         res.linkage_method, res.min_cluster_size, res.k_criterion)
@@ -152,12 +405,20 @@ def _gather(res, outdir):
         C = result.consensus[k]
         data["consensus"][str(k)] = [[int(round(float(x) * 100)) for x in row] for row in C]
 
-    # signatures (signatures × échantillons)
+    # signatures (signatures × échantillons). `sources` = collection d'origine
+    # (source du signature_sources : IPRES / sigGeNeHetX / select…) alignée sur
+    # `names` -> permet au rapport de regrouper les signatures par collection.
+    sig_src_map = {}
+    if sig_provenance is not None and len(sig_provenance):
+        sig_src_map = {str(s): str(src) for s, src in
+                       zip(sig_provenance["signature"], sig_provenance["source"])}
     data["signatures"] = {}
     for method, df in (sig_scores or {}).items():
         df = df.reindex(columns=samples)
+        names = [str(x) for x in df.index]
         data["signatures"][method] = {
-            "names": [str(x) for x in df.index],
+            "names": names,
+            "sources": [sig_src_map.get(nm, "") for nm in names],
             "values": [[_clean(v) for v in df.loc[nm]] for nm in df.index],
         }
 
@@ -267,19 +528,15 @@ def _gather(res, outdir):
     data["assoc"] = res.assoc or {}
 
     # 9b corrélations : table précalculée complète (heatmap bloc×bloc + scatter)
-    corr = res.corr
-    data["corr"] = {}
-    if corr and "table" in corr and len(corr["table"]):
-        tab, blk = corr["table"], corr["block"]
-        blocks = {}
-        for f in corr["features"]:
-            blocks.setdefault(blk[f], []).append(str(f))
-        pairs = [{"a": str(r.var1), "b": str(r.var2),
-                  "rho": _clean(round(float(r.rho), 4)), "p": _clean(float(r.pvalue)),
-                  "padj": _clean(float(r.padj)), "n": int(r.n)}
-                 for r in tab.itertuples()]
-        data["corr"] = {"method": corr.get("method", "spearman"),
-                        "blocks": blocks, "pairs": pairs}
+    data["corr"] = _corr_payload(res.corr)
+
+    # Branche ICA : payload séparé, même si l'ICA n'a pas été activée. Ainsi le
+    # rapport garde une structure stable et peut afficher un état vide explicite.
+    data["ica"] = _ica_payload(
+        res.ica, outdir, linkage_method=linkage_method,
+        min_cluster_size=min_cluster_size, k_criterion=k_criterion,
+        fallback_meta=data["meta"], fallback_meta_types=data["metaTypes"],
+    )
     return data
 
 

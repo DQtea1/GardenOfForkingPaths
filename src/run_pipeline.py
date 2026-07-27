@@ -23,24 +23,19 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import catassoc as ca
-from src import consensus as cc
-from src import correlate as co
 from src import deconv as dc
 from src import degsea as dg
-from src import embedding as emb
-from src import metrics as mt
+from src import ica as ic
 from src import plots as pl
 from src import preprocessing as pp
 from src import purity as pur
 from src import report as rp
 from src import sigproj as sp
-from src import stability as st
+from src.analysis_branch import AnalysisBranch, BranchPaths, BranchSettings
 from src.results import PipelineResults
 
 
@@ -85,6 +80,40 @@ def build_parser() -> argparse.ArgumentParser:
                           "variance expliquée dépasse ce seuil (fraction ]0,1[ ; "
                           "8 = 8 %%). Prioritaire sur --outlier_n_pc.")
 
+    ica_g = p.add_argument_group("ICA stabilisée (branche parallèle)")
+    ica_g.add_argument("--run_ica", choices=["y", "n"], default="y",
+                       help="'y' (défaut) : exécute la branche ICA stabilisée indépendante "
+                            "après le prétraitement ; 'n' la désactive. Nécessite "
+                            "`pip install stabilized-ica`.")
+    ica_g.add_argument("--ica_n_components_min", type=int, default=6,
+                       help="nombre minimal de composantes ICA à évaluer (MSTD).")
+    ica_g.add_argument("--ica_n_components_max", type=int, default=10,
+                       help="nombre maximal de composantes ICA à évaluer (MSTD).")
+    ica_g.add_argument("--ica_n_components_step", type=int, default=1,
+                       help="pas entre deux dimensions ICA testées (défaut 2).")
+    ica_g.add_argument("--ica_n_runs", type=int, default=100,
+                       help="nombre d'exécutions FastICA par dimension pour estimer la stabilité.")
+    ica_g.add_argument("--ica_top_dimensions", type=int, default=4,
+                       help="nombre maximal de branches ICA sauvegardées (1–4 ; défaut 4) : "
+                            "MSTD, voisin inférieur, voisin supérieur, puis meilleure "
+                            "stabilité moyenne.")
+    ica_g.add_argument("--ica_algorithm", default="fastica_par",
+                       choices=["fastica_par", "fastica_def", "picard_fastica", "picard",
+                                "picard_ext", "picard_orth"],
+                       help="solveur de stabilized-ica (défaut FastICA parallèle).")
+    ica_g.add_argument("--ica_fun", default="logcosh", choices=["logcosh", "exp", "cube", "tanh"],
+                       help="non-linéarité de l'ICA stabilisée (défaut logcosh).")
+    ica_g.add_argument("--ica_resampling", default="none",
+                       choices=["none", "bootstrap", "fast_bootstrap"],
+                       help="rééchantillonnage interne stabilized-ica ; 'none' est le défaut.")
+    ica_g.add_argument("--ica_max_iter", type=int, default=2000,
+                       help="itérations maximales du solveur ICA (défaut 2000).")
+    ica_g.add_argument("--ica_deterministic", choices=["y", "n"], default="y",
+                       help="'y' force les fits ICA en série pour une graine reproductible ; "
+                            "'n' autorise le parallélisme interne, moins déterministe.")
+    ica_g.add_argument("--ica_k_final", type=int, default=None,
+                       help="k imposé pour le consensus sur les projections ICA ; sinon sélection auto indépendante.")
+
     pur_g = p.add_argument_group("pureté tumorale (PUREE)")
     pur_g.add_argument("--purity_threshold", default="0",
                        help="seuil de pureté dans ]0,1[ pour filtrer les tumeurs. "
@@ -102,8 +131,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="type d'identifiant des gènes de la matrice d'entrée.")
 
     con = p.add_argument_group("consensus clustering")
-    con.add_argument("--k-min", type=int, default=2)
-    con.add_argument("--k-max", type=int, default=8)
+    con.add_argument("--k-min", type=int, default=3)
+    con.add_argument("--k-max", type=int, default=6)
     con.add_argument("--n-resamples", type=int, default=1000)
     con.add_argument("--prop-samples", type=float, default=0.8)
     con.add_argument("--prop-genes", type=float, default=0.8)
@@ -342,26 +371,20 @@ from dataclasses import dataclass, field
 
 @dataclass
 class _Ctx:
-    """État partagé du run : chaque étape lit/écrit ses champs (cf. results.PipelineResults)."""
+    """État d'orchestration : entrées, branche principale et sorties spécialisées."""
     args: object; log: object; outdir: Path; t_start: float; eff_n_jobs: int
     raw: object = None
     X_df: object = None
-    result: object = None
-    k_final: object = None
-    labels: object = None
-    items: object = None
-    coords: object = None
-    color_var: object = None
+    metadata: object = None
+    primary: AnalysisBranch | None = None
     nes: object = None
-    bs: object = None
     sig_scores: object = None
+    sig_provenance: object = None
     sig_tests: object = None
-    assoc: object = None
-    corr: object = None
-    k_values: tuple = ()
-    bs_by_k: dict = field(default_factory=dict)
+    ica_result: object = None
     degsea_by_k: dict = field(default_factory=dict)
     deconv: dict = field(default_factory=dict)
+    ica_branches: dict = field(default_factory=dict)
 
 
 def _setup(argv) -> _Ctx:
@@ -424,6 +447,16 @@ def _load_data(c: _Ctx) -> None:
     c.raw, c.X_df = raw, X_df
 
 
+def _load_metadata(c: _Ctx) -> None:
+    """Charge une fois les métadonnées et normalise les identifiants échantillon."""
+    if not c.args.metadata:
+        c.metadata = None
+        return
+    metadata = pd.read_csv(c.args.metadata, sep=None, engine="python", index_col=0)
+    metadata.index = metadata.index.astype(str)
+    c.metadata = metadata
+
+
 def _purity_filter(c: _Ctx) -> None:
     args, log, outdir = c.args, c.log, c.outdir
     raw, X_df = c.raw, c.X_df
@@ -478,147 +511,118 @@ def _outlier_filter(c: _Ctx) -> None:
     c.X_df = X_df
 
 
-def _consensus(c: _Ctx) -> None:
-    args, eff_n_jobs = c.args, c.eff_n_jobs
-    X_df = c.X_df
-    # ------------------------------------------------- 2. consensus clustering
-    k_values = tuple(range(args.k_min, args.k_max + 1))
-    result = cc.consensus_clustering(
-        X_df.values,
-        k_values=k_values,
-        n_resamples=args.n_resamples,
-        prop_samples=args.prop_samples,
-        prop_genes=args.prop_genes,
-        sample_mode=args.sample_mode,
-        gene_mode=args.gene_mode,
-        base=args.base,
-        metric=args.metric,
-        linkage_method=args.linkage,
-        sample_names=X_df.index.values,
-        random_state=args.seed,
-        n_jobs=eff_n_jobs,
-    )
-    c.k_values, c.result = k_values, result
+def _ica(c: _Ctx) -> None:
+    """Branche ICA indépendante, démarrée sur la matrice prétraitée.
 
-
-def _diagnostics_k(c: _Ctx) -> None:
-    args, log, outdir = c.args, c.log, c.outdir
-    result, k_values = c.result, c.k_values
-    # ------------------------------------------------------- 3. diagnostics k
-    tab = mt.summary(result)
-    tab.to_csv(outdir / "tables" / "k_selection.csv", index=False)
-    log.info("Diagnostics par k :\n%s", tab.to_string(index=False))
-
-    if args.k_final:
-        k_final, reason = args.k_final, "(imposé)"
-    else:
-        k_final = mt.suggest_k(result, args.min_cluster_size, method=args.k_criterion)
-        reason = f"(auto, critère : {args.k_criterion})"
-    log.info("k retenu : %d %s", k_final, reason)
-
-    pl.plot_cdf(result, outdir / "figures")
-    pl.plot_tracking(result, outdir / "figures")
-    for k in k_values:
-        pl.plot_consensus_heatmap(result, k, outdir / "figures", args.linkage)
-    c.k_final = k_final
-
-
-def _partition(c: _Ctx) -> None:
-    args, outdir = c.args, c.outdir
-    result, k_final = c.result, c.k_final
-    # --------------------------------------------------- 4. partition finale
-    labels = result.labels(k_final, args.linkage)
-    items = mt.item_consensus(result, k_final)
-    sil = mt.silhouette_per_sample(result, k_final)
-    assign = (
-        items.merge(sil[["sample", "silhouette"]], on="sample")
-        .sort_values(["cluster", "item_consensus"], ascending=[True, False])
-    )
-    assign.to_csv(outdir / "tables" / f"cluster_assignments_k{k_final}.csv", index=False)
-    mt.cluster_consensus(result, k_final).to_csv(
-        outdir / "tables" / f"cluster_consensus_k{k_final}.csv", index=False)
-    pl.plot_item_consensus(items, outdir / "figures", k_final)
-
-    np.save(outdir / f"consensus_matrix_k{k_final}.npy", result.consensus[k_final])
-    pd.DataFrame(result.distance(k_final), index=result.sample_names,
-                 columns=result.sample_names).to_csv(
-        outdir / "tables" / f"consensus_distance_k{k_final}.csv.gz", compression="gzip")
-    c.labels, c.items = labels, items
-
-
-def _branch_stability(c: _Ctx) -> None:
+    Elle ne lit ni n'écrit aucun résultat du consensus clustering principal :
+    `run_ica` détermine d'abord la MSTD, conserve ses deux voisines testées et
+    la meilleure stabilité moyenne, puis `_run_ica_branches` les analyse avec
+    le flux commun.
+    """
     args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
-    X_df, result, k_values, labels, k_final = c.X_df, c.result, c.k_values, c.labels, c.k_final
-    # ------------------------------------ 4b. stabilité des branches (Jaccard)
-    bs = None
-    bs_by_k = {}
-    if args.compute_jaccard == "y":
-        # calculée pour TOUS les k (arbres bootstrap partagés -> coût ~ un seul k),
-        # pour que le rapport affiche la stabilité sur l'arbre de n'importe quel k
-        bs_by_k = st.branch_stability_multi(
-            X_df.values, {k: result.distance(k) for k in k_values},
-            n_resamples=args.n_resamples,
-            gene_mode="bootstrap", prop_genes=1.0,
-            metric=args.metric, linkage_method=args.linkage,
-            min_size=2, random_state=args.seed, n_jobs=eff_n_jobs,
-        )
-        bs = bs_by_k[k_final]
-        bs_tab = bs.to_frame(sample_names=result.sample_names, final_labels=labels)
-        bs_tab.to_csv(outdir / "tables" / f"branch_stability_k{k_final}.csv", index=False)
-        pl.plot_branch_stability(bs, outdir / "figures", k_final)
-        n_stable = int((bs_tab["stability"] >= 0.75).sum())
-        finals = bs_tab.loc[bs_tab["is_final_cluster"], ["branch_id", "size", "stability"]]
-        log.info(
-            "Stabilité Jaccard : %d/%d branches stables (>= 0,75). "
-            "Clusters finaux (k=%d) :\n%s",
-            n_stable, len(bs_tab), k_final,
-            finals.to_string(index=False) if len(finals) else "(aucun cluster == branche)",
-        )
-    c.bs, c.bs_by_k = bs, bs_by_k
+    if args.run_ica != "y":
+        log.info("1c. ICA stabilisée désactivée (run_ica = n).")
+        return
 
-
-def _embeddings(c: _Ctx) -> None:
-    args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
-    result, k_final, labels, items = c.result, c.k_final, c.labels, c.items
-    # ----------------------------------------------------- 5. t-SNE et UMAP
-    D = result.distance(k_final)
-    coords = emb.embeddings_table(
-        D, result.sample_names, labels,
-        run_umap=not args.no_umap,
-        n_components=args.tsne_dim,
-        perplexity=args.perplexity,
-        n_neighbors=args.n_neighbors,
-        min_dist=args.min_dist,
-        random_state=args.seed,
-        n_jobs=eff_n_jobs,
+    log.info(
+        "1c. ICA stabilisée : dimensions %d..%d (pas %d), %d runs/dimension…",
+        args.ica_n_components_min, args.ica_n_components_max,
+        args.ica_n_components_step, args.ica_n_runs,
     )
-    coords = coords.merge(items[["sample", "item_consensus"]], on="sample")
-    coords.to_csv(outdir / "tables" / f"embeddings_k{k_final}.csv", index=False)
+    c.ica_result = ic.run_ica(
+        c.X_df, outdir,
+        min_components=args.ica_n_components_min,
+        max_components=args.ica_n_components_max,
+        step=args.ica_n_components_step,
+        n_runs=args.ica_n_runs,
+        top_n_dimensions=args.ica_top_dimensions,
+        algorithm=args.ica_algorithm,
+        fun=args.ica_fun,
+        resampling=None if args.ica_resampling == "none" else args.ica_resampling,
+        max_iter=args.ica_max_iter,
+        n_jobs=eff_n_jobs,
+        random_state=args.seed,
+        deterministic=(args.ica_deterministic == "y"),
+    )
+    log.info(
+        "ICA stabilisée terminée : MSTD=%d ; dimensions sauvegardées=%s",
+        c.ica_result.mstd, list(c.ica_result.persisted_dimensions),
+    )
 
-    # 2D -> PNG statiques ; 3D -> HTML interactifs (rotation, survol = ID tumeur)
-    plot_emb = pl.plot_embeddings_3d if args.tsne_dim == 3 else pl.plot_embeddings
-    plot_emb(coords, outdir / "figures", k_final)
-    plot_emb(coords, outdir / "figures", k_final,
-             color_by=coords["item_consensus"], color_label="item consensus")
 
-    # superposition d'une variable clinique (contrôle des confondants)
-    color_var = None
-    if args.metadata and args.color_by:
-        meta = pd.read_csv(args.metadata, sep=None, engine="python", index_col=0)
-        var = meta.reindex(result.sample_names)[args.color_by]
-        color_var = var.to_numpy()
-        plot_emb(coords, outdir / "figures", k_final,
-                 color_by=var.reset_index(drop=True),
-                 color_label=args.color_by)
-        ct = pd.crosstab(labels, var.values)
-        ct.to_csv(outdir / "tables" / f"crosstab_{args.color_by}_k{k_final}.csv")
-        log.info("Croisement cluster x %s :\n%s", args.color_by, ct.to_string())
-    c.coords, c.color_var = coords, color_var
+def _run_ica_branches(c: _Ctx) -> None:
+    """Lance le flux commun pour chacune des projections ICA persistées."""
+    if c.ica_result is None:
+        return
+
+    settings = BranchSettings.from_args(c.args, n_jobs=c.eff_n_jobs)
+    for dimension in c.ica_result.persisted_dimensions:
+        dec = c.ica_result.decompositions[int(dimension)]
+        paths = BranchPaths(
+            root=c.outdir,
+            table_dir=c.outdir / "tables" / "ica" / f"m{dimension}",
+            figure_dir=c.outdir / "figures" / "ica" / f"m{dimension}",
+            consensus_matrix_dir=c.outdir / "tables" / "ica" / f"m{dimension}",
+            output_subdir=f"ica/m{dimension}",
+        )
+        branch = AnalysisBranch(
+            name=f"ICA m={dimension}",
+            matrix=dec.metasamples,
+            paths=paths,
+            settings=settings,
+            metadata=c.metadata,
+            forced_k=c.args.ica_k_final,
+            forced_k_name="ica_k_final",
+            input_export_name="ica_projection.csv",
+            logger=c.log,
+        ).run(
+            run_associations=True,
+            run_correlations=True,
+            correlation_extra_features=dec.metasamples,
+            correlation_prefix="ica",
+        )
+        c.ica_branches[int(dimension)] = {
+            "projection": branch.matrix,
+            "stability": dec.stability.copy(),
+            "metagenes": dec.metagenes,
+            "result": branch.result,
+            "k_values": branch.k_values,
+            "k_final": int(branch.k_final),
+            "labels": branch.labels,
+            "items": branch.items,
+            "coords": branch.coords,
+            "meta": branch.aligned_metadata(),
+            "color_var": branch.color_var,
+            "assoc": branch.assoc,
+            "corr": branch.corr,
+            "branch_stability_by_k": branch.branch_stability_by_k,
+        }
+
+
+def _run_primary_branch(c: _Ctx) -> None:
+    """Lance la branche historique via le même flux que les branches ICA."""
+    paths = BranchPaths(
+        root=c.outdir,
+        table_dir=c.outdir / "tables",
+        figure_dir=c.outdir / "figures",
+        consensus_matrix_dir=c.outdir,
+    )
+    c.primary = AnalysisBranch(
+        name="Consensus Clustering",
+        matrix=c.X_df,
+        paths=paths,
+        settings=BranchSettings.from_args(c.args, n_jobs=c.eff_n_jobs),
+        metadata=c.metadata,
+        forced_k=c.args.k_final,
+        logger=c.log,
+    ).run(run_associations=True)
 
 
 def _degsea(c: _Ctx) -> None:
     args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
-    raw, result, k_values, k_final = c.raw, c.result, c.k_values, c.k_final
+    branch = c.primary
+    raw, result = c.raw, branch.result
+    k_values, k_final = branch.k_values, branch.k_final
     # ------------------------------------------------ 6. DEGSEA (DESeq2 + GSEA)
     nes = None
     nes_by_coll = {}
@@ -665,10 +669,12 @@ def _degsea(c: _Ctx) -> None:
 
 def _signatures(c: _Ctx) -> None:
     args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
-    raw, result, k_values = c.raw, c.result, c.k_values
+    branch = c.primary
+    raw, result, k_values = c.raw, branch.result, branch.k_values
     # ------------------------------------------ 7. projection de signatures
     sig_scores = None
     sig_tests = None
+    prov = None
     if args.compute_signatures == "y":
         # sources harmonisées : signature_sources du YAML, sinon une source .gmt
         # unique (signatures_gmt / load_signatures_select / gsea_gene_sets).
@@ -691,10 +697,7 @@ def _signatures(c: _Ctx) -> None:
                         index=False)
             sub = raw.loc[result.sample_names]
             expr_full = sub if args.already_normalized else pp.log_cpm(sub)
-            meta_full = None
-            if args.metadata:
-                meta_full = pd.read_csv(args.metadata, sep=None, engine="python",
-                                        index_col=0).reindex(result.sample_names)
+            meta_full = branch.aligned_metadata()
             sig_scores = sp.run_signature_projection(
                 expr_full, signatures, meta_full, outdir,
                 corr_method=args.sig_corr_method, top_n=args.sig_top_n,
@@ -717,12 +720,13 @@ def _signatures(c: _Ctx) -> None:
                          outdir / "tables" / "signatures" / "signature_group_tests.csv")
             log.info("Projection de signatures terminée : tables dans %s",
                      outdir / "tables" / "signatures")
-    c.sig_scores, c.sig_tests = sig_scores, sig_tests
+    c.sig_scores, c.sig_tests, c.sig_provenance = sig_scores, sig_tests, prov
 
 
 def _deconvolution(c: _Ctx) -> None:
     args, log, outdir = c.args, c.log, c.outdir
-    raw, result, labels = c.raw, c.result, c.labels
+    branch = c.primary
+    raw, result, labels = c.raw, branch.result, branch.labels
     # ------------------------------------------------- 8. déconvolution (R)
     deconv = {}
     if args.run_deconv == "y":
@@ -745,77 +749,47 @@ def _deconvolution(c: _Ctx) -> None:
     c.deconv = deconv
 
 
-def _chi2(c: _Ctx) -> None:
-    args, log, outdir = c.args, c.log, c.outdir
-    result, k_values, k_final = c.result, c.k_values, c.k_final
-    # ------------------ 9a. khi² d'indépendance (cluster/clinique catégoriel)
-    assoc = None
-    if args.run_chi2 == "y" and args.metadata:
-        meta_chi = pd.read_csv(args.metadata, sep=None, engine="python",
-                               index_col=0).reindex(result.sample_names)
-        cluster_labels_by_k = {k: result.labels(k, args.linkage) for k in k_values}
-        assoc = ca.run_categorical_association(
-            cluster_labels_by_k, meta_chi, result.sample_names, outdir, k_final,
-            ordinal=args.ordinal_variables,
-            mc_resamples=args.chi2_mc_resamples, seed=args.seed)
-    elif args.run_chi2 == "y":
-        log.info("9a. Khi² : pas de métadonnées (--metadata) — étape sautée.")
-    c.assoc = assoc
-
-
 def _correlations(c: _Ctx) -> None:
-    args, outdir = c.args, c.outdir
-    sig_scores, deconv, result = c.sig_scores, c.deconv, c.result
-    # ------------------ 9b. corrélations entre variables continues (patient)
-    corr = None
-    if args.run_correlations == "y":
-        meta_corr = None
-        if args.metadata:
-            meta_corr = pd.read_csv(args.metadata, sep=None, engine="python",
-                                    index_col=0).reindex(result.sample_names)
-        corr = co.run_correlations(
-            sig_scores, deconv or None, meta_corr, result.sample_names, outdir,
-            method=args.corr_method, all_pairs=(args.corr_all_pairs == "y"))
-    c.corr = corr
+    """Complète la branche historique une fois signatures/déconv disponibles."""
+    c.primary.run_correlations(sig_scores=c.sig_scores, deconv=c.deconv or None)
 
 
 def _synthesis(c: _Ctx) -> None:
     args, log, outdir = c.args, c.log, c.outdir
-    result, k_final, bs, items, color_var, nes = c.result, c.k_final, c.bs, c.items, c.color_var, c.nes
+    branch = c.primary
     # ------------------------------- 9. figure de synthèse (tout combiné)
     pl.plot_cluster_overview(
-        result, k_final, outdir / "figures", linkage_method=args.linkage,
-        branch_stability=bs, items=items,
-        color_by=color_var, color_label=args.color_by or "color_by",
-        nes=nes,
+        branch.result, branch.k_final, outdir / "figures", linkage_method=args.linkage,
+        branch_stability=branch.branch_stability, items=branch.items,
+        color_by=branch.color_var, color_label=args.color_by or "color_by",
+        nes=c.nes,
     )
-    log.info("Figure de synthèse : cluster_overview_k%d.png", k_final)
+    log.info("Figure de synthèse : cluster_overview_k%d.png", branch.k_final)
 
 
 def _report(c: _Ctx) -> None:
     args, log, outdir = c.args, c.log, c.outdir
-    result, k_final, coords, sig_scores, sig_tests, deconv, degsea_by_k, bs_by_k, assoc, corr = c.result, c.k_final, c.coords, c.sig_scores, c.sig_tests, c.deconv, c.degsea_by_k, c.bs_by_k, c.assoc, c.corr
+    branch = c.primary
     # ------------------------------ 10. rapport d'analyse HTML interactif
     if args.create_report == "y":
-        report_meta = None
-        if args.metadata:
-            report_meta = pd.read_csv(args.metadata, sep=None, engine="python",
-                                      index_col=0).reindex(result.sample_names)
         results = PipelineResults(
-            result=result, k_final=k_final, linkage_method=args.linkage,
+            result=branch.result, k_final=branch.k_final, linkage_method=args.linkage,
             min_cluster_size=args.min_cluster_size, k_criterion=args.k_criterion,
-            coords=coords, meta=report_meta, sig_scores=sig_scores,
-            sig_tests=sig_tests, deconv=(deconv or None),
-            degsea_by_k=(degsea_by_k or None),
-            branch_stability_by_k=(bs_by_k or None),
-            assoc=(assoc or None), corr=(corr or None))
+            coords=branch.coords, meta=branch.aligned_metadata(), sig_scores=c.sig_scores,
+            sig_provenance=c.sig_provenance,
+            sig_tests=c.sig_tests, deconv=(c.deconv or None),
+            degsea_by_k=(c.degsea_by_k or None),
+            branch_stability_by_k=(branch.branch_stability_by_k or None),
+            assoc=(branch.assoc or None), corr=(branch.corr or None),
+            ica={"result": c.ica_result, "branches": c.ica_branches,
+                 "enabled": args.run_ica == "y"})
         rp.build_report(results, outdir)
         log.info("Rapport d'analyse : %s", outdir / "report.html")
 
 
 def _save(c: _Ctx) -> None:
     args, log, outdir, t_start = c.args, c.log, c.outdir, c.t_start
-    k_final = c.k_final
+    k_final = c.primary.k_final
     # --------------------------------------------- 11. sauvegarde du run
     with open(outdir / "run_params.json", "w") as fh:
         json.dump({**vars(args), "outdir": str(args.outdir), "k_final": k_final},
@@ -827,19 +801,18 @@ def _save(c: _Ctx) -> None:
 
 
 def main(argv=None) -> int:
+    """Orchestre les dépendances entre entrées, branches et enrichissements."""
     c = _setup(argv)
     _load_data(c)
     _purity_filter(c)
     _outlier_filter(c)
-    _consensus(c)
-    _diagnostics_k(c)
-    _partition(c)
-    _branch_stability(c)
-    _embeddings(c)
+    _load_metadata(c)
+    _ica(c)
+    _run_ica_branches(c)
+    _run_primary_branch(c)
     _degsea(c)
     _signatures(c)
     _deconvolution(c)
-    _chi2(c)
     _correlations(c)
     _synthesis(c)
     _report(c)

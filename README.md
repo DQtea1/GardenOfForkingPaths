@@ -18,7 +18,9 @@ calculée **à partir de la distance consensus**, pas de l'expression brute.
     ├── null_check.py                # contrôle par modèle nul — à ne pas sauter
     ├── make_demo_data.py            # 500 tumeurs simulées, 4 sous-types + atypiques
     ├── requirements.txt
+    ├── analysis_branch.py            # flux partagé : consensus, k, embeddings et clinique
     ├── preprocessing.py             # filtrage, VST/logCPM, gènes variables, centrage, outliers ACP
+    ├── ica.py                       # ICA stabilisée : scan MSTD, métagènes et projections
     ├── purity.py                    # pureté tumorale (PUREE) + filtrage
     ├── consensus.py                 # cœur : rééchantillonnage + matrice consensus
     ├── metrics.py                   # CDF, Δ(K), PAC, item/cluster consensus, silhouette
@@ -130,6 +132,40 @@ et `figures/pca_outliers.png` (PC1 vs PC2, tumeurs retirées annotées). Un seui
 trop bas (< 3) sur des tumeurs atypiques risque d'éliminer les cas
 intermédiaires les plus intéressants plutôt que de vrais artefacts techniques —
 regarde la figure avant de figer le seuil.
+
+## ICA stabilisée — branche parallèle
+
+`run_ica: y` (valeur par défaut) active une branche indépendante juste après le
+prétraitement ; `run_ica: n` la désactive. Elle
+applique `stabilized-ica` à la matrice `tumeurs × gènes`, balaie
+`ica_n_components_min..ica_n_components_max` avec le pas
+`ica_n_components_step`, puis estime la **MSTD** (*Most Stable Transcriptome
+Dimension*) à partir des profils de stabilité. Les quatre rôles de sélection
+sont, dans cet ordre : la MSTD, la dimension testée immédiatement inférieure,
+la dimension testée immédiatement supérieure et la dimension ayant la meilleure
+stabilité moyenne. Les doublons sont fusionnés, ce qui peut produire moins de
+quatre projections aux bornes de la grille. `ica_top_dimensions` fixe le nombre
+maximal de ces rôles (4 par défaut). Chaque projection retenue alimente son
+propre consensus clustering, ses embeddings et ses associations/corrélations,
+sans réutiliser les résultats du consensus principal.
+
+```yaml
+run_ica: y
+ica_n_components_min: 6
+ica_n_components_max: 30
+ica_n_components_step: 2
+ica_n_runs: 100
+ica_top_dimensions: 4
+```
+
+Les cinq diagnostics (distribution des indices, stabilité moyenne, stabilité des
+composantes, MDS des composantes et distributions des métagènes) sont écrits
+sous `figures/ica/` et apparaissent dans **Pré-analyse → ICA** du rapport. Par
+défaut `ica_deterministic: y` privilégie la reproductibilité et force les fits
+ICA en série ; passer à `n` autorise le parallélisme interne de `stabilized-ica`.
+Avec `ica_resampling: none` (défaut), le scan reprend le whitening PCA unique de
+la procédure MSTD de référence ; les variantes bootstrap emploient un whitening
+par rééchantillonnage, signalé dans les paramètres exportés.
 
 ## Ce que fait le rééchantillonnage double
 
@@ -296,7 +332,7 @@ dépendance, aucun accès réseau) qui agrège tous les résultats. Les heatmaps
 dessinées en **canvas partageant l'ordre des patients**, d'où des panneaux
 **empilables et alignés** au niveau des tumeurs / clusters / signatures.
 
-- **Onglet Résultats** — *Non-supervisé* : heatmap de la matrice de consensus, k
+- **Onglet Résultats Consensus-Clustering** — *Consensus Clustering* : heatmap de la matrice de consensus, k
   choisi dans un menu **trié par PAC croissant** (score affiché) ; boutons `+`
   pour ajouter au-dessus/en-dessous des panneaux alignés (arbre consensus, barre
   de clusters, item consensus, variables cliniques, heatmap de signatures,

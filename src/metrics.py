@@ -139,13 +139,25 @@ def summary(result: ConsensusResult, pac_bounds: tuple[float, float] = (0.1, 0.9
 
 
 def silhouette_per_sample(result: ConsensusResult, k: int) -> pd.DataFrame:
+    """Silhouette par échantillon, ou ``NaN`` si la partition est dégénérée.
+
+    Une matrice de consensus peu rééchantillonnée ou très homogène peut conduire
+    à une seule étiquette effective malgré un ``k`` demandé. La silhouette n'est
+    alors pas définie ; renvoyer des valeurs manquantes permet aux branches
+    principale et ICA de conserver leurs autres diagnostics et leurs exports.
+    """
     D = result.distance(k)
     labels = result.labels(k)
+    try:
+        values = silhouette_samples(D, labels, metric="precomputed")
+    except ValueError as exc:
+        logger.warning("Silhouette par échantillon indisponible pour k=%d : %s", k, exc)
+        values = np.full(len(labels), np.nan)
     return pd.DataFrame(
         {
             "sample": result.sample_names,
             "cluster": labels,
-            "silhouette": silhouette_samples(D, labels, metric="precomputed"),
+            "silhouette": values,
         }
     )
 

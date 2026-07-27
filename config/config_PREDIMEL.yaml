@@ -42,6 +42,24 @@ outlier_sd_threshold: 3       # ACP + retrait des tumeurs à > N SD sur une CP ;
 outlier_n_pc: 5               # nombre de composantes inspectées pour la détection d'outliers
 outlier_min_explained_var: 0.0  # si > 0 : inspecte les CP à variance expliquée > seuil (0.08 = 8 %) au lieu de n_pc
 
+# ================================================= 1c · ICA stabilisée (branche parallèle)
+# Branche indépendante du consensus clustering : évalue la MSTD, sauvegarde la
+# MSTD, ses dimensions testées voisines inférieure/supérieure et la meilleure
+# stabilité moyenne, puis applique consensus/embeddings/associations sur chaque
+# projection ICA. Nécessite : pip install stabilized-ica
+run_ica: y
+ica_n_components_min: 6       # borne basse de la fourchette MSTD
+ica_n_components_max: 12      # borne haute de la fourchette MSTD
+ica_n_components_step: 1      # pas entre dimensions testées
+ica_n_runs: 25                # FastICA répétées par dimension (stabilité)
+ica_top_dimensions: 4         # maximum 1–4 : MSTD, ↓ voisin, ↑ voisin, ~ meilleure stabilité moyenne
+ica_algorithm: picard_    # fastica_par | fastica_def | picard_*
+ica_fun: logcosh              # logcosh | exp | cube | tanh
+ica_resampling: none          # none | bootstrap | fast_bootstrap
+ica_max_iter: 5000
+ica_deterministic: y          # y = reproductible (n_jobs ICA forcé à 1) ; n = plus rapide, non déterministe
+ica_k_final: null             # null = sélection automatique, sinon k imposé pour l'ICA
+
 # ================================================= 2 · Consensus clustering (+ choix de k)
 k_min: 3
 k_max: 6

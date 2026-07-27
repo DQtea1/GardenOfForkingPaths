@@ -32,9 +32,11 @@ class PipelineResults:
     coords: Any = None                           # embeddings t-SNE / UMAP (DataFrame)
     meta: Any = None                             # métadonnées cliniques (DataFrame)
     sig_scores: dict | None = None               # {"ssgsea": df, "mean": df}
+    sig_provenance: Any = None                    # DataFrame signature -> source (collection d'origine)
     sig_tests: dict | None = None                # tests de Wilcoxon (7.2bis)
     deconv: dict | None = None                   # {méthode: df types × tumeurs}
     degsea_by_k: dict | None = None              # {k: {collection: matrice NES}}
     branch_stability_by_k: dict | None = None    # {k: stability.BranchStability}
     assoc: dict | None = None                    # khi² (9a) prêt pour le rapport
     corr: dict | None = None                     # corrélations (9b) prêtes pour le rapport
+    ica: dict | None = None                      # branche ICA indépendante, prête pour le rapport
