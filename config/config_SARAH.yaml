@@ -18,7 +18,7 @@ counts: /mnt/d/03_SARAH_projet/00_DATA/01_BULK/01_MERGED_BULKS/00_Unfiltered/RNA
 samples_in_rows: false        # true si les échantillons sont en lignes
 metadata: /mnt/d/03_SARAH_projet/00_DATA/02_CLINIC/data_quentin.csv                # csv/tsv indexé par échantillon (annotations cliniques)
 color_by: histo_classe                # colonne des métadonnées à superposer sur les embeddings
-outdir: /mnt/d/03_SARAH_projet/01_OUTPUTS/ConsensusClustering/V2           # dossier de sortie
+outdir: /mnt/d/03_SARAH_projet/01_OUTPUTS/ConsensusClustering/V3           # dossier de sortie
 
 # ================================================= 1 · Prétraitement (normalisation, gènes variables)
 already_normalized: false     # true si entrée déjà en VST/rlog/logCPM (saute filtrage + normalisation)
@@ -39,7 +39,7 @@ puree_gene_id: HGNC           # HGNC (symboles) | ENSEMBL
 
 # ================================================= 1b · Filtrage d'outliers (ACP)
 outlier_sd_threshold: 3       # ACP + retrait des tumeurs à > N SD sur une CP ; 0 = aucun retrait
-outlier_n_pc: 5               # nombre de composantes inspectées pour la détection d'outliers
+outlier_n_pc: 3               # nombre de composantes inspectées pour la détection d'outliers
 outlier_min_explained_var: 0.0  # si > 0 : inspecte les CP à variance expliquée > seuil (0.08 = 8 %) au lieu de n_pc
 
 # ================================================= 1c · ICA stabilisée (branche parallèle)
@@ -49,10 +49,10 @@ outlier_min_explained_var: 0.0  # si > 0 : inspecte les CP à variance expliqué
 # projection ICA. Nécessite : pip install stabilized-ica
 run_ica: y
 ica_n_components_min: 6       # borne basse de la fourchette MSTD
-ica_n_components_max: 30      # borne haute de la fourchette MSTD
-ica_n_components_step: 2      # pas entre dimensions testées
+ica_n_components_max: 15      # borne haute de la fourchette MSTD
+ica_n_components_step: 1      # pas entre dimensions testées
 ica_n_runs: 100               # FastICA répétées par dimension (stabilité)
-ica_top_dimensions: 4         # maximum 1–4 : MSTD, ↓ voisin, ↑ voisin, ~ meilleure stabilité moyenne
+ica_top_dimensions: 3         # maximum 1–4 : MSTD, ↓ voisin, ↑ voisin, ~ meilleure stabilité moyenne
 ica_algorithm: fastica_par    # fastica_par | fastica_def | picard_*
 ica_fun: logcosh              # logcosh | exp | cube | tanh
 ica_resampling: none          # none | bootstrap | fast_bootstrap
@@ -66,7 +66,7 @@ ica_gsea_max_size: 500        # taille maximale d'un gene set
 
 # ================================================= 2 · Consensus clustering (+ choix de k)
 k_min: 3
-k_max: 5
+k_max: 15
 n_resamples: 2000
 prop_samples: 0.8
 prop_genes: 0.8
@@ -96,8 +96,8 @@ run_degsea: y                 # y | n — DESeq2 + GSEA par cluster (étape long
 # Commenter la ligne pour ne pas utiliser une collection. Si toutes commentées.
 gsea_collections:
   c1: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c1.gmt   # Positional — bandes cytogénétiques (300)
-  # c2: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c2.gmt   # Curated — Reactome/KEGG/WikiPathways… (6495)
-  # c3: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c3.gmt   # Regulatory targets — TFT + miRNA (3713)
+  c2: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c2.gmt   # Curated — Reactome/KEGG/WikiPathways… (6495)
+  c3: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c3.gmt   # Regulatory targets — TFT + miRNA (3713)
   c4: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c4.gmt   # Computational cancer — CGN + CM (858)
   # c5: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c5.gmt   # Ontology — GO + HPO (28339, TRÈS LENT)
   c6: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c6.gmt   # Oncogenic (189)
@@ -107,10 +107,10 @@ gsea_collections:
   sigGeNeHetX: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/sigGeNeHetX.gmt  # Custom immun (164)
   signatures_select: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/signatures_select.gmt  # Custom curées
 
-degsea_mode: both            # ova (one-vs-all) | ovo (one-vs-one) | both — nécessaire pour les deux types de volcanos du rapport
-degsea_all_k: y              # y | n — si y : DEGSEA calculé pour TOUS les k [k_min..k_max]
+degsea_mode: ova            # ova (one-vs-all) | ovo (one-vs-one) | both — nécessaire pour les deux types de volcanos du rapport
+degsea_all_k: n              # y | n — si y : DEGSEA calculé pour TOUS les k [k_min..k_max]
                              #   (tables/degsea/k<k>/ par k + panneau DEGSEA alignable sur chaque k
-                             #   dans le rapport). Très coûteux. Défaut n : seul le k final.
+                             #   dans le rapport). Très TRES TREEEES coûteux. Défaut n : seul le k recommandé PAC+Delta(K).
 gsea_gene_sets: ~/.cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt  # .gmt unique de repli (si gsea_collections vide)
 gsea_permutations: 1000       # permutations du GSEA pré-classé
 gsea_heatmap_pval: 0.05       # heatmap : garde les pathways à FDR q-valeur GSEA < ce seuil dans >= 1 cluster (0.25 = convention GSEA)
@@ -198,7 +198,7 @@ ordinal_variables:
 # ================================================= 9b · Corrélations (variables continues par patient)
 run_correlations: y           # y | n — corrèle clinique continue × signatures/déconv + signatures × déconv
 corr_method: spearman         # spearman (robuste, défaut) | pearson
-corr_all_pairs: n             # y = aussi signature×signature et déconv×déconv (redondant/compositionnel)
+corr_all_pairs: y             # y = aussi signature×signature et déconv×déconv (redondant/compositionnel)
 
 # ================================================= 10 · Rapport d'analyse (HTML interactif)
 create_report: y              # y | n — génère outdir/report.html (rapport autonome de tous les résultats)

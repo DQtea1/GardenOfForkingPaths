@@ -30,7 +30,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import deconv as dc
 from src import degsea as dg
 from src import ica as ic
+from src import ica_cluster_compare as icc
 from src import ica_gsea as ig
+from src import metrics as mt
 from src import plots as pl
 from src import preprocessing as pp
 from src import purity as pur
@@ -178,7 +180,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="'y' : calcule le DEGSEA pour TOUS les k de la plage "
                           "[k_min..k_max] (une sous-arborescence tables/degsea/k<k>/ "
                           "par k, et un panneau DEGSEA aligné sur n'importe quel k "
-                          "dans le rapport). Très coûteux. Défaut 'n' (seul k_final).")
+                          "dans le rapport). Très coûteux. Défaut 'n' : uniquement "
+                          "le k recommandé par le critère combiné PAC+Delta(K).")
     deg.add_argument("--gsea_gene_sets",
                      default=str(Path.home() / ".cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt"),
                      help="fichier .gmt de gene sets pour le GSEA (hallmarks MSigDB par défaut).")
@@ -607,11 +610,27 @@ def _run_ica_branches(c: _Ctx) -> None:
             correlation_extra_features=dec.metasamples,
             correlation_prefix="ica",
         )
+        labels_by_k = {
+            int(k): branch.result.labels(int(k), c.args.linkage)
+            for k in branch.k_values
+        }
+        c.log.info(
+            "ICA m=%d — comparaisons inter-clusters des métasamples pour %d valeur(s) de k…",
+            int(dimension), len(labels_by_k),
+        )
+        cluster_comparisons = icc.compare_ica_clusters(
+            dec.metasamples,
+            labels_by_k,
+            paths.table_dir,
+            min_cluster_size=c.args.min_cluster_size,
+            clustering_method=c.args.base,
+        )
         c.ica_branches[int(dimension)] = {
             "projection": branch.matrix,
             "stability": dec.stability.copy(),
             "metagenes": dec.metagenes,
             "metagene_gsea": c.ica_metagene_gsea.get(int(dimension), {}),
+            "cluster_comparisons": cluster_comparisons,
             "result": branch.result,
             "k_values": branch.k_values,
             "k_final": int(branch.k_final),
@@ -882,7 +901,7 @@ def _degsea(c: _Ctx, k: int, gene_sets: dict[str, str], *,
 
 
 def _degsea_all_k(c: _Ctx) -> None:
-    """Étape pipeline : orchestre DEGSEA sur le K final ou tous les K."""
+    """Orchestre DEGSEA sur le K recommandé PAC+Δ(K), ou sur tous les K."""
     args, log, outdir = c.args, c.log, c.outdir
     branch = c.primary
     c.nes, c.degsea_by_k = None, {}
@@ -892,29 +911,58 @@ def _degsea_all_k(c: _Ctx) -> None:
     gene_sets = args.gsea_collections or {
         Path(args.gsea_gene_sets).stem: args.gsea_gene_sets}
     all_k = args.degsea_all_k == "y"
-    ks_degsea = list(branch.k_values) if all_k else [branch.k_final]
+    try:
+        recommended_k = int(mt.suggest_k(
+            branch.result,
+            args.min_cluster_size,
+            method="both",
+        ))
+    except Exception as exc:
+        recommended_k = int(branch.k_final)
+        log.warning(
+            "DEGSEA : calcul du k recommandé PAC+Delta(K) impossible (%s) ; "
+            "repli sur k_final=%d.",
+            exc, recommended_k,
+        )
+    ks_degsea = list(branch.k_values) if all_k else [recommended_k]
+    if not all_k:
+        log.info(
+            "DEGSEA ciblé sur le k recommandé PAC+Delta(K) : k=%d%s.",
+            recommended_k,
+            (
+                f" (distinct de k_final={branch.k_final}, choisi par "
+                f"k_criterion={args.k_criterion})"
+                if recommended_k != branch.k_final else ""
+            ),
+        )
     log.info("DEGSEA : DESeq2 + GSEA par cluster (mode=%s, %d collection(s)) "
              "sur %d valeur(s) de k=%s — étape longue…",
              args.degsea_mode, len(gene_sets), len(ks_degsea), list(ks_degsea))
 
-    nes_by_coll = {}
+    final_nes_by_coll = {}
     for index, k in enumerate(ks_degsea, start=1):
         if all_k:
             log.info("DEGSEA — k=%d (%d/%d)…", k, index, len(ks_degsea))
         result = _degsea(c, k, gene_sets, output_subdir=f"k{k}" if all_k else "")
         c.degsea_by_k[int(k)] = result
-        if k == branch.k_final:
-            nes_by_coll = result
+        if k == recommended_k:
             for coll, matrix in result.items():
                 pl.plot_gsea_ova_heatmap(
                     matrix, outdir / "figures",
                     pval=args.gsea_heatmap_pval, collection=coll,
                 )
+        if k == branch.k_final:
+            # La synthèse historique est construite sur k_final : ne lui
+            # transmettre qu'une matrice NES calculée pour cette même partition.
+            final_nes_by_coll = result
 
-    if nes_by_coll:
-        key = next((name for name in ("h", "HALLMARK", "hallmark") if name in nes_by_coll),
-                   next(iter(nes_by_coll)))
-        c.nes = nes_by_coll[key]
+    if final_nes_by_coll:
+        key = next(
+            (name for name in ("h", "HALLMARK", "hallmark")
+             if name in final_nes_by_coll),
+            next(iter(final_nes_by_coll)),
+        )
+        c.nes = final_nes_by_coll[key]
     log.info("DEGSEA terminé : tables dans %s", outdir / "tables" / "degsea")
 
 

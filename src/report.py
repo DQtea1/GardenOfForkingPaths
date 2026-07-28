@@ -157,13 +157,24 @@ def _ica_metagene_gsea_payload(results: dict | None) -> dict:
     return payload
 
 
-def _degsea_detail_payload(outdir: Path, k_final: int,
+def _degsea_default_k(k_final: int, recommended_k: int,
+                      degsea_by_k: dict | None) -> int:
+    """Choisit le K DEGSEA ouvert par défaut parmi les résultats disponibles."""
+    available = sorted(int(k) for k in (degsea_by_k or {}))
+    if int(recommended_k) in available:
+        return int(recommended_k)
+    if int(k_final) in available:
+        return int(k_final)
+    return available[0] if available else int(recommended_k)
+
+
+def _degsea_detail_payload(outdir: Path, default_k: int,
                            degsea_by_k: dict | None) -> dict:
     """Embarque les résultats complets DESeq2 et GSEA pour l'onglet volcano.
 
-    Les calculs DEGSEA restent inchangés : ce lecteur sérialise les CSV déjà
-    exportés par :mod:`degsea`. Il reconnaît les deux dispositions possibles :
-    ``tables/degsea/{ova,ovo}`` (K final seul) et
+    Ce lecteur sérialise les CSV déjà exportés par :mod:`degsea`. Il reconnaît
+    les deux dispositions possibles :
+    ``tables/degsea/{ova,ovo}`` (K recommandé seul) et
     ``tables/degsea/k<K>/{ova,ovo}`` (``degsea_all_k = y``).
     """
     root = Path(outdir) / "tables" / "degsea"
@@ -178,12 +189,16 @@ def _degsea_detail_payload(outdir: Path, k_final: int,
             bases[int(path.name[1:])] = path
         except ValueError:
             continue
-    if not bases and any((root / scheme).is_dir() for scheme in ("ova", "ovo")):
-        bases[int(k_final)] = root
-
     # Ne pas découvrir par erreur de vieux dossiers résiduels ne faisant pas
     # partie du run courant quand le pipeline a fourni l'information de K.
     known_k = {int(k) for k in (degsea_by_k or {})}
+    # En mode ciblé, les sorties sont directement sous tables/degsea/{ova,ovo}.
+    # Elles ont priorité sur d'éventuels dossiers k<K> laissés par un ancien run.
+    if (
+        any((root / scheme).is_dir() for scheme in ("ova", "ovo"))
+        and len(known_k) <= 1
+    ):
+        bases[int(default_k)] = root
     if known_k:
         bases = {k: path for k, path in bases.items() if k in known_k}
 
@@ -621,6 +636,9 @@ def _ica_payload(ica, outdir: Path, *, linkage_method: str,
             "metageneGsea": _ica_metagene_gsea_payload(
                 branch.get("metagene_gsea")
             ),
+            "clusterComparisons": _clean_deep(
+                branch.get("cluster_comparisons") or {}
+            ),
             "consensus": _consensus_payload(
                 branch["result"], branch["k_final"], linkage_method,
                 min_cluster_size, k_criterion,
@@ -746,7 +764,8 @@ def _gather(res, outdir):
         }
 
     # DEGSEA (NES pathway × cluster), par k -> {str(k): {collection: {...}}}.
-    # Un seul k (k_final) en mode normal, tous les k si --degsea_all_k y.
+    # Un seul k (le recommandé PAC+Δ(K)) en mode normal, tous les k si
+    # --degsea_all_k y.
     data["degsea"] = {}
     for k, coll_map in (degsea_by_k or {}).items():
         d = {}
@@ -757,9 +776,12 @@ def _gather(res, outdir):
                 "nes": [[_clean(v) for v in df.loc[t]] for t in df.index],
             }
         data["degsea"][str(int(k))] = d
-    data["degseaK"] = int(k_final)
+    degsea_default_k = _degsea_default_k(
+        int(k_final), int(best_both), degsea_by_k
+    )
+    data["degseaK"] = degsea_default_k
     data["degseaDetail"] = _degsea_detail_payload(
-        outdir, k_final, degsea_by_k
+        outdir, degsea_default_k, degsea_by_k
     )
     data["clinicalDegseaDetail"] = _clinical_degsea_detail_payload(
         outdir, clinical_degsea

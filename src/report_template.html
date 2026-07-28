@@ -133,6 +133,19 @@
     border-radius:9px;padding:11px 13px;color:#69420f;font:12.5px var(--sans);line-height:1.5}
   .double-dip h3{margin:0 0 7px;color:#8a4f08;font-size:.92rem}
   .double-dip p{margin:0}
+  .ica-compare-viz{display:grid;grid-template-columns:minmax(560px,1fr) auto;gap:18px;
+    align-items:start;justify-content:center}
+  .ica-compare-heat{background:var(--surface);border:1px solid var(--line);
+    border-radius:9px;padding:10px;max-width:100%;overflow:auto}
+  .ica-compare-heat h3,.ica-compare-section h3{font-size:.9rem;margin:0 0 7px}
+  .ica-compare-section{background:var(--surface);border:1px solid var(--line);
+    border-radius:9px;padding:10px;margin-top:14px}
+  .ica-method-note{background:#eef7f6;border:1px solid #a9d7d2;border-left:4px solid var(--accent);
+    border-radius:9px;padding:11px 13px;color:#315a57;font:12.5px var(--sans);
+    line-height:1.48;margin-top:14px}
+  .ica-method-note h3{margin:0 0 6px;color:var(--ink);font-size:.9rem}
+  .ica-method-note p{margin:5px 0}
+  @media(max-width:1120px){.ica-compare-viz{grid-template-columns:1fr}.ica-compare-heat{justify-self:center}}
 </style>
 </head>
 <body>
@@ -380,13 +393,70 @@
 
   <div class="ica-sub" id="ica-sub-embed">
     <div class="ctl" id="icaEmbedCtl">
+      <label>Solution ICA :</label><select id="icaEmbedDimSelect"></select>
       <label>Projection :</label><select id="icaEmbedMethod"></select>
       <label>k :</label><select id="icaEmbedK"></select>
       <label>Colorer par :</label><select id="icaEmbedColorColl"></select><select id="icaEmbedColor"></select>
       <label>Forme par :</label><select id="icaEmbedShape"></select>
       <label>Taille par :</label><select id="icaEmbedSizeColl"></select><select id="icaEmbedSize"></select>
     </div>
-    <div class="flexrow" style="justify-content:center"><canvas id="icaEmbedCanvas"></canvas><div class="legend" id="icaEmbedLegend" style="flex-direction:column;align-items:flex-start"></div></div>
+    <div class="ctl" id="icaCompareCtl">
+      <label>Comparaison :</label>
+      <select id="icaCompareMethod">
+        <option value="centroid">Centroïdes</option>
+        <option value="medoid">Médoïdes euclidiens</option>
+        <option value="cohen">Cohen d</option>
+      </select>
+      <label id="icaCompareHedgesLabel" style="display:none">
+        <input type="checkbox" id="icaCompareHedges"> Correction de Hedges
+      </label>
+      <label>Composante :</label><select id="icaCompareComponent"></select>
+      <label>Heatmap :</label>
+      <label class="fchip" title="Désactivé : contraste component-wise ; activé : distance globale standardisée">
+        <input type="checkbox" id="icaCompareHeatMode"> Distance globale standardisée
+      </label>
+      <label>Tri du tableau :</label>
+      <select id="icaCompareSort">
+        <option value="absolute">Amplitude décroissante</option>
+        <option value="signed">Valeur signée décroissante</option>
+      </select>
+    </div>
+    <div class="warn" id="icaCompareWarn"></div>
+    <div class="ica-compare-viz">
+      <div class="flexrow" style="justify-content:center">
+        <canvas id="icaEmbedCanvas"></canvas>
+        <div class="legend" id="icaEmbedLegend" style="flex-direction:column;align-items:flex-start"></div>
+      </div>
+      <section class="ica-compare-heat">
+        <h3 id="icaCompareHeatTitle">Contrastes inter-clusters</h3>
+        <canvas id="icaCompareHeatmap"></canvas>
+        <div class="legend" id="icaCompareHeatLegend"></div>
+      </section>
+    </div>
+    <section class="ica-compare-section">
+      <h3 id="icaCompareComponentTitle">Comparaisons component-wise</h3>
+      <div class="tblwrap" style="max-height:420px"><table class="dt" id="icaCompareComponentTable"></table></div>
+    </section>
+    <section class="ica-compare-section">
+      <h3>Distance globale standardisée par paire</h3>
+      <p class="muted">Distance euclidienne entre centroïdes après z-score global des composantes (moyenne et écart-type calculés une seule fois sur tous les métasamples).</p>
+      <div class="tblwrap" style="max-height:360px"><table class="dt" id="icaCompareGlobalTable"></table></div>
+    </section>
+    <section class="ica-compare-section">
+      <div class="ctl" style="margin-top:0">
+        <label>Paire pour le classement :</label><select id="icaComparePair"></select>
+      </div>
+      <h3 id="icaCompareRankTitle">Composantes les plus discriminantes</h3>
+      <div class="tblwrap" style="max-height:420px"><table class="dt" id="icaCompareRankTable"></table></div>
+    </section>
+    <aside class="ica-method-note" id="icaCompareMethodNote">
+      <h3>Lecture méthodologique</h3>
+      <p id="icaCompareClusteringNote"></p>
+      <p><b>Contraste signé</b> : une valeur positive indique C<sub>A</sub> &gt; C<sub>B</sub> ; une valeur négative indique C<sub>B</sub> &gt; C<sub>A</sub>. Son amplitude n’est pas une distance.</p>
+      <p><b>Comparaison entre composantes</b> : les amplitudes brutes dépendent de leur échelle. Pour comparer plusieurs IC, privilégiez Cohen d ou les contributions à la distance globale standardisée.</p>
+      <p><b>Variabilité interne</b> : des représentants éloignés n’impliquent pas que les distributions soient peu chevauchantes. Les tailles et écarts-types affichés doivent être examinés conjointement.</p>
+      <p>Ces classements sont descriptifs : les comparaisons par paires partagent des observations, ne sont pas indépendantes et ne constituent ni un test de significativité ni une validation prédictive. Les petits clusters sont signalés explicitement.</p>
+    </aside>
   </div>
 
   <div class="ica-sub" id="ica-sub-assoc">
@@ -1458,7 +1528,7 @@ function icaDrop(tgt,e){e.preventDefault();if(!icaDragSrc)return;const src=icaDr
 function icaShowMenu(side,anchor){if(icaOpenMenu){icaOpenMenu.remove();icaOpenMenu=null;}const B=icaBranch();if(!B)return;const m=document.createElement("div"),groups={};m.className="menu";icaAvailablePanels(B).forEach(it=>(groups[it.grp]=groups[it.grp]||[]).push(it));Object.keys(groups).forEach(g=>{const h=document.createElement("div");h.className="grp";h.textContent=g;m.appendChild(h);groups[g].forEach(it=>{const b=document.createElement("button");b.textContent=it.label;b.onclick=()=>{if(!IP[side].includes(it.id))IP[side].push(it.id);m.remove();icaOpenMenu=null;renderIcaConsensus();};m.appendChild(b);});});document.body.appendChild(m);const r=anchor.getBoundingClientRect();m.style.left=Math.min(r.left,window.innerWidth-260)+"px";m.style.top=(r.bottom+window.scrollY+4)+"px";icaOpenMenu=m;}
 /* ---- Nuages 3D ICA : même géométrie et interactions que l'embedding historique. ---- */
 const ICA3D={projection:{x:.35,y:.6,zoom:1,proj:[]},embedding:{x:.35,y:.6,zoom:1,proj:[]}};
-let ICAEMSRC=[],ICAPROJSRC=[],icaEmbedDimension=null,icaProjectionDimension=null,icaGseaDimension=null,ica3dBound=false;
+let ICAEMSRC=[],ICAPROJSRC=[],icaEmbedDimension=null,icaProjectionDimension=null,icaGseaDimension=null,icaCompareDimension=null,ica3dBound=false;
 function icaDraw3DScene(cv,rawPoints,axes,state,colorOf,shapeOf,sizeOf){
   const pts=(rawPoints||[]).map((p,i)=>({i,x:+p[0],y:+p[1],z:+p[2]})).filter(p=>isFinite(p.x)&&isFinite(p.y)&&isFinite(p.z));
   if(!pts.length){fitCanvas(cv,400,80).fillText("Aucun point 3D disponible.",10,20);state.proj=[];return;}
@@ -1495,7 +1565,7 @@ function icaDimensionOption(d){const op=document.createElement("option"),roles=i
   // MSTD a la priorité visuelle, puis les voisins, puis la stabilité moyenne.
   const primary=["mstd","nearest_lower","nearest_higher","best_mean_stability"].find(r=>roles.includes(r));
   const style=ICA_DIMENSION_ROLES[primary];if(style){op.style.background=style.bg;op.style.color=style.fg;}return op;}
-function icaSetDimension(value,resetK){curIcaDim=+value;icaEmbedDimension=null;icaProjectionDimension=null;icaGseaDimension=null;["icaDimSelect","icaConsensusDimSelect"].forEach(id=>{const s=$(id);if(s)s.value=String(curIcaDim);});icaRebuildProjectionAxes();icaFillKSelect(resetK);}
+function icaSetDimension(value,resetK){curIcaDim=+value;icaEmbedDimension=null;icaProjectionDimension=null;icaGseaDimension=null;icaCompareDimension=null;["icaDimSelect","icaConsensusDimSelect","icaEmbedDimSelect"].forEach(id=>{const s=$(id);if(s)s.value=String(curIcaDim);});icaRebuildProjectionAxes();icaFillKSelect(resetK);}
 function icaProjGet(id){const value=$(id).value;return value===""||value==="none"?null:ICAPROJSRC[+value];}
 function icaFillProjectionSelect(sel,pred,noneLabel){sel.innerHTML="";const none=document.createElement("option");none.value="none";none.textContent=noneLabel;sel.appendChild(none);const groups={};ICAPROJSRC.forEach((src,i)=>{if(pred(src))(groups[src.coll]=groups[src.coll]||[]).push(i);});for(const group in groups){const og=document.createElement("optgroup");og.label=group;groups[group].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=ICAPROJSRC[i].label;og.appendChild(o);});sel.appendChild(og);}}
 function icaFillProjectionCascade(collSel,memberSel,pred,noneLabel,defaultColl){const groups={};ICAPROJSRC.forEach((src,i)=>{if(pred(src))(groups[src.coll]=groups[src.coll]||[]).push(i);});collSel.innerHTML="";const none=document.createElement("option");none.value="none";none.textContent=noneLabel;collSel.appendChild(none);Object.keys(groups).forEach(group=>{const o=document.createElement("option");o.value=group;o.textContent=group;collSel.appendChild(o);});const fillMembers=redraw=>{const group=collSel.value;memberSel.innerHTML="";if(group==="none"||!groups[group]){const o=document.createElement("option");o.value="none";o.textContent="—";memberSel.appendChild(o);memberSel.value="none";memberSel.style.display="none";}else{memberSel.style.display="";groups[group].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=ICAPROJSRC[i].label;memberSel.appendChild(o);});memberSel.value=groups[group][0];}if(redraw)renderIcaProjection();};collSel.onchange=()=>fillMembers(true);memberSel.onchange=renderIcaProjection;collSel.value=defaultColl&&groups[defaultColl]?defaultColl:"none";fillMembers(false);}
@@ -1518,7 +1588,40 @@ function icaEmVals(B,src){return icaSourceVals(B,src,+$("icaEmbedK").value);}
 function icaFillEmSelect(sel,pred,noneLabel){sel.innerHTML="";const none=document.createElement("option");none.value="none";none.textContent=noneLabel;sel.appendChild(none);const groups={};ICAEMSRC.forEach((src,i)=>{if(pred(src))(groups[src.coll]=groups[src.coll]||[]).push(i);});for(const group in groups){const og=document.createElement("optgroup");og.label=group;groups[group].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=ICAEMSRC[i].label;og.appendChild(o);});sel.appendChild(og);}}
 function icaFillEmCascade(collSel,memberSel,pred,noneLabel,defaultColl){const groups={};ICAEMSRC.forEach((src,i)=>{if(pred(src))(groups[src.coll]=groups[src.coll]||[]).push(i);});collSel.innerHTML="";const none=document.createElement("option");none.value="none";none.textContent=noneLabel;collSel.appendChild(none);Object.keys(groups).forEach(group=>{const o=document.createElement("option");o.value=group;o.textContent=group;collSel.appendChild(o);});const fillMembers=redraw=>{const group=collSel.value;memberSel.innerHTML="";if(group==="none"||!groups[group]){const o=document.createElement("option");o.value="none";o.textContent="—";memberSel.appendChild(o);memberSel.value="none";memberSel.style.display="none";}else{memberSel.style.display="";groups[group].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=ICAEMSRC[i].label;memberSel.appendChild(o);});memberSel.value=groups[group][0];}if(redraw)renderIcaEmbed();};collSel.onchange=()=>fillMembers(true);memberSel.onchange=renderIcaEmbed;collSel.value=defaultColl&&groups[defaultColl]?defaultColl:"none";fillMembers(false);}
 function icaEmbeddingsForK(B){const byK=B.embedByK||{};return byK[String(+$("icaEmbedK").value)]||B.embed||{};}
-function icaPrepareEmbed(B){if(icaEmbedDimension===curIcaDim)return;icaEmbedDimension=curIcaDim;ICAEMSRC=icaBuildEmSources(B);const method=$("icaEmbedMethod"),methods=new Set(Object.keys(B.embed||{}));Object.values(B.embedByK||{}).forEach(e=>Object.keys(e||{}).forEach(m=>methods.add(m)));method.innerHTML="";methods.forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m.toUpperCase();method.appendChild(o);});method.onchange=renderIcaEmbed;const ksel=$("icaEmbedK"),rows=icaKRecords(B);ksel.innerHTML="";rows.forEach(o=>{const op=document.createElement("option");op.value=o.k;op.textContent=icaKInfo(B,o.k);ksel.appendChild(op);});ksel.value=String((B.consensus||{}).kFinal||((rows[0]||{}).k||""));ksel.onchange=renderIcaEmbed;icaFillEmCascade($("icaEmbedColorColl"),$("icaEmbedColor"),()=>true,"— aucun (couleur unie) —","Autre");icaFillEmCascade($("icaEmbedSizeColl"),$("icaEmbedSize"),s=>s.kind==="cont","— aucune (taille fixe) —");icaFillEmSelect($("icaEmbedShape"),s=>s.kind==="cat","— aucune (cercle) —");$("icaEmbedShape").onchange=renderIcaEmbed;}
+function icaCompareKData(B){const root=(B&&B.clusterComparisons)||{};return(root.perK||{})[String(+$("icaEmbedK").value)]||null;}
+function icaCompareUsesHedges(){return $("icaCompareMethod").value==="cohen"&&$("icaCompareHedges").checked;}
+function icaCompareValue(row,method){return method==="cohen"?(icaCompareUsesHedges()&&row.hedges_g!=null?row.hedges_g:row.effect_size):row.signed_difference;}
+function icaPairKey(a,b){return String(a)+"|"+String(b);}
+function icaClusterSort(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:"base"});}
+function icaCompareFormatRep(row,side,method){const value=icaFmt(row["representative_"+side],4),sample=row["representative_sample_"+side];return method==="medoid"&&sample?value+" ("+sample+")":value;}
+function icaPrepareComparisons(B){if(icaCompareDimension===curIcaDim)return;icaCompareDimension=curIcaDim;const components=((B.projection||{}).componentNames)||[],sel=$("icaCompareComponent");sel.innerHTML="";components.forEach(component=>{const o=document.createElement("option");o.value=component;o.textContent=component;sel.appendChild(o);});sel.disabled=!components.length;
+  $("icaCompareMethod").onchange=renderIcaComparisons;$("icaCompareHedges").onchange=renderIcaComparisons;$("icaCompareComponent").onchange=renderIcaComparisons;$("icaCompareHeatMode").onchange=()=>{renderIcaRanking();renderIcaCompareHeatmap();};$("icaCompareSort").onchange=renderIcaComponentTable;$("icaComparePair").onchange=renderIcaRanking;
+}
+function icaCompareSelectedRows(){const B=icaBranch(),data=icaCompareKData(B),method=$("icaCompareMethod").value,component=$("icaCompareComponent").value;return data?((((data.componentwise||{})[method])||[]).filter(row=>row.component===component)):[];}
+function icaCompareHeatMode(){return $("icaCompareHeatMode").checked?"global":"component";}
+function renderIcaComponentTable(){const method=$("icaCompareMethod").value,component=$("icaCompareComponent").value,sort=$("icaCompareSort").value;let rows=icaCompareSelectedRows().slice();rows.sort((a,b)=>{const va=icaCompareValue(a,method),vb=icaCompareValue(b,method);return sort==="signed"?((vb==null?-Infinity:vb)-(va==null?-Infinity:va)):((vb==null?-Infinity:Math.abs(vb))-(va==null?-Infinity:Math.abs(va)));});
+  const effectLabel=icaCompareUsesHedges()?"Hedges g":"Cohen d";$("icaCompareComponentTitle").textContent="Comparaisons component-wise · "+component+" · "+(method==="centroid"?"centroïdes":method==="medoid"?"médoïdes euclidiens":effectLabel);
+  if(method==="cohen"){$("icaCompareComponentTable").innerHTML=icaTable(["Cluster A","Cluster B","n A","n B","Moyenne A","Moyenne B","SD A","SD B","SD poolée","A-B brut","|A-B| brut","Cohen d","Hedges g","|effet affiché|","Méthode","Avertissement"],rows.map(row=>{const effect=icaCompareValue(row,method);return["C"+row.cluster_a,"C"+row.cluster_b,row.n_a,row.n_b,icaFmt(row.representative_a,4),icaFmt(row.representative_b,4),icaFmt(row.sd_a,4),icaFmt(row.sd_b,4),icaFmt(row.pooled_sd,4),icaFmt(row.signed_difference,4),icaFmt(row.absolute_difference,4),icaFmt(row.effect_size,4),icaFmt(row.hedges_g,4),icaFmt(effect==null?null:Math.abs(effect),4),effectLabel,row.warning||"—"];}));}
+  else{$("icaCompareComponentTable").innerHTML=icaTable(["Cluster A","Cluster B","n A","n B","Représentant A","Représentant B","SD A","SD B","A-B signé","|A-B|","Méthode","Avertissement"],rows.map(row=>["C"+row.cluster_a,"C"+row.cluster_b,row.n_a,row.n_b,icaCompareFormatRep(row,"a",method),icaCompareFormatRep(row,"b",method),icaFmt(row.sd_a,4),icaFmt(row.sd_b,4),icaFmt(row.signed_difference,4),icaFmt(row.absolute_difference,4),method==="centroid"?"Centroïde":"Médoïde euclidien",row.warning||"—"]));}
+}
+function icaFillComparePairs(data){const sel=$("icaComparePair"),old=sel.value,rows=(data&&data.global)||[];sel.innerHTML="";rows.forEach(row=>{const o=document.createElement("option");o.value=icaPairKey(row.cluster_a,row.cluster_b);o.textContent="C"+row.cluster_a+" vs C"+row.cluster_b;sel.appendChild(o);});if([...sel.options].some(o=>o.value===old))sel.value=old;sel.disabled=!rows.length;}
+function renderIcaGlobalTable(){const data=icaCompareKData(icaBranch()),rows=((data&&data.global)||[]).slice().sort((a,b)=>(b.distance==null?-Infinity:b.distance)-(a.distance==null?-Infinity:a.distance));$("icaCompareGlobalTable").innerHTML=icaTable(["Cluster A","Cluster B","n A","n B","Distance euclidienne standardisée","Composantes incluses","Top contributions","Avertissement"],rows.map(row=>["C"+row.cluster_a,"C"+row.cluster_b,row.n_a,row.n_b,icaFmt(row.distance,4),row.n_components,(row.top_components||[]).join(", ")||"—",row.warning||"—"]));icaFillComparePairs(data);}
+function renderIcaRanking(){const data=icaCompareKData(icaBranch()),method=$("icaCompareMethod").value,mode=icaCompareHeatMode(),pair=$("icaComparePair").value,parts=pair.split("|"),a=parts[0],b=parts[1],contributions=((data&&data.contributions)||[]).filter(row=>String(row.cluster_a)===a&&String(row.cluster_b)===b);
+  if(mode==="global"){const ranked=contributions.slice().sort((x,y)=>(y.quadratic_contribution||0)-(x.quadratic_contribution||0));$("icaCompareRankTitle").textContent="Composantes contribuant à la distance globale · "+(pair?("C"+a+" vs C"+b):"aucune paire");$("icaCompareRankTable").innerHTML=icaTable(["Rang","Composante","Contraste standardisé signé","Amplitude","Contribution quadratique q","Contribution relative"],ranked.map((row,index)=>[index+1,row.component,icaFmt(row.signed_standardized_contrast,4),icaFmt(Math.abs(row.signed_standardized_contrast),4),icaFmt(row.quadratic_contribution,4),row.relative_contribution==null?"—":(100*row.relative_contribution).toFixed(2)+" %"]));return;}
+  const methodRows=data?((((data.componentwise||{})[method])||[]).filter(row=>String(row.cluster_a)===a&&String(row.cluster_b)===b)):[],contrib=new Map(contributions.map(row=>[row.component,row])),ranked=methodRows.map(row=>{const c=contrib.get(row.component),value=icaCompareValue(row,method);return{component:row.component,value,absolute:value==null?null:Math.abs(value),relative:c?c.relative_contribution:null,warning:row.warning||""};}).sort((x,y)=>(y.absolute==null?-Infinity:y.absolute)-(x.absolute==null?-Infinity:x.absolute));
+  const label=method==="cohen"?(icaCompareUsesHedges()?"|Hedges g|":"|Cohen d|"):method==="medoid"?"|contraste des médoïdes|":"|contraste des centroïdes|";$("icaCompareRankTitle").textContent="Composantes les plus discriminantes · "+(pair?("C"+a+" vs C"+b):"aucune paire")+" · "+label;
+  $("icaCompareRankTable").innerHTML=icaTable(["Rang","Composante","Contraste signé","Amplitude","Contribution distance globale","Avertissement"],ranked.map((row,index)=>[index+1,row.component,icaFmt(row.value,4),icaFmt(row.absolute,4),row.relative==null?"—":(100*row.relative).toFixed(2)+" %",row.warning||"—"]));
+}
+function renderIcaCompareHeatmap(){const data=icaCompareKData(icaBranch()),mode=icaCompareHeatMode(),method=$("icaCompareMethod").value,component=$("icaCompareComponent").value,rows=mode==="global"?((data&&data.global)||[]):icaCompareSelectedRows(),clusters=[...new Set(rows.flatMap(row=>[String(row.cluster_a),String(row.cluster_b)]))].sort(icaClusterSort),n=clusters.length,cell=Math.max(25,Math.min(43,Math.floor(390/Math.max(1,n)))),margin=52,W=margin+n*cell+8,H=margin+n*cell+8,cv=$("icaCompareHeatmap"),ctx=fitCanvas(cv,Math.max(160,W),Math.max(100,H)),lookup=new Map(),values=[];
+  if(!n){ctx.fillStyle="#5a6b73";ctx.fillText("Aucune matrice disponible.",10,25);$("icaCompareHeatLegend").innerHTML="";return;}
+  rows.forEach(row=>{const value=mode==="global"?row.distance:icaCompareValue(row,method),key=icaPairKey(row.cluster_a,row.cluster_b),reverse=icaPairKey(row.cluster_b,row.cluster_a);lookup.set(key,value);lookup.set(reverse,mode==="global"?value:(value==null?null:-value));if(value!=null&&isFinite(value))values.push(Math.abs(value));});clusters.forEach(c=>lookup.set(icaPairKey(c,c),0));const vmax=Math.max(...values,1e-12);
+  ctx.font="11px ui-monospace";ctx.textAlign="center";ctx.textBaseline="middle";clusters.forEach((c,i)=>{ctx.fillStyle="#44535a";ctx.fillText("C"+c,margin+i*cell+cell/2,margin-12);ctx.textAlign="right";ctx.fillText("C"+c,margin-7,margin+i*cell+cell/2);ctx.textAlign="center";});
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){const value=lookup.get(icaPairKey(clusters[i],clusters[j])),x=margin+j*cell,y=margin+i*cell;ctx.fillStyle=value==null||!isFinite(value)?"#e5e7eb":mode==="global"?consCol(value/vmax):rdbu(value,vmax);ctx.fillRect(x,y,cell,cell);ctx.strokeStyle="rgba(255,255,255,.55)";ctx.strokeRect(x,y,cell,cell);if(cell>=31&&value!=null&&isFinite(value)){ctx.fillStyle=(mode==="global"&&value/vmax>.55)||(!mode==="global"&&Math.abs(value)/vmax>.62)?"#fff":"#24343a";ctx.font="9px ui-monospace";ctx.fillText(icaFmt(value,2),x+cell/2,y+cell/2);}}
+  const methodLabel=method==="centroid"?"centroïdes":method==="medoid"?"médoïdes":icaCompareUsesHedges()?"Hedges g":"Cohen d";$("icaCompareHeatTitle").textContent=mode==="global"?"Distance globale standardisée":"Contraste "+component+" · "+methodLabel;$("icaCompareHeatLegend").innerHTML=mode==="global"?'<span><i class="sw" style="background:'+consCol(1)+'"></i>distance élevée</span><span class="muted">symétrique · diagonale = 0</span>':'<span><i class="sw" style="background:'+rdbu(-1,1)+'"></i>cluster colonne plus élevé</span><span><i class="sw" style="background:'+rdbu(1,1)+'"></i>cluster ligne plus élevé</span><span class="muted">ligne − colonne · antisymétrique · diagonale = 0</span>';
+  const cellAt=e=>{const r=cv.getBoundingClientRect(),j=Math.floor((e.clientX-r.left-margin)/cell),i=Math.floor((e.clientY-r.top-margin)/cell);return i>=0&&i<n&&j>=0&&j<n?{a:clusters[i],b:clusters[j],value:lookup.get(icaPairKey(clusters[i],clusters[j]))}:null;};cv.onmousemove=e=>{const q=cellAt(e);if(!q){_hideTip();return;}_showTip(e,"C"+q.a+" × C"+q.b+"<br>"+(mode==="global"?"distance":"contraste signé")+" : <b>"+icaFmt(q.value,4)+"</b>");};cv.onmouseleave=_hideTip;cv.onclick=e=>{const q=cellAt(e);if(!q||q.a===q.b)return;const direct=icaPairKey(q.a,q.b),reverse=icaPairKey(q.b,q.a),sel=$("icaComparePair");if([...sel.options].some(o=>o.value===direct))sel.value=direct;else if([...sel.options].some(o=>o.value===reverse))sel.value=reverse;renderIcaRanking();};
+}
+function renderIcaComparisons(){const B=icaBranch();if(!B)return;icaPrepareComparisons(B);const data=icaCompareKData(B),method=$("icaCompareMethod").value;$("icaCompareHedgesLabel").style.display=method==="cohen"?"":"none";const base=(((B.clusterComparisons||{}).settings||{}).clustering_method)||"non renseignée";$("icaCompareClusteringNote").innerHTML=base==="kmeans"?"<b>Dépendance au clustering :</b> k-means minimise directement les distances aux centroïdes ; leur séparation est donc attendue en partie par construction et ne valide pas indépendamment les clusters.":"<b>Dépendance au clustering :</b> ces différences décrivent une partition apprise dans ce même espace ICA (méthode : "+esc(base)+") et ne constituent pas une validation indépendante.";if(!data){icaSetWarn("icaCompareWarn","Comparaisons inter-clusters absentes pour cette solution ICA et ce k. Ce rapport a probablement été produit avant l'ajout de cette analyse.");["icaCompareComponentTable","icaCompareGlobalTable","icaCompareRankTable"].forEach(id=>$(id).innerHTML="");fitCanvas($("icaCompareHeatmap"),180,70).fillText("Résultats absents",10,25);$("icaCompareHeatLegend").innerHTML="";return;}const selected=icaCompareSelectedRows(),warnings=[...new Set(selected.concat(data.global||[]).map(row=>row.warning).filter(Boolean))];icaSetWarn("icaCompareWarn",warnings.join(" · "));renderIcaComponentTable();renderIcaGlobalTable();renderIcaRanking();renderIcaCompareHeatmap();}
+function icaPrepareEmbed(B){if(icaEmbedDimension===curIcaDim)return;icaEmbedDimension=curIcaDim;ICAEMSRC=icaBuildEmSources(B);const method=$("icaEmbedMethod"),methods=new Set(Object.keys(B.embed||{}));Object.values(B.embedByK||{}).forEach(e=>Object.keys(e||{}).forEach(m=>methods.add(m)));method.innerHTML="";methods.forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m.toUpperCase();method.appendChild(o);});method.onchange=renderIcaEmbed;const ksel=$("icaEmbedK"),rows=icaKRecords(B);ksel.innerHTML="";rows.forEach(o=>{const op=document.createElement("option");op.value=o.k;op.textContent=icaKInfo(B,o.k);ksel.appendChild(op);});ksel.value=String((B.consensus||{}).kFinal||((rows[0]||{}).k||""));ksel.onchange=()=>{renderIcaEmbed();renderIcaComparisons();};icaFillEmCascade($("icaEmbedColorColl"),$("icaEmbedColor"),()=>true,"— aucun (couleur unie) —","Autre");icaFillEmCascade($("icaEmbedSizeColl"),$("icaEmbedSize"),s=>s.kind==="cont","— aucune (taille fixe) —");icaFillEmSelect($("icaEmbedShape"),s=>s.kind==="cat","— aucune (cercle) —");$("icaEmbedShape").onchange=renderIcaEmbed;icaPrepareComparisons(B);}
 function renderIcaEmbed(){const B=icaBranch();if(!B)return;icaPrepareEmbed(B);const method=$("icaEmbedMethod").value,pts=icaEmbeddingsForK(B)[method]||[];if(!pts.length){fitCanvas($("icaEmbedCanvas"),1,1);$("icaEmbedLegend").textContent="Aucun embedding ICA disponible.";return;}const colSrc=icaEmGet("icaEmbedColor"),shapeSrc=icaEmGet("icaEmbedShape"),sizeSrc=icaEmGet("icaEmbedSize"),colV=icaEmVals(B,colSrc),shapeV=icaEmVals(B,shapeSrc),sizeV=icaEmVals(B,sizeSrc);let clo=0,chi=1,cats=[];if(colV){if(colV.cont){const f=colV.vals.filter(v=>v!=null&&isFinite(v));if(f.length){clo=Math.min(...f);chi=Math.max(...f);}}else cats=[...new Set(colV.vals.filter(v=>v!=null))];}const colorOf=i=>{if(!colV)return"#3b82c4";const v=colV.vals[i];return v==null?"#ccc":colV.cont?viridis((v-clo)/((chi-clo)||1)):CAT[cats.indexOf(v)%CAT.length];};const shapeCats=shapeV?[...new Set(shapeV.vals.filter(v=>v!=null))]:[],shapeOf=i=>{if(!shapeV||shapeV.vals[i]==null)return MK[0];return MK[shapeCats.indexOf(shapeV.vals[i])%MK.length];};let zlo=0,zhi=1;if(sizeV){const f=sizeV.vals.filter(v=>v!=null&&isFinite(v));if(f.length){zlo=Math.min(...f);zhi=Math.max(...f);}}const sizeOf=(i,depth)=>{let size=3.2;if(sizeV){const v=sizeV.vals[i];size=v==null?2:2+4.6*((v-zlo)/((zhi-zlo)||1));}return size*(.7+.55*depth);};icaDraw3DScene($("icaEmbedCanvas"),pts,[method.toUpperCase()+" 1",method.toUpperCase()+" 2",method.toUpperCase()+" 3"],ICA3D.embedding,colorOf,shapeOf,sizeOf);const HH='style="font-weight:600;margin-top:7px;color:#3a444b"';let out="<b>"+method.toUpperCase()+" 3D sur distance consensus ICA</b><div class='muted'>m="+curIcaDim+" · "+icaKInfo(B,+$("icaEmbedK").value)+" · coordonnées apprises sur D<sub>K</sub> = 1 − C<sub>K</sub> · glisser = tourner · molette = zoom</div>";if(colSrc){out+="<div "+HH+">Couleur : "+colSrc.label+"</div>";if(colV.cont){for(let t=4;t>=0;t--){const v=clo+(chi-clo)*t/4;out+='<div><i class="sw" style="background:'+viridis(t/4)+'"></i>'+(isFinite(v)?v.toFixed(2):"—")+"</div>";}}else cats.forEach((c,i)=>out+='<div><i class="sw" style="background:'+CAT[i%CAT.length]+'"></i>'+c+"</div>");}if(shapeSrc){out+="<div "+HH+">Forme : "+shapeSrc.label+"</div>";shapeCats.forEach((c,i)=>out+='<div><span style="font-size:14px;line-height:1;color:#33414a">'+MK[i%MK.length].g+"</span> "+c+"</div>");}if(sizeSrc)out+="<div "+HH+">Taille : "+sizeSrc.label+"</div><div class='muted'>"+(isFinite(zlo)?zlo.toFixed(2):"—")+" → "+(isFinite(zhi)?zhi.toFixed(2):"—")+" (petit → grand)</div>";$("icaEmbedLegend").innerHTML=out;}
 function renderIcaAssoc(){const B=icaBranch();if(!B)return;const A=B.assoc||{},per=(A.byClusterK||{})[String((B.consensus||{}).kFinal)]||{},rows=Object.keys(per).map(v=>{const o=per[v];return[v,o.test,icaFmt(o.pvalue,4),icaFmt(o.padj,4),icaFmt(o.cramers_v,3),o.n];});
   icaSetWarn("icaAssocWarn",rows.length?"":"Aucune association catégorielle ICA disponible (métadonnées absentes, aucune variable catégorielle exploitable, ou étape désactivée).");$("icaAssocTable").innerHTML=icaTable(["Variable clinique","Test","p","FDR","V de Cramér","n"],rows);
@@ -1526,12 +1629,12 @@ function renderIcaAssoc(){const B=icaBranch();if(!B)return;const A=B.assoc||{},p
 function renderIcaCorr(){const B=icaBranch();if(!B)return;const C=B.corr||{},rows=(C.pairs||[]).filter(o=>(o.a||"").startsWith("ica:")||(o.b||"").startsWith("ica:")).map(o=>[o.a,o.b,icaFmt(o.rho),icaFmt(o.p,4),icaFmt(o.padj,4),o.n]);
   icaSetWarn("icaCorrWarn",rows.length?"":"Aucune corrélation ICA disponible (il faut au moins une variable clinique continue et l'étape 9b active). ");$("icaCorrTable").innerHTML=icaTable(["Variable 1","Variable 2","ρ / r","p","FDR","n"],rows);
 }
-function renderIcaAll(){renderIcaProjection();renderIcaMetageneGsea();renderIcaConsensus();renderIcaEmbed();renderIcaAssoc();renderIcaCorr();}
+function renderIcaAll(){renderIcaProjection();renderIcaMetageneGsea();renderIcaConsensus();renderIcaEmbed();renderIcaComparisons();renderIcaAssoc();renderIcaCorr();}
 function initICA(){const branches=ICA.branches||{},dims=(ICA.topDimensions&&ICA.topDimensions.length?ICA.topDimensions:Object.keys(branches)).map(String).filter(d=>branches[d]);
-  if(ICA.status!=="complete"||!dims.length){const msg=ICA.message||"Branche ICA non exécutée.";icaSetWarn("icaNotRun",msg);icaSetWarn("icaGseaWarn",msg);icaSetWarn("icaConsensusWarn",msg);["icaDimCtl","icaProjectionCtl","icaProjectionAestheticCtl","icaGseaCtl","icaGseaTables","icaGseaLeadingEdge","icaConsensusCtl","icaConsensusAddbar","icaConsensusGrid"].forEach(id=>$(id).style.display="none");icaSetWarn("icaAssocWarn",msg);icaSetWarn("icaCorrWarn",msg);return;}
-  const ds=$("icaDimSelect"),cd=$("icaConsensusDimSelect");[ds,cd].forEach(sel=>{sel.innerHTML="";dims.forEach(d=>sel.appendChild(icaDimensionOption(d)));});
+  if(ICA.status!=="complete"||!dims.length){const msg=ICA.message||"Branche ICA non exécutée.";icaSetWarn("icaNotRun",msg);icaSetWarn("icaGseaWarn",msg);icaSetWarn("icaConsensusWarn",msg);icaSetWarn("icaCompareWarn",msg);["icaDimCtl","icaProjectionCtl","icaProjectionAestheticCtl","icaGseaCtl","icaGseaTables","icaGseaLeadingEdge","icaConsensusCtl","icaConsensusAddbar","icaConsensusGrid","icaEmbedCtl","icaCompareCtl"].forEach(id=>$(id).style.display="none");icaSetWarn("icaAssocWarn",msg);icaSetWarn("icaCorrWarn",msg);return;}
+  const ds=$("icaDimSelect"),cd=$("icaConsensusDimSelect"),ed=$("icaEmbedDimSelect");[ds,cd,ed].forEach(sel=>{sel.innerHTML="";dims.forEach(d=>sel.appendChild(icaDimensionOption(d)));});
   icaSetDimension(dims[0],true);$("icaDimInfo").textContent="★ MSTD · ↓/↑ dimensions testées voisines · ~ meilleure stabilité moyenne · "+((ICA.quality||{}).nRuns||"?")+" runs / dimension";
-  ds.onchange=()=>{icaSetDimension(ds.value,true);renderIcaAll();};cd.onchange=()=>{icaSetDimension(cd.value,true);renderIcaAll();};$("icaConsensusKSelect").onchange=e=>{curIcaK=+e.target.value;renderIcaConsensus();};["icaProjX","icaProjY","icaProjZ"].forEach(id=>$(id).onchange=renderIcaProjection);
+  ds.onchange=()=>{icaSetDimension(ds.value,true);renderIcaAll();};cd.onchange=()=>{icaSetDimension(cd.value,true);renderIcaAll();};ed.onchange=()=>{icaSetDimension(ed.value,true);renderIcaAll();};$("icaConsensusKSelect").onchange=e=>{curIcaK=+e.target.value;renderIcaConsensus();};["icaProjX","icaProjY","icaProjZ"].forEach(id=>$(id).onchange=renderIcaProjection);
   if(!ica3dBound){icaBind3D("icaProjCanvas",ICA3D.projection,renderIcaProjection);icaBind3D("icaEmbedCanvas",ICA3D.embedding,renderIcaEmbed);ica3dBound=true;}
   document.querySelectorAll("#icaConsensusAddbar .addbtn").forEach(b=>b.onclick=()=>icaShowMenu(b.dataset.icaSide,b));["top","bottom","left","right"].forEach(side=>{const host=$("ica-stack-"+side);host.addEventListener("dragover",e=>{if(icaDragSrc){e.preventDefault();host.classList.add("dragover");}});host.addEventListener("dragleave",e=>{if(!host.contains(e.relatedTarget))host.classList.remove("dragover");});host.addEventListener("drop",e=>{host.classList.remove("dragover");icaDrop(side,e);});});
   document.addEventListener("click",e=>{if(icaOpenMenu&&!icaOpenMenu.contains(e.target)&&!(e.target.closest&&e.target.closest("#icaConsensusAddbar .addbtn"))){icaOpenMenu.remove();icaOpenMenu=null;}});renderIcaAll();}
@@ -1574,13 +1677,13 @@ document.querySelectorAll(".subtab").forEach(t=>t.onclick=()=>{document.querySel
 document.querySelectorAll(".ica-subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".ica-subtab").forEach(x=>x.classList.remove("active"));
   t.classList.add("active");document.querySelectorAll(".ica-sub").forEach(p=>p.classList.remove("active"));$("ica-sub-"+t.dataset.icaSub).classList.add("active");
   if(t.dataset.icaSub==="proj"){renderIcaProjection();renderIcaMetageneGsea();}if(t.dataset.icaSub==="consensus")renderIcaConsensus();
-  if(t.dataset.icaSub==="embed")renderIcaEmbed();if(t.dataset.icaSub==="assoc")renderIcaAssoc();if(t.dataset.icaSub==="corr")renderIcaCorr();});
+  if(t.dataset.icaSub==="embed"){renderIcaEmbed();renderIcaComparisons();}if(t.dataset.icaSub==="assoc")renderIcaAssoc();if(t.dataset.icaSub==="corr")renderIcaCorr();});
 document.querySelectorAll(".diff-subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".diff-subtab").forEach(x=>x.classList.remove("active"));
   t.classList.add("active");document.querySelectorAll(".diff-sub").forEach(p=>p.classList.remove("active"));$("diff-sub-"+t.dataset.diffSub).classList.add("active");
   if(t.dataset.diffSub==="degsea")cdeRender();});
 document.querySelectorAll(".pre-subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".pre-subtab").forEach(x=>x.classList.remove("active"));
   t.classList.add("active");document.querySelectorAll(".pre-sub").forEach(p=>p.classList.remove("active"));$("pre-sub-"+t.dataset.preSub).classList.add("active");});
-window.addEventListener("resize",()=>{clearTimeout(window.__rt);window.__rt=setTimeout(()=>{if($("sub-unsup").classList.contains("active"))render();if($("sub-degsea").classList.contains("active"))deRender();if($("diff-sub-degsea").classList.contains("active"))cdeRender();if($("ica-sub-consensus").classList.contains("active"))renderIcaConsensus();},200);});
+window.addEventListener("resize",()=>{clearTimeout(window.__rt);window.__rt=setTimeout(()=>{if($("sub-unsup").classList.contains("active"))render();if($("sub-degsea").classList.contains("active"))deRender();if($("diff-sub-degsea").classList.contains("active"))cdeRender();if($("ica-sub-consensus").classList.contains("active"))renderIcaConsensus();if($("ica-sub-embed").classList.contains("active"))renderIcaCompareHeatmap();},200);});
 
 render();
 </script>
