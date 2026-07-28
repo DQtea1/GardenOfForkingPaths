@@ -156,6 +156,9 @@ ica_n_components_max: 30
 ica_n_components_step: 2
 ica_n_runs: 100
 ica_top_dimensions: 4
+run_ica_gsea: y
+ica_gsea_min_size: 15
+ica_gsea_max_size: 500
 ```
 
 Les cinq diagnostics (distribution des indices, stabilité moyenne, stabilité des
@@ -166,6 +169,18 @@ ICA en série ; passer à `n` autorise le parallélisme interne de `stabilized-i
 Avec `ica_resampling: none` (défaut), le scan reprend le whitening PCA unique de
 la procédure MSTD de référence ; les variantes bootstrap emploient un whitening
 par rééchantillonnage, signalé dans les paramètres exportés.
+
+Avec `run_ica_gsea: y`, chaque métagène de chaque dimension conservée est
+également annoté par un **GSEA pré-classé sur ses poids signés**. Les collections
+et le nombre de permutations sont ceux de `gsea_collections` et
+`gsea_permutations`. Les tables sont écrites sous
+`tables/ica/m<dimension>/metagene_gsea/<IC>/` ; un
+`gsea_run_manifest.csv` permet de vérifier chaque couple composante/collection.
+Les enrichissements sont affichés sous la projection
+dans **Résultats ICA → ICA proj** : pôle négatif (NES < 0), pôle positif
+(NES > 0), filtre p-value/FDR, tri et leading edge. Le signe d'un axe ICA étant
+arbitraire, ces deux pôles doivent être interprétés comme des programmes
+opposés, et non comme des directions intrinsèques d'activation/inhibition.
 
 ## Ce que fait le rééchantillonnage double
 
@@ -260,6 +275,39 @@ par collection `figures/gsea_ova_heatmap_<collection>.png`. Le one-vs-one coûte
 > les p-valeurs sont anticonservatives (Gao, Bien & Witten 2022). À lire comme
 > une caractérisation des programmes, pas comme un test valide — valider par
 > data-splitting ou cohorte externe.
+
+## DEGSEA clinique ajusté (indépendant du clustering)
+
+Pour un DESeq2 sur une variable clinique, ajusté sur des covariables et suivi
+d'un GSEA, ajoute un dictionnaire `clinical_degsea` au YAML. Chaque entrée est
+une expérience indépendante ; `contrast` (ou l'alias français `contraste`) est
+la variable testée, et le log2FC est toujours **test / control** :
+
+```yaml
+clinical_degsea:
+  response_age:
+    design: "~ age + response"
+    contrast: response
+    control: NR
+    test: R
+    collections: [h, c2]
+    min_group: 3
+  response_age_batch:
+    design: "~ age + batch + response"
+    contraste: response
+    control: NR
+    test: R
+    collections: [h]
+```
+
+Les noms sous `collections` doivent être définis dans `gsea_collections`; si la
+clé est omise, toutes les collections sont utilisées. Chaque expérience est
+automatiquement exécutée lorsqu'elle figure dans le YAML (l'option
+`--run_clinical_degsea y` sert à signaler une configuration absente). Elle
+utilise seulement la matrice de **counts bruts** et les métadonnées, sans lire
+les clusters ni l'ICA. Les résultats sont dans
+`tables/clinical_degsea/<nom>/` : `deseq2.csv`, `samples_used.csv` et un
+`gsea_<collection>.csv` par collection.
 
 ## Projection de signatures (scoring + association clinique)
 

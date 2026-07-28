@@ -20,10 +20,11 @@ standardisés ajustés** (Haberman) : sous indépendance ils suivent ~ N(0,1), d
 seuil 5 % (resp. 1 %) — c'est ce qui dit *quelles* combinaisons portent
 l'association. Correction **BH (FDR)** sur l'ensemble des paires testées.
 
-Idées non implémentées ici mais pertinentes selon les données : pour des variables
-**ordinales** (stade, grade…), un test de **tendance de Cochran-Armitage** ou un
-**tau de Kendall** serait plus puissant que le khi² nominal ; la détection
-automatique de l'ordre étant ambiguë, on reste sur le khi² nominal par défaut.
+Pour les variables **ordinales** déclarées dans le YAML (stade, grade…), un test
+de tendance linéaire-par-linéaire — Cochran-Armitage dans le cas binaire ×
+ordinal — remplace le khi² nominal lorsque les conditions asymptotiques sont
+satisfaites. Si elles ne le sont pas, le repli exact/permutation reste
+prioritaire : Fisher pour une table 2×2, Monte-Carlo pour une table R×C.
 """
 
 from __future__ import annotations
@@ -111,11 +112,11 @@ def association_test(a: pd.Series, b: pd.Series, min_expected: int = 5,
                      seed: int = 0, a_order=None, b_order=None) -> dict | None:
     """Test d'indépendance de deux variables catégorielles alignées.
 
-    Si `a_order` et/ou `b_order` déclarent une variable **ordinale** (liste
-    ordonnée des modalités) et que l'autre axe est scorable (ordinal ou binaire),
-    on utilise un **test de tendance** (linéaire-par-linéaire / Cochran-Armitage)
-    au lieu du khi² nominal. Sinon : khi² de Pearson, avec repli Fisher (2×2) /
-    Monte-Carlo (R×C) si les conditions de Cochran ne sont pas remplies.
+    L'ordre de décision protège d'abord contre les faibles effectifs attendus :
+    Fisher pour une table 2×2, Monte-Carlo pour une table R×C. Lorsque les
+    conditions de Cochran sont satisfaites, une variable **ordinale** déclarée
+    (avec deux axes scorables) déclenche le test de tendance
+    linéaire-par-linéaire / Cochran-Armitage ; sinon on utilise Pearson.
 
     Renvoie un dict (contingence, attendus, résidus ajustés, test utilisé, p, V de
     Cramér, diagnostic) ou ``None`` si une variable a < 2 modalités présentes.
@@ -142,19 +143,22 @@ def association_test(a: pd.Series, b: pd.Series, min_expected: int = 5,
     trend_ok = ((a_order is not None) or (b_order is not None)) and (u is not None) and (v is not None)
     trend_r = None
 
-    if trend_ok:
-        m2, p, trend_r = _trend_test(obs, u, v)
-        used, chi2stat = "trend", m2
-    elif conditions:
-        used, p = "chi2", float(p_chi2)
-    elif r == 2 and c == 2:
+    # Les replis exact/permutation ont priorité sur tout test asymptotique,
+    # y compris le test de tendance. Auparavant, ``trend_ok`` court-circuitait
+    # Fisher sur une table 2×2 clairsemée déclarée ordinale.
+    if not conditions and r == 2 and c == 2:
         _, p = fisher_exact(obs)
         used, p = "fisher_exact", float(p)
-    else:
+    elif not conditions:
         ai = pd.Categorical(df["a"]).codes
         bi = pd.Categorical(df["b"]).codes
         p = _mc_pvalue(ai, bi, r, c, float(chi2stat), mc_resamples, seed)
         used = "chi2_montecarlo"
+    elif trend_ok:
+        m2, p, trend_r = _trend_test(obs, u, v)
+        used, chi2stat = "trend", m2
+    else:
+        used, p = "chi2", float(p_chi2)
 
     # V de Cramér (toujours à partir du khi² de Pearson, comme taille d'effet)
     k = min(r - 1, c - 1)
@@ -175,6 +179,9 @@ def association_test(a: pd.Series, b: pd.Series, min_expected: int = 5,
         "pvalue": float(p), "cramers_v": cramers_v, "n": int(n),
         "conditions_met": bool(conditions), "trend_r": trend_r,
         "min_expected": min_exp, "frac_cells_low_expected": frac_low,
+        "expected_threshold": float(min_expected),
+        "max_low_expected_fraction": float(max_lowexp_frac),
+        "mc_resamples": int(mc_resamples),
     }
 
 
@@ -226,6 +233,11 @@ def _pairdata(res: dict, padj: float) -> dict:
         "cramers_v": None if not np.isfinite(cv) else round(float(cv), 4),
         "conditions_met": bool(res["conditions_met"]), "n": int(res["n"]),
         "trend_r": None if res.get("trend_r") is None else round(float(res["trend_r"]), 3),
+        "min_expected": round(float(res["min_expected"]), 3),
+        "frac_cells_low_expected": round(float(res["frac_cells_low_expected"]), 4),
+        "expected_threshold": float(res.get("expected_threshold", 5.0)),
+        "max_low_expected_fraction": float(res.get("max_low_expected_fraction", 0.2)),
+        "mc_resamples": int(res.get("mc_resamples", 2000)),
     }
 
 

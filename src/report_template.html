@@ -22,17 +22,17 @@
   .tab:hover{color:var(--ink)}
   .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
   .subtabs{display:flex;gap:2px;padding:8px 16px 0;flex-wrap:wrap}
-  .subtab,.ica-subtab,.pre-subtab{padding:6px 12px;border:1px solid var(--line);background:var(--surface2);border-radius:7px 7px 0 0;
+  .subtab,.ica-subtab,.diff-subtab,.pre-subtab{padding:6px 12px;border:1px solid var(--line);background:var(--surface2);border-radius:7px 7px 0 0;
     color:var(--ink2);font:600 12px var(--sans);cursor:pointer;border-bottom:0}
-  .subtab.active,.ica-subtab.active,.pre-subtab.active{background:var(--surface);color:var(--accent);border-color:var(--accent)}
+  .subtab.active,.ica-subtab.active,.diff-subtab.active,.pre-subtab.active{background:var(--surface);color:var(--accent);border-color:var(--accent)}
   .pane{display:none;padding:14px 16px 60px}
   .pane.active{display:block}
-  .sub,.ica-sub,.pre-sub{display:none}
-  .sub.active,.ica-sub.active,.pre-sub.active{display:block}
+  .sub,.ica-sub,.diff-sub,.pre-sub{display:none}
+  .sub.active,.ica-sub.active,.diff-sub.active,.pre-sub.active{display:block}
   .ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0;padding:10px;
     background:var(--surface);border:1px solid var(--line);border-radius:9px}
   .ctl label{font:600 12px var(--sans);color:var(--ink2)}
-  select,input[type=text]{font:13px var(--sans);padding:5px 8px;border:1px solid var(--line);
+  select,input[type=text],input[type=number]{font:13px var(--sans);padding:5px 8px;border:1px solid var(--line);
     border-radius:6px;background:#fff;color:var(--ink)}
   button.mini{font:600 12px var(--sans);padding:5px 10px;border:1px solid var(--line);border-radius:6px;
     background:var(--surface2);color:var(--ink);cursor:pointer}
@@ -97,6 +97,19 @@
   .cttbl th{background:var(--surface2);color:var(--ink2);font-weight:600;text-align:right}
   .cttbl thead th,.cttbl tbody th{text-align:left}
   .cttbl .tot{background:var(--surface2);font-weight:700;color:var(--ink)}
+  .testwhy{width:300px;max-width:100%;background:var(--surface);border:1px solid var(--line);
+    border-left:4px solid var(--accent);border-radius:9px;padding:11px 13px;
+    font:12px var(--sans);color:var(--ink2);line-height:1.48}
+  .testwhy h3{margin:0 0 7px;color:var(--ink);font-size:.9rem}
+  .testwhy .chosen{color:var(--accent);font-weight:700;margin-bottom:5px}
+  .testwhy .diag{margin:8px 0;padding:7px 8px;background:var(--surface2);border-radius:6px}
+  .testwhy ol{margin:7px 0 0;padding-left:19px}
+  .testwhy li{margin:3px 0}
+  .testwhy li.current{color:var(--ink);font-weight:650}
+  .assoc-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(270px,320px);
+    gap:20px;align-items:start}
+  .assoc-viz{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;min-width:0}
+  @media(max-width:1050px){.assoc-layout{grid-template-columns:1fr}.testwhy{width:auto}}
   .tip{position:fixed;z-index:60;background:#111;color:#fff;font:11px ui-monospace;padding:4px 7px;
     border-radius:5px;pointer-events:none;display:none;max-width:340px;line-height:1.4}
   .bubble{position:fixed;z-index:61;background:var(--surface);border:1px solid var(--line);border-radius:9px;
@@ -109,6 +122,17 @@
   .fvarname{font:600 11px var(--sans);color:var(--ink2);margin-right:2px}
   .fchip{font:12px var(--sans);color:var(--ink2);display:inline-flex;align-items:center;gap:3px;
     background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:2px 7px;cursor:pointer;user-select:none}
+  .deg-card{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:10px;max-width:100%}
+  .deg-card h3{font-size:.88rem;margin:0 0 7px}
+  .deg-table tr{cursor:pointer}
+  .deg-table tr:hover{background:#dff4f1}
+  .deg-table tr:focus{outline:2px solid var(--accent);outline-offset:-2px}
+  .linkbtn{text-decoration:none;display:inline-block;margin-top:9px}
+  .volcano-side{display:flex;flex-direction:column;gap:12px;width:310px;max-width:100%}
+  .double-dip{background:#fff7e8;border:1px solid #e5b75d;border-left:4px solid #c77b16;
+    border-radius:9px;padding:11px 13px;color:#69420f;font:12.5px var(--sans);line-height:1.5}
+  .double-dip h3{margin:0 0 7px;color:#8a4f08;font-size:.92rem}
+  .double-dip p{margin:0}
 </style>
 </head>
 <body>
@@ -120,6 +144,7 @@
 <div class="tabs" id="tabs">
   <button class="tab active" data-tab="results">Résultats Consensus-Clustering</button>
   <button class="tab" data-tab="ica">Résultats ICA</button>
+  <button class="tab" data-tab="diff">Résultats Expression Différentielle</button>
   <button class="tab" data-tab="tables">Tableaux</button>
   <button class="tab" data-tab="pre">Pré-analyse</button>
 </div>
@@ -128,6 +153,7 @@
 <div class="pane active" id="pane-results">
   <div class="subtabs">
     <button class="subtab active" data-sub="unsup">Consensus Clustering</button>
+    <button class="subtab" data-sub="degsea">DEGSEA</button>
     <button class="subtab" data-sub="sigdet">Signatures détaillé</button>
     <button class="subtab" data-sub="embed">t-SNE / UMAP</button>
     <button class="subtab" data-sub="assoc">Associations</button>
@@ -154,6 +180,48 @@
       <div id="stack-bottom" class="usstack"   style="grid-row:3;grid-column:2"></div>
     </div>
     <div class="legend" id="unsupLegend"></div>
+  </div>
+
+  <div class="sub" id="sub-degsea">
+    <div class="warn" id="deWarn"></div>
+    <div class="ctl" id="deCtl">
+      <label>K :</label><select id="deK"></select>
+      <label>Comparaison :</label><select id="deContrast"></select>
+      <label>Significativité :</label><select id="deMetric"><option value="padj">padj (FDR)</option><option value="pvalue">p-value</option></select>
+      <label>Seuil :</label><input type="number" id="dePThreshold" min="0" max="1" step="0.001" value="0.05">
+      <label>|log2FC| ≥</label><input type="number" id="deLfcThreshold" min="0" step="0.1" value="1">
+      <label>Opacité <span class="val" id="deOpacityV">0.70</span></label><input type="range" id="deOpacity" min="0.05" max="1" step="0.05" value="0.70">
+      <label>Labels top DE :</label><input type="number" id="deTopN" min="0" max="100" step="1" value="10">
+    </div>
+    <div class="flexrow" style="justify-content:center">
+      <canvas id="deVolcano"></canvas>
+      <div class="volcano-side">
+        <div class="legend" id="deVolcanoLegend" style="flex-direction:column;align-items:flex-start"></div>
+        <aside class="double-dip" role="note">
+          <h3>⚠ Le vrai problème : double dipping</h3>
+          <p>Les clusters sont définis à partir de l’expression, puis la différence
+          d’expression est testée entre ces mêmes clusters. Les p-values de DESeq2
+          sont donc mécaniquement anti-conservatives : les groupes ont précisément
+          été construits pour maximiser cette séparation. Même sur des données
+          purement nulles, cette procédure peut produire des milliers de gènes
+          « significatifs », puis des pathways GSEA apparemment très enrichis.
+          Ces résultats doivent être lus comme une <b>caractérisation descriptive</b>,
+          pas comme une validation statistique indépendante.</p>
+        </aside>
+      </div>
+    </div>
+    <div class="ctl">
+      <label>Collection GSEA :</label><select id="deCollection"></select>
+      <label>Filtre :</label><select id="deGseaMetric"><option value="padj">padj (FDR)</option><option value="pvalue">p-value nominale</option></select>
+      <label>Seuil :</label><input type="number" id="deGseaThreshold" min="0" max="1" step="0.001" value="0.05">
+      <label>Trier :</label><select id="deGseaSort"><option value="absnes">|NES| décroissant</option><option value="padj">padj croissante</option></select>
+      <span class="muted">Les tableaux montrent 25 lignes à la fois ; faites défiler pour voir les suivantes. Cliquez une voie pour voir son leading edge.</span>
+    </div>
+    <div class="flexrow" style="align-items:stretch">
+      <section class="deg-card" style="flex:1;min-width:300px"><h3>Gènes downregulated · NES négatifs</h3><div class="tblwrap" style="max-height:610px"><table class="dt deg-table" id="deGseaNeg"></table></div></section>
+      <section class="deg-card" style="flex:1;min-width:300px"><h3>Gènes upregulated · NES positifs</h3><div class="tblwrap" style="max-height:610px"><table class="dt deg-table" id="deGseaPos"></table></div></section>
+    </div>
+    <div class="deg-card" id="deLeadingEdge" style="margin-top:12px"><span class="muted">Cliquez une voie GSEA pour afficher son leading edge.</span></div>
   </div>
 
   <div class="sub" id="sub-sigdet">
@@ -209,10 +277,13 @@
       <label>k (clusters) :</label><select id="asK"></select>
       <label>Croisement :</label><select id="asPair"></select>
     </div>
-    <div class="flexrow">
-      <div id="asTable" style="overflow:auto;max-width:100%"></div>
-      <canvas id="asCanvas"></canvas>
-      <div class="legend" id="asInfo" style="flex-direction:column;align-items:flex-start"></div>
+    <div class="assoc-layout">
+      <div class="assoc-viz">
+        <div id="asTable" style="overflow:auto;max-width:100%"></div>
+        <canvas id="asCanvas"></canvas>
+        <div class="legend" id="asInfo" style="flex-direction:column;align-items:flex-start"></div>
+      </div>
+      <aside class="testwhy" id="asTestWhy"></aside>
     </div>
   </div>
 
@@ -257,10 +328,30 @@
       <label>Axe Y :</label><select id="icaProjY"></select>
       <label>Axe Z :</label><select id="icaProjZ"></select>
     </div>
+    <div class="ctl" id="icaProjectionAestheticCtl">
+      <label>Colorer par :</label><select id="icaProjColorColl"></select><select id="icaProjColor"></select>
+      <label>Forme par :</label><select id="icaProjShape"></select>
+      <label>Taille par :</label><select id="icaProjSizeColl"></select><select id="icaProjSize"></select>
+    </div>
     <div class="flexrow" style="justify-content:center">
       <canvas id="icaProjCanvas"></canvas>
       <div class="legend" id="icaProjLegend" style="flex-direction:column;align-items:flex-start"></div>
     </div>
+    <div class="warn" id="icaGseaWarn"></div>
+    <div class="ctl" id="icaGseaCtl">
+      <label>Métagène :</label><select id="icaGseaComponent"></select>
+      <label>Collection GSEA :</label><select id="icaGseaCollection"></select>
+      <label>Filtre :</label><select id="icaGseaMetric"><option value="padj">padj (FDR)</option><option value="pvalue">p-value nominale</option></select>
+      <label>Seuil :</label><input type="number" id="icaGseaThreshold" min="0" max="1" step="0.001" value="0.05">
+      <label>Trier :</label><select id="icaGseaSort"><option value="absnes">|NES| décroissant</option><option value="padj">padj croissante</option></select>
+      <span class="muted">25 lignes environ sont visibles ; faites défiler pour voir les suivantes. Cliquez une voie pour afficher son leading edge.</span>
+    </div>
+    <div class="flexrow" id="icaGseaTables" style="align-items:stretch">
+      <section class="deg-card" style="flex:1;min-width:300px"><h3>Pôle négatif du métagène · NES négatifs</h3><div class="tblwrap" style="max-height:610px"><table class="dt deg-table" id="icaGseaNeg"></table></div></section>
+      <section class="deg-card" style="flex:1;min-width:300px"><h3>Pôle positif du métagène · NES positifs</h3><div class="tblwrap" style="max-height:610px"><table class="dt deg-table" id="icaGseaPos"></table></div></section>
+    </div>
+    <div class="deg-card" id="icaGseaLeadingEdge" style="margin-top:12px"><span class="muted">Cliquez une voie GSEA pour afficher son leading edge.</span></div>
+    <p class="muted">Le signe d’une composante ICA est arbitraire : les deux pôles décrivent des programmes opposés sur cet axe, mais « positif » ne signifie pas intrinsèquement « activé ».</p>
     <div class="tblwrap" style="margin-top:14px"><table class="dt" id="icaGeneTable"></table></div>
   </div>
 
@@ -306,6 +397,46 @@
   <div class="ica-sub" id="ica-sub-corr">
     <div class="warn" id="icaCorrWarn"></div>
     <div class="tblwrap"><table class="dt" id="icaCorrTable"></table></div>
+  </div>
+</div>
+
+<!-- ============ RÉSULTATS EXPRESSION DIFFÉRENTIELLE ============ -->
+<div class="pane" id="pane-diff">
+  <div class="subtabs">
+    <button class="diff-subtab active" data-diff-sub="degsea">DEGSEA</button>
+    <button class="diff-subtab" data-diff-sub="outrider">OUTRIDER</button>
+  </div>
+
+  <div class="diff-sub active" id="diff-sub-degsea">
+    <div class="warn" id="cdeWarn"></div>
+    <div class="ctl" id="cdeCtl">
+      <label>Design :</label><select id="cdeExperiment"></select>
+      <label>Significativité :</label><select id="cdeMetric"><option value="padj">padj (FDR)</option><option value="pvalue">p-value</option></select>
+      <label>Seuil :</label><input type="number" id="cdePThreshold" min="0" max="1" step="0.001" value="0.05">
+      <label>|log2FC| ≥</label><input type="number" id="cdeLfcThreshold" min="0" step="0.1" value="1">
+      <label>Opacité <span class="val" id="cdeOpacityV">0.70</span></label><input type="range" id="cdeOpacity" min="0.05" max="1" step="0.05" value="0.70">
+      <label>Labels top DE :</label><input type="number" id="cdeTopN" min="0" max="100" step="1" value="10">
+    </div>
+    <div class="flexrow" style="justify-content:center">
+      <canvas id="cdeVolcano"></canvas>
+      <div class="legend" id="cdeVolcanoLegend" style="flex-direction:column;align-items:flex-start"></div>
+    </div>
+    <div class="ctl">
+      <label>Collection GSEA :</label><select id="cdeCollection"></select>
+      <label>Filtre :</label><select id="cdeGseaMetric"><option value="padj">padj (FDR)</option><option value="pvalue">p-value nominale</option></select>
+      <label>Seuil :</label><input type="number" id="cdeGseaThreshold" min="0" max="1" step="0.001" value="0.05">
+      <label>Trier :</label><select id="cdeGseaSort"><option value="absnes">|NES| décroissant</option><option value="padj">padj croissante</option></select>
+      <span class="muted">Les tableaux montrent 25 lignes à la fois ; faites défiler pour voir les suivantes. Cliquez une voie pour voir son leading edge.</span>
+    </div>
+    <div class="flexrow" style="align-items:stretch">
+      <section class="deg-card" style="flex:1;min-width:300px"><h3>Gènes downregulated · NES négatifs</h3><div class="tblwrap" style="max-height:610px"><table class="dt deg-table" id="cdeGseaNeg"></table></div></section>
+      <section class="deg-card" style="flex:1;min-width:300px"><h3>Gènes upregulated · NES positifs</h3><div class="tblwrap" style="max-height:610px"><table class="dt deg-table" id="cdeGseaPos"></table></div></section>
+    </div>
+    <div class="deg-card" id="cdeLeadingEdge" style="margin-top:12px"><span class="muted">Cliquez une voie GSEA pour afficher son leading edge.</span></div>
+  </div>
+
+  <div class="diff-sub" id="diff-sub-outrider">
+    <div class="warn on">OUTRIDER n'est pas encore exécuté par le pipeline. Ce sous-onglet est prêt à recevoir ses résultats lorsqu'une étape OUTRIDER sera ajoutée.</div>
   </div>
 </div>
 
@@ -820,6 +951,103 @@ function renderSigDet(){
 })();
 
 /* =========================================================
+   DEGSEA — volcano DESeq2 + GSEA par contraste
+   ========================================================= */
+const DEVOL={points:[]};
+function deDetails(){return DATA.degseaDetail||{};}
+function deSetWarn(msg){const e=$("deWarn");e.className=msg?"warn on":"warn";e.textContent=msg||"";}
+function deNum(id,fallback){const x=+$(id).value;return isFinite(x)?x:fallback;}
+function dePfmt(x){if(x==null||!isFinite(x))return "—";return x===0?"0":x<.001?x.toExponential(2):x.toFixed(4);}
+function deCurrent(){const byK=deDetails(),k=String(+$("deK").value),d=byK[k];if(!d)return null;return (d.contrasts||[]).find(x=>x.id===$("deContrast").value)||null;}
+function deClass(row,metric,pThr,lfcThr){const p=row[metric],lfc=row.log2FoldChange;if(!(isFinite(p)&&isFinite(lfc)&&p<=pThr))return "ns";return lfc>=lfcThr?"up":lfc<=-lfcThr?"down":"ns";}
+function deKDetail(){return deDetails()[String(+$("deK").value)]||null;}
+function deFillContrasts(){const sel=$("deContrast"),old=sel.value,d=deKDetail();sel.innerHTML="";
+  (d&&d.contrasts||[]).forEach(c=>{const o=document.createElement("option");o.value=c.id;o.textContent=c.label+" · "+c.scheme;sel.appendChild(o);});
+  if(old&&[...sel.options].some(o=>o.value===old))sel.value=old;deFillCollections();}
+function deFillCollections(){const sel=$("deCollection"),old=sel.value,c=deCurrent();sel.innerHTML="";
+  Object.keys((c&&c.gsea)||{}).sort((a,b)=>a.localeCompare(b)).forEach(name=>{const o=document.createElement("option");o.value=name;o.textContent=name;sel.appendChild(o);});
+  if(old&&[...sel.options].some(o=>o.value===old))sel.value=old;sel.disabled=!sel.options.length;}
+function deDrawAxis(ctx,x0,y0,x1,y1,xTicks,yTicks,sx,sy){ctx.font="10px ui-monospace";ctx.strokeStyle="#9aa5ab";ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x1,y0);ctx.moveTo(x0,y0);ctx.lineTo(x0,y1);ctx.stroke();
+  ctx.textAlign="center";ctx.textBaseline="top";xTicks.forEach(v=>{const x=sx(v);ctx.strokeStyle="#e4e9eb";ctx.beginPath();ctx.moveTo(x,y1);ctx.lineTo(x,y0);ctx.stroke();ctx.fillStyle="#52616a";ctx.fillText(fmtTick(v),x,y0+6);});
+  ctx.textAlign="right";ctx.textBaseline="middle";yTicks.forEach(v=>{const y=sy(v);ctx.strokeStyle="#e4e9eb";ctx.beginPath();ctx.moveTo(x0,y);ctx.lineTo(x1,y);ctx.stroke();ctx.fillStyle="#52616a";ctx.fillText(fmtTick(v),x0-7,y);});ctx.textAlign="left";ctx.textBaseline="alphabetic";}
+function deRenderVolcano(){const cv=$("deVolcano"),c=deCurrent();if(!c){fitCanvas(cv,540,80).fillText("Choisissez un K et une comparaison DEGSEA.",12,28);$("deVolcanoLegend").innerHTML="";DEVOL.points=[];return;}
+  const metric=$("deMetric").value,pThr=Math.max(0,deNum("dePThreshold",.05)),lfcThr=Math.max(0,deNum("deLfcThreshold",1)),opacity=Math.max(.05,Math.min(1,deNum("deOpacity",.7))),topN=Math.max(0,Math.floor(deNum("deTopN",10)));
+  const rows=(c.genes||[]).filter(r=>isFinite(r.log2FoldChange)&&isFinite(r[metric])).map(r=>({row:r,p:Math.max(+r[metric],Number.MIN_VALUE),y:-Math.log10(Math.max(+r[metric],Number.MIN_VALUE))}));
+  if(!rows.length){fitCanvas(cv,540,80).fillText("Aucun gène DESeq2 avec log2FC et "+metric+" valides.",12,28);$("deVolcanoLegend").innerHTML="";DEVOL.points=[];return;}
+  const maxAbs=Math.max(lfcThr,1,...rows.map(q=>Math.abs(q.row.log2FoldChange))),xLim=Math.ceil(maxAbs*1.08*2)/2;
+  const maxY=Math.max(3,-Math.log10(Math.max(pThr,Number.MIN_VALUE)),...rows.map(q=>q.y)),yLim=Math.ceil(maxY*1.06*2)/2;
+  const W=790,H=530,ML=72,MR=20,MT=26,MB=66,ctx=fitCanvas(cv,W,H),sx=v=>ML+(v+xLim)/(2*xLim)*(W-ML-MR),sy=v=>H-MB-v/yLim*(H-MT-MB);
+  const xt=[];for(let i=-4;i<=4;i++)xt.push(i*xLim/4);const yt=[];for(let i=0;i<=5;i++)yt.push(i*yLim/5);deDrawAxis(ctx,ML,H-MB,W-MR,MT,xt,yt,sx,sy);
+  const yThr=-Math.log10(Math.max(pThr,Number.MIN_VALUE));ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle="#66747c";ctx.lineWidth=1;
+  [lfcThr,-lfcThr].forEach(v=>{ctx.beginPath();ctx.moveTo(sx(v),MT);ctx.lineTo(sx(v),H-MB);ctx.stroke();});ctx.beginPath();ctx.moveTo(ML,sy(yThr));ctx.lineTo(W-MR,sy(yThr));ctx.stroke();ctx.restore();
+  const color={up:"#c73c3c",down:"#2676b8",ns:"#9aa4aa"};const projected=[];
+  rows.sort((a,b)=>deClass(a.row,metric,pThr,lfcThr)==="ns"?-1:deClass(b.row,metric,pThr,lfcThr)==="ns"?1:0).forEach(q=>{const kind=deClass(q.row,metric,pThr,lfcThr),x=sx(q.row.log2FoldChange),y=sy(Math.min(yLim,q.y));projected.push({x,y,row:q.row,kind,p:q.p});ctx.globalAlpha=opacity;ctx.fillStyle=color[kind];ctx.beginPath();ctx.arc(x,y,kind==="ns"?2.1:2.8,0,7);ctx.fill();});ctx.globalAlpha=1;DEVOL.points=projected;
+  const labelled=projected.filter(q=>q.kind!=="ns").sort((a,b)=>a.p-b.p||Math.abs(b.row.log2FoldChange)-Math.abs(a.row.log2FoldChange)).slice(0,topN);ctx.font="10px ui-sans-serif";labelled.forEach(q=>{ctx.fillStyle=color[q.kind];ctx.textAlign=q.row.log2FoldChange>=0?"left":"right";ctx.fillText(q.row.gene.slice(0,22),q.x+(q.row.log2FoldChange>=0?4:-4),q.y-4);});ctx.textAlign="left";
+  ctx.fillStyle="#33414a";ctx.font="11px ui-sans-serif";ctx.textAlign="center";ctx.fillText("log2 fold change — "+c.label,W/2,H-16);ctx.save();ctx.translate(15,H/2);ctx.rotate(-Math.PI/2);ctx.fillText("−log10("+(metric==="padj"?"padj":"p-value")+")",0,0);ctx.restore();ctx.textAlign="left";
+  $("deVolcanoLegend").innerHTML="<b>Volcano DESeq2 · "+esc(c.label)+"</b><div class='muted'>seuil "+(metric==="padj"?"padj":"p-value")+" ≤ "+dePfmt(pThr)+" · |log2FC| ≥ "+lfcThr.toFixed(2)+"</div><div><i class='sw' style='background:#2676b8'></i>downregulated</div><div><i class='sw' style='background:#c73c3c'></i>upregulated</div><div><i class='sw' style='background:#9aa4aa'></i>non significatif</div><div class='muted'>"+rows.length+" gènes · survol = gène · clic = détails</div>";
+}
+function deNearest(e){const r=$("deVolcano").getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;let best=null,d2=81;DEVOL.points.forEach(q=>{const d=(q.x-mx)*(q.x-mx)+(q.y-my)*(q.y-my);if(d<d2){best=q;d2=d;}});return best;}
+function deShowGene(q,e){if(e)e.stopPropagation();const row=q.row,b=_el("degseaGeneBubble","bubble");b.innerHTML="<button class='cls'>×</button><h4>"+esc(row.gene)+"</h4><div class='row'><span>log2 fold change</span><b>"+dePfmt(row.log2FoldChange)+"</b></div><div class='row'><span>p-value</span><b>"+dePfmt(row.pvalue)+"</b></div><div class='row'><span>padj (FDR)</span><b>"+dePfmt(row.padj)+"</b></div>";const link=document.createElement("button");link.className="mini";link.textContent="Voir GeneCards";link.onclick=ev=>{ev.stopPropagation();window.open("https://www.genecards.org/card/"+encodeURIComponent(row.gene),"_blank","noopener");};b.appendChild(link);b.style.display="block";b.style.left=Math.min(e.clientX+13,window.innerWidth-330)+"px";b.style.top=Math.min(e.clientY+15,window.innerHeight-Math.min(230,b.scrollHeight+20))+"px";b.querySelector(".cls").onclick=ev=>{ev.stopPropagation();b.style.display="none";};}
+function deShowLeadingEdge(row){const host=$("deLeadingEdge");host.innerHTML="<h3 style='margin:0 0 7px;font-size:.88rem'>"+esc(row.term)+"</h3><div class='muted'>NES = "+dePfmt(row.NES)+" · padj = "+dePfmt(row.padj)+"</div><div style='margin-top:7px;white-space:pre-wrap;word-break:break-word'>"+esc(row.leadingEdge||"Leading edge non disponible dans le résultat GSEA.")+"</div>";}
+function deGseaTable(id,rows){const table=$(id);let html="<thead><tr><th>Gene set</th><th>NES</th><th>padj</th></tr></thead><tbody>";rows.forEach((r,i)=>{html+="<tr data-i='"+i+"' tabindex='0' title='Cliquer pour le leading edge'><td>"+esc(r.term)+"</td><td>"+dePfmt(r.NES)+"</td><td>"+dePfmt(r.padj)+"</td></tr>";});table.innerHTML=html+"</tbody>";table.querySelectorAll("tbody tr").forEach(tr=>{const open=()=>deShowLeadingEdge(rows[+tr.dataset.i]);tr.onclick=open;tr.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();open();}};});}
+function deRenderGsea(){const c=deCurrent(),sel=$("deCollection"),collection=sel.value;if(!c||!collection){deGseaTable("deGseaNeg",[]);deGseaTable("deGseaPos",[]);return;}
+  const metric=$("deGseaMetric").value,threshold=Math.max(0,deNum("deGseaThreshold",.05)),sort=$("deGseaSort").value;let rows=((c.gsea||{})[collection]||[]).filter(r=>isFinite(r.NES)&&isFinite(r[metric])&&r[metric]<=threshold);
+  rows.sort((a,b)=>sort==="padj"?((a.padj==null?Infinity:a.padj)-(b.padj==null?Infinity:b.padj)||Math.abs(b.NES)-Math.abs(a.NES)):Math.abs(b.NES)-Math.abs(a.NES)||(a.padj==null?Infinity:a.padj)-(b.padj==null?Infinity:b.padj));
+  deGseaTable("deGseaNeg",rows.filter(r=>r.NES<0));deGseaTable("deGseaPos",rows.filter(r=>r.NES>0));}
+function deRender(){const c=deCurrent();deSetWarn(c?"":"Aucun résultat DEGSEA disponible pour ce K / cette comparaison. Relancez avec run_degsea = y (et degsea_all_k = y pour chaque K). ");deRenderVolcano();deRenderGsea();}
+(function initDegsea(){const byK=deDetails(),ks=Object.keys(byK).map(Number).filter(Number.isFinite).sort((a,b)=>a-b),kSel=$("deK");if(!ks.length){deSetWarn("Aucun résultat DEGSEA détaillé dans ce rapport. Activez run_degsea = y puis régénérez le rapport.");$("deCtl").style.display="none";return;}
+  ks.forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent="k = "+k;kSel.appendChild(o);});kSel.value=ks.includes(+DATA.degseaK)?String(DATA.degseaK):String(ks[0]);deFillContrasts();
+  kSel.onchange=()=>{deFillContrasts();deRender();};$("deContrast").onchange=()=>{deFillCollections();deRender();};$("deCollection").onchange=deRenderGsea;
+  ["deMetric","dePThreshold","deLfcThreshold","deTopN"].forEach(id=>$(id).oninput=deRender);$("deMetric").onchange=deRender;$("deOpacity").oninput=()=>{$("deOpacityV").textContent=(+$("deOpacity").value).toFixed(2);deRenderVolcano();};
+  ["deGseaMetric","deGseaThreshold","deGseaSort"].forEach(id=>$(id).oninput=deRenderGsea);$("deGseaMetric").onchange=deRenderGsea;$("deGseaSort").onchange=deRenderGsea;
+  const cv=$("deVolcano");cv.onmousemove=e=>{const q=deNearest(e);if(!q){_hideTip();cv.style.cursor="crosshair";return;}cv.style.cursor="pointer";_showTip(e,"gène <b>"+esc(q.row.gene)+"</b>");};cv.onmouseleave=_hideTip;cv.onclick=e=>{const q=deNearest(e);if(q)deShowGene(q,e);};deRender();
+})();
+
+/* =========================================================
+   DEGSEA clinique — même interface volcano / GSEA, par design
+   ========================================================= */
+const CDEVOL={points:[]};
+function cdeDetails(){return DATA.clinicalDegseaDetail||{};}
+function cdeSetWarn(msg){const e=$("cdeWarn");e.className=msg?"warn on":"warn";e.textContent=msg||"";}
+function cdeCurrent(){return cdeDetails()[$("cdeExperiment").value]||null;}
+function cdeFillCollections(){const sel=$("cdeCollection"),old=sel.value,c=cdeCurrent();sel.innerHTML="";
+  Object.keys((c&&c.gsea)||{}).sort((a,b)=>a.localeCompare(b)).forEach(name=>{const o=document.createElement("option");o.value=name;o.textContent=name;sel.appendChild(o);});
+  if(old&&[...sel.options].some(o=>o.value===old))sel.value=old;sel.disabled=!sel.options.length;}
+function cdeRenderVolcano(){const cv=$("cdeVolcano"),c=cdeCurrent();if(!c){fitCanvas(cv,540,80).fillText("Choisissez un design DEGSEA clinique.",12,28);$("cdeVolcanoLegend").innerHTML="";CDEVOL.points=[];return;}
+  const metric=$("cdeMetric").value,pThr=Math.max(0,deNum("cdePThreshold",.05)),lfcThr=Math.max(0,deNum("cdeLfcThreshold",1)),opacity=Math.max(.05,Math.min(1,deNum("cdeOpacity",.7))),topN=Math.max(0,Math.floor(deNum("cdeTopN",10)));
+  const rows=(c.genes||[]).filter(r=>isFinite(r.log2FoldChange)&&isFinite(r[metric])).map(r=>({row:r,p:Math.max(+r[metric],Number.MIN_VALUE),y:-Math.log10(Math.max(+r[metric],Number.MIN_VALUE))}));
+  if(!rows.length){fitCanvas(cv,540,80).fillText("Aucun gène DESeq2 avec log2FC et "+metric+" valides.",12,28);$("cdeVolcanoLegend").innerHTML="";CDEVOL.points=[];return;}
+  const maxAbs=Math.max(lfcThr,1,...rows.map(q=>Math.abs(q.row.log2FoldChange))),xLim=Math.ceil(maxAbs*1.08*2)/2;
+  const maxY=Math.max(3,-Math.log10(Math.max(pThr,Number.MIN_VALUE)),...rows.map(q=>q.y)),yLim=Math.ceil(maxY*1.06*2)/2;
+  const W=790,H=530,ML=72,MR=20,MT=26,MB=66,ctx=fitCanvas(cv,W,H),sx=v=>ML+(v+xLim)/(2*xLim)*(W-ML-MR),sy=v=>H-MB-v/yLim*(H-MT-MB);
+  const xt=[];for(let i=-4;i<=4;i++)xt.push(i*xLim/4);const yt=[];for(let i=0;i<=5;i++)yt.push(i*yLim/5);deDrawAxis(ctx,ML,H-MB,W-MR,MT,xt,yt,sx,sy);
+  const yThr=-Math.log10(Math.max(pThr,Number.MIN_VALUE));ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle="#66747c";ctx.lineWidth=1;
+  [lfcThr,-lfcThr].forEach(v=>{ctx.beginPath();ctx.moveTo(sx(v),MT);ctx.lineTo(sx(v),H-MB);ctx.stroke();});ctx.beginPath();ctx.moveTo(ML,sy(yThr));ctx.lineTo(W-MR,sy(yThr));ctx.stroke();ctx.restore();
+  const color={up:"#c73c3c",down:"#2676b8",ns:"#9aa4aa"},projected=[];
+  rows.sort((a,b)=>deClass(a.row,metric,pThr,lfcThr)==="ns"?-1:deClass(b.row,metric,pThr,lfcThr)==="ns"?1:0).forEach(q=>{const kind=deClass(q.row,metric,pThr,lfcThr),x=sx(q.row.log2FoldChange),y=sy(Math.min(yLim,q.y));projected.push({x,y,row:q.row,kind,p:q.p});ctx.globalAlpha=opacity;ctx.fillStyle=color[kind];ctx.beginPath();ctx.arc(x,y,kind==="ns"?2.1:2.8,0,7);ctx.fill();});ctx.globalAlpha=1;CDEVOL.points=projected;
+  const labelled=projected.filter(q=>q.kind!=="ns").sort((a,b)=>a.p-b.p||Math.abs(b.row.log2FoldChange)-Math.abs(a.row.log2FoldChange)).slice(0,topN);ctx.font="10px ui-sans-serif";labelled.forEach(q=>{ctx.fillStyle=color[q.kind];ctx.textAlign=q.row.log2FoldChange>=0?"left":"right";ctx.fillText(q.row.gene.slice(0,22),q.x+(q.row.log2FoldChange>=0?4:-4),q.y-4);});ctx.textAlign="left";
+  ctx.fillStyle="#33414a";ctx.font="11px ui-sans-serif";ctx.textAlign="center";ctx.fillText("log2 fold change — "+c.label,W/2,H-16);ctx.save();ctx.translate(15,H/2);ctx.rotate(-Math.PI/2);ctx.fillText("−log10("+(metric==="padj"?"padj":"p-value")+")",0,0);ctx.restore();ctx.textAlign="left";
+  $("cdeVolcanoLegend").innerHTML="<b>Volcano DESeq2 · "+esc(c.label)+"</b><div class='muted'>seuil "+(metric==="padj"?"padj":"p-value")+" ≤ "+dePfmt(pThr)+" · |log2FC| ≥ "+lfcThr.toFixed(2)+"</div><div><i class='sw' style='background:#2676b8'></i>downregulated</div><div><i class='sw' style='background:#c73c3c'></i>upregulated</div><div><i class='sw' style='background:#9aa4aa'></i>non significatif</div><div class='muted'>"+rows.length+" gènes · survol = gène · clic = détails</div>";
+}
+function cdeNearest(e){const r=$("cdeVolcano").getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;let best=null,d2=81;CDEVOL.points.forEach(q=>{const d=(q.x-mx)*(q.x-mx)+(q.y-my)*(q.y-my);if(d<d2){best=q;d2=d;}});return best;}
+function cdeShowGene(q,e){if(e)e.stopPropagation();const row=q.row,b=_el("clinicalDegseaGeneBubble","bubble");b.innerHTML="<button class='cls'>×</button><h4>"+esc(row.gene)+"</h4><div class='row'><span>log2 fold change</span><b>"+dePfmt(row.log2FoldChange)+"</b></div><div class='row'><span>p-value</span><b>"+dePfmt(row.pvalue)+"</b></div><div class='row'><span>padj (FDR)</span><b>"+dePfmt(row.padj)+"</b></div>";const link=document.createElement("button");link.className="mini";link.textContent="Voir GeneCards";link.onclick=ev=>{ev.stopPropagation();window.open("https://www.genecards.org/card/"+encodeURIComponent(row.gene),"_blank","noopener");};b.appendChild(link);b.style.display="block";b.style.left=Math.min(e.clientX+13,window.innerWidth-330)+"px";b.style.top=Math.min(e.clientY+15,window.innerHeight-Math.min(230,b.scrollHeight+20))+"px";b.querySelector(".cls").onclick=ev=>{ev.stopPropagation();b.style.display="none";};}
+function cdeShowLeadingEdge(row){const host=$("cdeLeadingEdge");host.innerHTML="<h3 style='margin:0 0 7px;font-size:.88rem'>"+esc(row.term)+"</h3><div class='muted'>NES = "+dePfmt(row.NES)+" · padj = "+dePfmt(row.padj)+"</div><div style='margin-top:7px;white-space:pre-wrap;word-break:break-word'>"+esc(row.leadingEdge||"Leading edge non disponible dans le résultat GSEA.")+"</div>";}
+function cdeGseaTable(id,rows){const table=$(id);let html="<thead><tr><th>Gene set</th><th>NES</th><th>padj</th></tr></thead><tbody>";rows.forEach((r,i)=>{html+="<tr data-i='"+i+"' tabindex='0' title='Cliquer pour le leading edge'><td>"+esc(r.term)+"</td><td>"+dePfmt(r.NES)+"</td><td>"+dePfmt(r.padj)+"</td></tr>";});table.innerHTML=html+"</tbody>";table.querySelectorAll("tbody tr").forEach(tr=>{const open=()=>cdeShowLeadingEdge(rows[+tr.dataset.i]);tr.onclick=open;tr.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();open();}};});}
+function cdeRenderGsea(){const c=cdeCurrent(),sel=$("cdeCollection"),collection=sel.value;if(!c||!collection){cdeGseaTable("cdeGseaNeg",[]);cdeGseaTable("cdeGseaPos",[]);return;}
+  const metric=$("cdeGseaMetric").value,threshold=Math.max(0,deNum("cdeGseaThreshold",.05)),sort=$("cdeGseaSort").value;let rows=((c.gsea||{})[collection]||[]).filter(r=>isFinite(r.NES)&&isFinite(r[metric])&&r[metric]<=threshold);
+  rows.sort((a,b)=>sort==="padj"?((a.padj==null?Infinity:a.padj)-(b.padj==null?Infinity:b.padj)||Math.abs(b.NES)-Math.abs(a.NES)):Math.abs(b.NES)-Math.abs(a.NES)||(a.padj==null?Infinity:a.padj)-(b.padj==null?Infinity:b.padj));
+  cdeGseaTable("cdeGseaNeg",rows.filter(r=>r.NES<0));cdeGseaTable("cdeGseaPos",rows.filter(r=>r.NES>0));}
+function cdeRender(){const c=cdeCurrent();cdeSetWarn(c?"":"Aucun résultat DEGSEA clinique disponible. Configurez clinical_degsea puis régénérez le rapport.");cdeRenderVolcano();cdeRenderGsea();}
+(function initClinicalDegsea(){const details=cdeDetails(),names=Object.keys(details).sort((a,b)=>a.localeCompare(b)),sel=$("cdeExperiment");if(!names.length){cdeSetWarn("Aucun résultat DEGSEA clinique détaillé dans ce rapport. Configurez clinical_degsea puis relancez le pipeline.");$("cdeCtl").style.display="none";return;}
+  names.forEach(name=>{const o=document.createElement("option");o.value=name;o.textContent=details[name].label||name;sel.appendChild(o);});cdeFillCollections();
+  sel.onchange=()=>{cdeFillCollections();cdeRender();};$("cdeCollection").onchange=cdeRenderGsea;
+  ["cdeMetric","cdePThreshold","cdeLfcThreshold","cdeTopN"].forEach(id=>$(id).oninput=cdeRender);$("cdeMetric").onchange=cdeRender;$("cdeOpacity").oninput=()=>{$("cdeOpacityV").textContent=(+$("cdeOpacity").value).toFixed(2);cdeRenderVolcano();};
+  ["cdeGseaMetric","cdeGseaThreshold","cdeGseaSort"].forEach(id=>$(id).oninput=cdeRenderGsea);$("cdeGseaMetric").onchange=cdeRenderGsea;$("cdeGseaSort").onchange=cdeRenderGsea;
+  const cv=$("cdeVolcano");cv.onmousemove=e=>{const q=cdeNearest(e);if(!q){_hideTip();cv.style.cursor="crosshair";return;}cv.style.cursor="pointer";_showTip(e,"gène <b>"+esc(q.row.gene)+"</b>");};cv.onmouseleave=_hideTip;cv.onclick=e=>{const q=cdeNearest(e);if(q)cdeShowGene(q,e);};cdeRender();
+})();
+
+/* =========================================================
    t-SNE / UMAP — nuage 3D interactif (glisser = tourner, molette = zoom)
    ========================================================= */
 let emRot={x:0.35,y:0.6}, emZoom=1, emProj=null;   // emProj : dernière projection écran des points (survol/clic)
@@ -878,8 +1106,9 @@ function fillEmCascade(collSel,memSel,pred,noneLabel,defColl){
   collSel.onchange=fillMembers;memSel.onchange=renderEmbed;
   collSel.value=(defColl&&groups[defColl])?defColl:"none";fillMembers();}
 
+function emEmbeddingsForK(){const byK=DATA.embedByK||{};return byK[String(+$("emK").value)]||DATA.embed||{};}
 function renderEmbed(){
-  const method=$("emMethod").value, pts=DATA.embed[method], cv=$("emCanvas");
+  const method=$("emMethod").value, pts=emEmbeddingsForK()[method], cv=$("emCanvas");
   if(!pts){fitCanvas(cv,400,80).fillText("Pas d'embedding "+method,10,20);return;}
   const W=560,H=520,ctx=fitCanvas(cv,W,H), n=pts.length;
   let cx=0,cy=0,cz=0; pts.forEach(p=>{cx+=p[0];cy+=p[1];cz+=p[2];}); cx/=n;cy/=n;cz/=n;
@@ -946,7 +1175,7 @@ function renderEmbed(){
   // ---- légende : une section par canal actif
   const HH='style="font-weight:600;margin-top:7px;color:#3a444b"';
   let out="<b>"+kInfo(+$("emK").value)+" · "+method.toUpperCase()+" 3D</b>"+
-    "<div class='muted'>glisser = tourner · molette = zoom</div>";
+    "<div class='muted'>coordonnées apprises sur D<sub>K</sub> = 1 − C<sub>K</sub> · glisser = tourner · molette = zoom</div>";
   if(colSrc){out+="<div "+HH+">Couleur : "+colSrc.label+"</div>";
     if(colV.cont){for(let t=4;t>=0;t--){const v=clo+(chi-clo)*t/4;out+='<div><i class="sw" style="background:'+viridis(t/4)+'"></i>'+(isFinite(v)?v.toFixed(2):"—")+'</div>';}}
     else ccats.forEach((c,i)=>out+='<div><i class="sw" style="background:'+CAT[i%CAT.length]+'"></i>'+c+'</div>');}
@@ -958,7 +1187,7 @@ function renderEmbed(){
 }
 
 (function initEmbed(){
-  const em=$("emMethod");Object.keys(DATA.embed).forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m.toUpperCase();em.appendChild(o);});
+  const em=$("emMethod"),methods=new Set(Object.keys(DATA.embed||{}));Object.values(DATA.embedByK||{}).forEach(e=>Object.keys(e||{}).forEach(m=>methods.add(m)));methods.forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m.toUpperCase();em.appendChild(o);});
   fillKSelect($("emK"),DATA.kFinal);
   EMSRC=buildEmSources();
   // couleur (tout) & taille (continu seul) : menu en cascade collection -> signature
@@ -993,6 +1222,29 @@ function starRes(v){const a=Math.abs(v);return a>2.58?"**":a>1.96?"*":"";}
 function testLabel(t){return {chi2:"khi² de Pearson",fisher_exact:"Fisher exact",
   chi2_montecarlo:"khi² de Monte-Carlo",trend:"test de tendance (Cochran-Armitage / linéaire-par-linéaire)"}[t]||t;}
 function asEsc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function asTestExplanation(d){
+  const R=(d.rows||[]).length,C=(d.cols||[]).length,shape=R+" × "+C;
+  const minExp=d.min_expected==null?null:+d.min_expected,frac=d.frac_cells_low_expected==null?null:+d.frac_cells_low_expected;
+  const expThr=d.expected_threshold==null?5:+d.expected_threshold,maxFrac=d.max_low_expected_fraction==null?.2:+d.max_low_expected_fraction;
+  const diag=(minExp==null||frac==null)
+    ?"Diagnostic des effectifs attendus non disponible dans cet ancien rapport."
+    :"Table "+shape+" · attendu minimal = "+minExp.toFixed(2)+" · "+(100*frac).toFixed(1)+" % des cellules avec un attendu < "+expThr.toFixed(0)+".";
+  let why="";
+  if(d.test==="trend")why="Les conditions asymptotiques sont satisfaites ; au moins une variable a été déclarée ordinale et les deux axes peuvent être ordonnés ou codés. Le test recherche donc spécifiquement une évolution monotone.";
+  else if(d.test==="chi2")why="Les conditions de Cochran sont satisfaites : aucun effectif attendu n’est inférieur à 1 et au plus "+(100*maxFrac).toFixed(0)+" % des cellules sont sous "+expThr.toFixed(0)+". L’approximation asymptotique du khi² de Pearson est donc utilisée.";
+  else if(d.test==="fisher_exact")why="Les conditions du khi² ne sont pas satisfaites et la table est 2 × 2. Le test exact de Fisher remplace alors l’approximation asymptotique.";
+  else if(d.test==="chi2_montecarlo")why="Les conditions du khi² ne sont pas satisfaites et la table "+shape+" n’est pas 2 × 2. La p-value est donc estimée par "+(d.mc_resamples||2000)+" permutations à marges fixes.";
+  const rule=[
+    ["fisher_exact","Fisher exact : conditions non satisfaites, table 2 × 2."],
+    ["chi2_montecarlo","Monte-Carlo : conditions non satisfaites, table R × C."],
+    ["trend","Tendance : conditions satisfaites, variable ordinale et axes scorables."],
+    ["chi2","Pearson : conditions satisfaites, sans tendance ordinale applicable."]
+  ];
+  return "<h3>Pourquoi ce test ?</h3><div class='chosen'>"+testLabel(d.test)+"</div><div>"+why+"</div>"
+    +"<div class='diag'>"+diag+"</div><div><b>Règle de sélection</b></div><ol>"
+    +rule.map(x=>"<li class='"+(x[0]===d.test?"current":"")+"'>"+x[1]+"</li>").join("")+"</ol>"
+    +"<div class='muted' style='margin-top:8px'>Le V de Cramér et les résidus de Haberman restent calculés à partir du tableau de Pearson comme mesures descriptives, quel que soit le test inférentiel retenu.</div>";
+}
 // tableau de contingence (effectifs observés) + marginales (totaux ligne/colonne)
 function asCountsTable(d){const R=d.rows,C=d.cols,cnt=d.counts;
   const rowTot=cnt.map(r=>r.reduce((a,b)=>a+b,0)),colTot=C.map((_,j)=>cnt.reduce((s,r)=>s+r[j],0));
@@ -1005,9 +1257,10 @@ function asCountsTable(d){const R=d.rows,C=d.cols,cnt=d.counts;
   t+='<tr><th class="tot">Total</th>'+colTot.map(x=>'<td class="tot">'+x+'</td>').join('')
     +'<td class="tot">'+d.n+'</td></tr></tbody></table>';return t;}
 function renderAssoc(){
-  const d=asGet(),cv=$("asCanvas"),info=$("asInfo");
-  if(!d){fitCanvas(cv,380,60).fillText("Aucun croisement disponible.",12,26);info.innerHTML="";$("asTable").innerHTML="";return;}
+  const d=asGet(),cv=$("asCanvas"),info=$("asInfo"),why=$("asTestWhy");
+  if(!d){fitCanvas(cv,380,60).fillText("Aucun croisement disponible.",12,26);info.innerHTML="";why.innerHTML="";$("asTable").innerHTML="";return;}
   $("asTable").innerHTML=asCountsTable(d);
+  why.innerHTML=asTestExplanation(d);
   const R=d.rows,C=d.cols,res=d.resid;
   const ML=Math.max(64,...R.map(s=>s.length*7)),MT=26,
         CW=Math.max(48,...C.map(s=>s.length*8+10)),CH=30;
@@ -1027,11 +1280,12 @@ function renderAssoc(){
     ?("tendance r = "+(d.trend_r==null?"—":d.trend_r.toFixed(2))+(d.trend_r>0?" (croissante)":d.trend_r<0?" (décroissante)":""))
     :("V de Cramér = "+cvv);
   const sig=d.padj<0.001?"***":d.padj<0.01?"**":d.padj<0.05?"*":"ns";
+  const conditionNote=d.test==="trend"?" · variable ordinale":(d.conditions_met?"":" · conditions khi² non remplies");
   info.innerHTML="<b>"+testLabel(d.test)+"</b>"
     +"<div>p = "+d.pvalue.toExponential(2)+"</div>"
     +"<div>p ajustée (FDR) = "+d.padj.toExponential(2)+" &nbsp;<b>"+sig+"</b></div>"
     +"<div>"+eff+"</div>"
-    +"<div class='muted'>n = "+d.n+(d.conditions_met?"":" · conditions khi² non remplies")+"</div>"
+    +"<div class='muted'>n = "+d.n+conditionNote+"</div>"
     +"<div style='margin-top:8px;font-weight:600;color:#3a444b'>Résidus ajustés (Haberman)</div>"
     +'<div><i class="sw" style="background:'+rdbu(vmax,vmax)+'"></i> sur-représenté</div>'
     +'<div><i class="sw" style="background:'+rdbu(-vmax,vmax)+'"></i> sous-représenté</div>'
@@ -1204,7 +1458,7 @@ function icaDrop(tgt,e){e.preventDefault();if(!icaDragSrc)return;const src=icaDr
 function icaShowMenu(side,anchor){if(icaOpenMenu){icaOpenMenu.remove();icaOpenMenu=null;}const B=icaBranch();if(!B)return;const m=document.createElement("div"),groups={};m.className="menu";icaAvailablePanels(B).forEach(it=>(groups[it.grp]=groups[it.grp]||[]).push(it));Object.keys(groups).forEach(g=>{const h=document.createElement("div");h.className="grp";h.textContent=g;m.appendChild(h);groups[g].forEach(it=>{const b=document.createElement("button");b.textContent=it.label;b.onclick=()=>{if(!IP[side].includes(it.id))IP[side].push(it.id);m.remove();icaOpenMenu=null;renderIcaConsensus();};m.appendChild(b);});});document.body.appendChild(m);const r=anchor.getBoundingClientRect();m.style.left=Math.min(r.left,window.innerWidth-260)+"px";m.style.top=(r.bottom+window.scrollY+4)+"px";icaOpenMenu=m;}
 /* ---- Nuages 3D ICA : même géométrie et interactions que l'embedding historique. ---- */
 const ICA3D={projection:{x:.35,y:.6,zoom:1,proj:[]},embedding:{x:.35,y:.6,zoom:1,proj:[]}};
-let ICAEMSRC=[],icaEmbedDimension=null,ica3dBound=false;
+let ICAEMSRC=[],ICAPROJSRC=[],icaEmbedDimension=null,icaProjectionDimension=null,icaGseaDimension=null,ica3dBound=false;
 function icaDraw3DScene(cv,rawPoints,axes,state,colorOf,shapeOf,sizeOf){
   const pts=(rawPoints||[]).map((p,i)=>({i,x:+p[0],y:+p[1],z:+p[2]})).filter(p=>isFinite(p.x)&&isFinite(p.y)&&isFinite(p.z));
   if(!pts.length){fitCanvas(cv,400,80).fillText("Aucun point 3D disponible.",10,20);state.proj=[];return;}
@@ -1241,30 +1495,40 @@ function icaDimensionOption(d){const op=document.createElement("option"),roles=i
   // MSTD a la priorité visuelle, puis les voisins, puis la stabilité moyenne.
   const primary=["mstd","nearest_lower","nearest_higher","best_mean_stability"].find(r=>roles.includes(r));
   const style=ICA_DIMENSION_ROLES[primary];if(style){op.style.background=style.bg;op.style.color=style.fg;}return op;}
-function icaSetDimension(value,resetK){curIcaDim=+value;icaEmbedDimension=null;["icaDimSelect","icaConsensusDimSelect"].forEach(id=>{const s=$(id);if(s)s.value=String(curIcaDim);});icaRebuildProjectionAxes();icaFillKSelect(resetK);}
-function renderIcaProjection(){const B=icaBranch();if(!B)return;const P=B.projection,ns=P.componentNames||[],scores=P.scores||[],xi=Math.max(0,ns.indexOf($("icaProjX").value)),yi=Math.max(0,ns.indexOf($("icaProjY").value)),zi=Math.max(0,ns.indexOf($("icaProjZ").value)),labs=icaLabels(B,(B.consensus||{}).kFinal),pts=scores.map(r=>[r[xi],r[yi],r[zi]]);
-  icaDraw3DScene($("icaProjCanvas"),pts,[ns[xi],ns[yi],ns[zi]],ICA3D.projection,i=>labs.length?clusterCol(labs[i]):"#0f766e",()=>MK[0],(_,depth)=>3.2*(.7+.55*depth));
-  $("icaProjLegend").innerHTML="<b>Projection ICA 3D · m="+curIcaDim+"</b><span>"+B.n+" tumeurs</span><span>Couleur : clusters ICA (k="+(B.consensus||{}).kFinal+")</span><span class='muted'>glisser = tourner · molette = zoom · survol/clic = tumeur</span>";
-  const rows=[];Object.keys(P.topGenes||{}).forEach(ic=>(P.topGenes[ic]||[]).slice(0,6).forEach(g=>rows.push([ic,g.gene,icaFmt(g.loading,4)])));
-  $("icaGeneTable").innerHTML=icaTable(["Composante","Top gène (|loading|)","Loading"],rows);
+function icaSetDimension(value,resetK){curIcaDim=+value;icaEmbedDimension=null;icaProjectionDimension=null;icaGseaDimension=null;["icaDimSelect","icaConsensusDimSelect"].forEach(id=>{const s=$(id);if(s)s.value=String(curIcaDim);});icaRebuildProjectionAxes();icaFillKSelect(resetK);}
+function icaProjGet(id){const value=$(id).value;return value===""||value==="none"?null:ICAPROJSRC[+value];}
+function icaFillProjectionSelect(sel,pred,noneLabel){sel.innerHTML="";const none=document.createElement("option");none.value="none";none.textContent=noneLabel;sel.appendChild(none);const groups={};ICAPROJSRC.forEach((src,i)=>{if(pred(src))(groups[src.coll]=groups[src.coll]||[]).push(i);});for(const group in groups){const og=document.createElement("optgroup");og.label=group;groups[group].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=ICAPROJSRC[i].label;og.appendChild(o);});sel.appendChild(og);}}
+function icaFillProjectionCascade(collSel,memberSel,pred,noneLabel,defaultColl){const groups={};ICAPROJSRC.forEach((src,i)=>{if(pred(src))(groups[src.coll]=groups[src.coll]||[]).push(i);});collSel.innerHTML="";const none=document.createElement("option");none.value="none";none.textContent=noneLabel;collSel.appendChild(none);Object.keys(groups).forEach(group=>{const o=document.createElement("option");o.value=group;o.textContent=group;collSel.appendChild(o);});const fillMembers=redraw=>{const group=collSel.value;memberSel.innerHTML="";if(group==="none"||!groups[group]){const o=document.createElement("option");o.value="none";o.textContent="—";memberSel.appendChild(o);memberSel.value="none";memberSel.style.display="none";}else{memberSel.style.display="";groups[group].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=ICAPROJSRC[i].label;memberSel.appendChild(o);});memberSel.value=groups[group][0];}if(redraw)renderIcaProjection();};collSel.onchange=()=>fillMembers(true);memberSel.onchange=renderIcaProjection;collSel.value=defaultColl&&groups[defaultColl]?defaultColl:"none";fillMembers(false);}
+function icaPrepareProjection(B){if(icaProjectionDimension===curIcaDim)return;icaProjectionDimension=curIcaDim;ICAPROJSRC=icaBuildEmSources(B);icaFillProjectionCascade($("icaProjColorColl"),$("icaProjColor"),()=>true,"— aucun (couleur unie) —","Autre");icaFillProjectionCascade($("icaProjSizeColl"),$("icaProjSize"),s=>s.kind==="cont","— aucune (taille fixe) —");icaFillProjectionSelect($("icaProjShape"),s=>s.kind==="cat","— aucune (cercle) —");$("icaProjShape").onchange=renderIcaProjection;}
+function renderIcaProjection(){const B=icaBranch();if(!B)return;icaPrepareProjection(B);const P=B.projection,ns=P.componentNames||[],scores=P.scores||[],xi=Math.max(0,ns.indexOf($("icaProjX").value)),yi=Math.max(0,ns.indexOf($("icaProjY").value)),zi=Math.max(0,ns.indexOf($("icaProjZ").value)),pts=scores.map(r=>[r[xi],r[yi],r[zi]]),k=(B.consensus||{}).kFinal;
+  const colSrc=icaProjGet("icaProjColor"),shapeSrc=icaProjGet("icaProjShape"),sizeSrc=icaProjGet("icaProjSize"),colV=icaSourceVals(B,colSrc,k),shapeV=icaSourceVals(B,shapeSrc,k),sizeV=icaSourceVals(B,sizeSrc,k);let clo=0,chi=1,cats=[];if(colV){if(colV.cont){const f=colV.vals.filter(v=>v!=null&&isFinite(v));if(f.length){clo=Math.min(...f);chi=Math.max(...f);}}else cats=[...new Set(colV.vals.filter(v=>v!=null))];}const colorOf=i=>{if(!colV)return"#3b82c4";const v=colV.vals[i];return v==null?"#ccc":colV.cont?viridis((v-clo)/((chi-clo)||1)):CAT[cats.indexOf(v)%CAT.length];};const shapeCats=shapeV?[...new Set(shapeV.vals.filter(v=>v!=null))]:[],shapeOf=i=>{if(!shapeV||shapeV.vals[i]==null)return MK[0];return MK[shapeCats.indexOf(shapeV.vals[i])%MK.length];};let zlo=0,zhi=1;if(sizeV){const f=sizeV.vals.filter(v=>v!=null&&isFinite(v));if(f.length){zlo=Math.min(...f);zhi=Math.max(...f);}}const sizeOf=(i,depth)=>{let size=3.2;if(sizeV){const v=sizeV.vals[i];size=v==null?2:2+4.6*((v-zlo)/((zhi-zlo)||1));}return size*(.7+.55*depth);};
+  icaDraw3DScene($("icaProjCanvas"),pts,[ns[xi],ns[yi],ns[zi]],ICA3D.projection,colorOf,shapeOf,sizeOf);const HH='style="font-weight:600;margin-top:7px;color:#3a444b"';let out="<b>Projection ICA 3D · m="+curIcaDim+"</b><div class='muted'>"+B.n+" tumeurs · glisser = tourner · molette = zoom · survol/clic = tumeur</div>";if(colSrc){out+="<div "+HH+">Couleur : "+colSrc.label+"</div>";if(colV.cont){for(let t=4;t>=0;t--){const v=clo+(chi-clo)*t/4;out+='<div><i class="sw" style="background:'+viridis(t/4)+'"></i>'+(isFinite(v)?v.toFixed(2):"—")+"</div>";}}else cats.forEach((c,i)=>out+='<div><i class="sw" style="background:'+CAT[i%CAT.length]+'"></i>'+c+"</div>");}if(shapeSrc){out+="<div "+HH+">Forme : "+shapeSrc.label+"</div>";shapeCats.forEach((c,i)=>out+='<div><span style="font-size:14px;line-height:1;color:#33414a">'+MK[i%MK.length].g+"</span> "+c+"</div>");}if(sizeSrc)out+="<div "+HH+">Taille : "+sizeSrc.label+"</div><div class='muted'>"+(isFinite(zlo)?zlo.toFixed(2):"—")+" → "+(isFinite(zhi)?zhi.toFixed(2):"—")+" (petit → grand)</div>";$("icaProjLegend").innerHTML=out;
+  const rows=[];Object.keys(P.topGenes||{}).forEach(ic=>(P.topGenes[ic]||[]).slice(0,6).forEach(g=>rows.push([ic,g.gene,icaFmt(g.loading,4)])));$("icaGeneTable").innerHTML=icaTable(["Composante","Top gène (|loading|)","Loading"],rows);
 }
+function icaGseaFillCollections(B,redraw){const all=B.metageneGsea||{},component=$("icaGseaComponent").value,collections=Object.keys(all[component]||{}).sort((a,b)=>a.localeCompare(b)),sel=$("icaGseaCollection"),old=sel.value;sel.innerHTML="";collections.forEach(name=>{const o=document.createElement("option");o.value=name;o.textContent=name;sel.appendChild(o);});if(old&&collections.includes(old))sel.value=old;sel.disabled=!collections.length;$("icaGseaLeadingEdge").innerHTML='<span class="muted">Cliquez une voie GSEA pour afficher son leading edge.</span>';if(redraw)renderIcaMetageneGsea();}
+function icaPrepareMetageneGsea(B){if(icaGseaDimension===curIcaDim)return;icaGseaDimension=curIcaDim;const all=B.metageneGsea||{},components=((B.projection||{}).componentNames||Object.keys(all)),sel=$("icaGseaComponent");sel.innerHTML="";components.forEach(name=>{const o=document.createElement("option");o.value=name;o.textContent=name;sel.appendChild(o);});const firstWithResults=components.find(name=>Object.keys(all[name]||{}).length);if(firstWithResults)sel.value=firstWithResults;sel.disabled=!components.length;sel.onchange=()=>icaGseaFillCollections(B,true);$("icaGseaCollection").onchange=renderIcaMetageneGsea;["icaGseaMetric","icaGseaThreshold","icaGseaSort"].forEach(id=>$(id).oninput=renderIcaMetageneGsea);$("icaGseaMetric").onchange=renderIcaMetageneGsea;$("icaGseaSort").onchange=renderIcaMetageneGsea;icaGseaFillCollections(B,false);}
+function icaShowGseaLeadingEdge(row){$("icaGseaLeadingEdge").innerHTML="<h3 style='margin:0 0 7px;font-size:.88rem'>"+esc(row.term)+"</h3><div class='muted'>NES = "+dePfmt(row.NES)+" · padj = "+dePfmt(row.padj)+"</div><div style='margin-top:7px;white-space:pre-wrap;word-break:break-word'>"+esc(row.leadingEdge||"Leading edge non disponible dans le résultat GSEA.")+"</div>";}
+function icaGseaTable(id,rows){const table=$(id);let html="<thead><tr><th>Gene set</th><th>NES</th><th>padj</th></tr></thead><tbody>";rows.forEach((row,i)=>{html+="<tr data-i='"+i+"' tabindex='0' title='Cliquer pour le leading edge'><td>"+esc(row.term)+"</td><td>"+dePfmt(row.NES)+"</td><td>"+dePfmt(row.padj)+"</td></tr>";});table.innerHTML=html+"</tbody>";table.querySelectorAll("tbody tr").forEach(tr=>{const open=()=>icaShowGseaLeadingEdge(rows[+tr.dataset.i]);tr.onclick=open;tr.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();open();}};});}
+function renderIcaMetageneGsea(){const B=icaBranch();if(!B)return;icaPrepareMetageneGsea(B);const all=B.metageneGsea||{},component=$("icaGseaComponent").value,collection=$("icaGseaCollection").value,available=Object.values(all).some(collections=>Object.keys(collections||{}).length),currentAvailable=Object.keys(all[component]||{}).length>0,show=currentAvailable&&!!collection;$("icaGseaCtl").style.display=available?"":"none";$("icaGseaTables").style.display=available?"":"none";$("icaGseaLeadingEdge").style.display=available?"":"none";let warning="";if(!available)warning=ICA.gseaEnabled?"Aucun enrichissement de métagène disponible pour cette dimension ICA. Vérifiez les collections GMT et run.log.":"GSEA des métagènes désactivé pour ce run (run_ica_gsea = n).";else if(!currentAvailable)warning="Le GSEA n’a produit aucun résultat pour "+component+".";icaSetWarn("icaGseaWarn",warning);if(!show){icaGseaTable("icaGseaNeg",[]);icaGseaTable("icaGseaPos",[]);return;}const metric=$("icaGseaMetric").value,threshold=Math.max(0,Math.min(1,deNum("icaGseaThreshold",.05))),sort=$("icaGseaSort").value;let rows=(((all[component]||{})[collection])||[]).filter(row=>row.NES!=null&&row[metric]!=null&&isFinite(row.NES)&&isFinite(row[metric])&&row[metric]<=threshold);rows.sort((a,b)=>sort==="padj"?((a.padj==null?Infinity:a.padj)-(b.padj==null?Infinity:b.padj)||Math.abs(b.NES)-Math.abs(a.NES)):Math.abs(b.NES)-Math.abs(a.NES)||(a.padj==null?Infinity:a.padj)-(b.padj==null?Infinity:b.padj));icaGseaTable("icaGseaNeg",rows.filter(row=>row.NES<0));icaGseaTable("icaGseaPos",rows.filter(row=>row.NES>0));}
 function icaBuildEmSources(B){const out=[{label:"Cluster",coll:"Autre",kind:"cat",cluster:true}];for(const v in B.meta||{})out.push({label:v,coll:"Clinique",kind:(B.metaTypes||{})[v]==="continuous"?"cont":"cat",meta:v});for(const m in DATA.signatures||{}){const S=DATA.signatures[m],group=m==="ssgsea"?"ssGSEA":m==="mean"?"Moyenne":m;(S.names||[]).forEach((nm,ri)=>{const src=(S.sources&&S.sources[ri])||"";out.push({label:nm,coll:src?group+" "+src:group,kind:"cont",sigM:m,row:ri});});}for(const m in DATA.deconv||{}){const D=DATA.deconv[m];(D.types||[]).forEach((t,ri)=>out.push({label:t,coll:"Déconv. "+m,kind:"cont",decM:m,row:ri}));}return out;}
 function icaEmGet(id){const value=$(id).value;return value===""||value==="none"?null:ICAEMSRC[+value];}
 function icaGlobalValues(B,values){const bySample=new Map(SAMPLES.map((sample,index)=>[String(sample),index]));return(B.samples||[]).map(sample=>{const index=bySample.get(String(sample));return index==null?null:values[index];});}
-function icaEmVals(B,src){if(!src)return null;if(src.cluster){const per=(B.consensus||{}).perK||{},p=per[String(+( $("icaEmbedK").value))];return p?{cont:false,vals:(p.labels||[]).map(v=>"C"+v)}:null;}if(src.meta!=null)return{cont:(B.metaTypes||{})[src.meta]==="continuous",vals:(B.meta||{})[src.meta]||[]};if(src.sigM){const S=(DATA.signatures||{})[src.sigM];return S?{cont:true,vals:icaGlobalValues(B,(S.values||[])[src.row]||[])}:null;}if(src.decM){const D=(DATA.deconv||{})[src.decM];return D?{cont:true,vals:icaGlobalValues(B,(D.values||[])[src.row]||[])}:null;}return null;}
+function icaSourceVals(B,src,clusterK){if(!src)return null;if(src.cluster){const per=(B.consensus||{}).perK||{},k=clusterK==null?(B.consensus||{}).kFinal:clusterK,p=per[String(+k)];return p?{cont:false,vals:(p.labels||[]).map(v=>"C"+v)}:null;}if(src.meta!=null)return{cont:(B.metaTypes||{})[src.meta]==="continuous",vals:(B.meta||{})[src.meta]||[]};if(src.sigM){const S=(DATA.signatures||{})[src.sigM];return S?{cont:true,vals:icaGlobalValues(B,(S.values||[])[src.row]||[])}:null;}if(src.decM){const D=(DATA.deconv||{})[src.decM];return D?{cont:true,vals:icaGlobalValues(B,(D.values||[])[src.row]||[])}:null;}return null;}
+function icaEmVals(B,src){return icaSourceVals(B,src,+$("icaEmbedK").value);}
 function icaFillEmSelect(sel,pred,noneLabel){sel.innerHTML="";const none=document.createElement("option");none.value="none";none.textContent=noneLabel;sel.appendChild(none);const groups={};ICAEMSRC.forEach((src,i)=>{if(pred(src))(groups[src.coll]=groups[src.coll]||[]).push(i);});for(const group in groups){const og=document.createElement("optgroup");og.label=group;groups[group].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=ICAEMSRC[i].label;og.appendChild(o);});sel.appendChild(og);}}
 function icaFillEmCascade(collSel,memberSel,pred,noneLabel,defaultColl){const groups={};ICAEMSRC.forEach((src,i)=>{if(pred(src))(groups[src.coll]=groups[src.coll]||[]).push(i);});collSel.innerHTML="";const none=document.createElement("option");none.value="none";none.textContent=noneLabel;collSel.appendChild(none);Object.keys(groups).forEach(group=>{const o=document.createElement("option");o.value=group;o.textContent=group;collSel.appendChild(o);});const fillMembers=redraw=>{const group=collSel.value;memberSel.innerHTML="";if(group==="none"||!groups[group]){const o=document.createElement("option");o.value="none";o.textContent="—";memberSel.appendChild(o);memberSel.value="none";memberSel.style.display="none";}else{memberSel.style.display="";groups[group].forEach(i=>{const o=document.createElement("option");o.value=i;o.textContent=ICAEMSRC[i].label;memberSel.appendChild(o);});memberSel.value=groups[group][0];}if(redraw)renderIcaEmbed();};collSel.onchange=()=>fillMembers(true);memberSel.onchange=renderIcaEmbed;collSel.value=defaultColl&&groups[defaultColl]?defaultColl:"none";fillMembers(false);}
-function icaPrepareEmbed(B){if(icaEmbedDimension===curIcaDim)return;icaEmbedDimension=curIcaDim;ICAEMSRC=icaBuildEmSources(B);const method=$("icaEmbedMethod"),methods=Object.keys(B.embed||{});method.innerHTML="";methods.forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m.toUpperCase();method.appendChild(o);});method.onchange=renderIcaEmbed;const ksel=$("icaEmbedK"),rows=icaKRecords(B);ksel.innerHTML="";rows.forEach(o=>{const op=document.createElement("option");op.value=o.k;op.textContent=icaKInfo(B,o.k);ksel.appendChild(op);});ksel.value=String((B.consensus||{}).kFinal||((rows[0]||{}).k||""));ksel.onchange=renderIcaEmbed;icaFillEmCascade($("icaEmbedColorColl"),$("icaEmbedColor"),()=>true,"— aucun (couleur unie) —","Autre");icaFillEmCascade($("icaEmbedSizeColl"),$("icaEmbedSize"),s=>s.kind==="cont","— aucune (taille fixe) —");icaFillEmSelect($("icaEmbedShape"),s=>s.kind==="cat","— aucune (cercle) —");$("icaEmbedShape").onchange=renderIcaEmbed;}
-function renderIcaEmbed(){const B=icaBranch();if(!B)return;icaPrepareEmbed(B);const method=$("icaEmbedMethod").value,pts=(B.embed||{})[method]||[];if(!pts.length){fitCanvas($("icaEmbedCanvas"),1,1);$("icaEmbedLegend").textContent="Aucun embedding ICA disponible.";return;}const colSrc=icaEmGet("icaEmbedColor"),shapeSrc=icaEmGet("icaEmbedShape"),sizeSrc=icaEmGet("icaEmbedSize"),colV=icaEmVals(B,colSrc),shapeV=icaEmVals(B,shapeSrc),sizeV=icaEmVals(B,sizeSrc);let clo=0,chi=1,cats=[];if(colV){if(colV.cont){const f=colV.vals.filter(v=>v!=null&&isFinite(v));if(f.length){clo=Math.min(...f);chi=Math.max(...f);}}else cats=[...new Set(colV.vals.filter(v=>v!=null))];}const colorOf=i=>{if(!colV)return"#3b82c4";const v=colV.vals[i];return v==null?"#ccc":colV.cont?viridis((v-clo)/((chi-clo)||1)):CAT[cats.indexOf(v)%CAT.length];};const shapeCats=shapeV?[...new Set(shapeV.vals.filter(v=>v!=null))]:[],shapeOf=i=>{if(!shapeV||shapeV.vals[i]==null)return MK[0];return MK[shapeCats.indexOf(shapeV.vals[i])%MK.length];};let zlo=0,zhi=1;if(sizeV){const f=sizeV.vals.filter(v=>v!=null&&isFinite(v));if(f.length){zlo=Math.min(...f);zhi=Math.max(...f);}}const sizeOf=(i,depth)=>{let size=3.2;if(sizeV){const v=sizeV.vals[i];size=v==null?2:2+4.6*((v-zlo)/((zhi-zlo)||1));}return size*(.7+.55*depth);};icaDraw3DScene($("icaEmbedCanvas"),pts,[method.toUpperCase()+" 1",method.toUpperCase()+" 2",method.toUpperCase()+" 3"],ICA3D.embedding,colorOf,shapeOf,sizeOf);const HH='style="font-weight:600;margin-top:7px;color:#3a444b"';let out="<b>"+method.toUpperCase()+" 3D sur distance consensus ICA</b><div class='muted'>m="+curIcaDim+" · "+icaKInfo(B,+$("icaEmbedK").value)+" · glisser = tourner · molette = zoom</div>";if(colSrc){out+="<div "+HH+">Couleur : "+colSrc.label+"</div>";if(colV.cont){for(let t=4;t>=0;t--){const v=clo+(chi-clo)*t/4;out+='<div><i class="sw" style="background:'+viridis(t/4)+'"></i>'+(isFinite(v)?v.toFixed(2):"—")+"</div>";}}else cats.forEach((c,i)=>out+='<div><i class="sw" style="background:'+CAT[i%CAT.length]+'"></i>'+c+"</div>");}if(shapeSrc){out+="<div "+HH+">Forme : "+shapeSrc.label+"</div>";shapeCats.forEach((c,i)=>out+='<div><span style="font-size:14px;line-height:1;color:#33414a">'+MK[i%MK.length].g+"</span> "+c+"</div>");}if(sizeSrc)out+="<div "+HH+">Taille : "+sizeSrc.label+"</div><div class='muted'>"+(isFinite(zlo)?zlo.toFixed(2):"—")+" → "+(isFinite(zhi)?zhi.toFixed(2):"—")+" (petit → grand)</div>";$("icaEmbedLegend").innerHTML=out;}
+function icaEmbeddingsForK(B){const byK=B.embedByK||{};return byK[String(+$("icaEmbedK").value)]||B.embed||{};}
+function icaPrepareEmbed(B){if(icaEmbedDimension===curIcaDim)return;icaEmbedDimension=curIcaDim;ICAEMSRC=icaBuildEmSources(B);const method=$("icaEmbedMethod"),methods=new Set(Object.keys(B.embed||{}));Object.values(B.embedByK||{}).forEach(e=>Object.keys(e||{}).forEach(m=>methods.add(m)));method.innerHTML="";methods.forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m.toUpperCase();method.appendChild(o);});method.onchange=renderIcaEmbed;const ksel=$("icaEmbedK"),rows=icaKRecords(B);ksel.innerHTML="";rows.forEach(o=>{const op=document.createElement("option");op.value=o.k;op.textContent=icaKInfo(B,o.k);ksel.appendChild(op);});ksel.value=String((B.consensus||{}).kFinal||((rows[0]||{}).k||""));ksel.onchange=renderIcaEmbed;icaFillEmCascade($("icaEmbedColorColl"),$("icaEmbedColor"),()=>true,"— aucun (couleur unie) —","Autre");icaFillEmCascade($("icaEmbedSizeColl"),$("icaEmbedSize"),s=>s.kind==="cont","— aucune (taille fixe) —");icaFillEmSelect($("icaEmbedShape"),s=>s.kind==="cat","— aucune (cercle) —");$("icaEmbedShape").onchange=renderIcaEmbed;}
+function renderIcaEmbed(){const B=icaBranch();if(!B)return;icaPrepareEmbed(B);const method=$("icaEmbedMethod").value,pts=icaEmbeddingsForK(B)[method]||[];if(!pts.length){fitCanvas($("icaEmbedCanvas"),1,1);$("icaEmbedLegend").textContent="Aucun embedding ICA disponible.";return;}const colSrc=icaEmGet("icaEmbedColor"),shapeSrc=icaEmGet("icaEmbedShape"),sizeSrc=icaEmGet("icaEmbedSize"),colV=icaEmVals(B,colSrc),shapeV=icaEmVals(B,shapeSrc),sizeV=icaEmVals(B,sizeSrc);let clo=0,chi=1,cats=[];if(colV){if(colV.cont){const f=colV.vals.filter(v=>v!=null&&isFinite(v));if(f.length){clo=Math.min(...f);chi=Math.max(...f);}}else cats=[...new Set(colV.vals.filter(v=>v!=null))];}const colorOf=i=>{if(!colV)return"#3b82c4";const v=colV.vals[i];return v==null?"#ccc":colV.cont?viridis((v-clo)/((chi-clo)||1)):CAT[cats.indexOf(v)%CAT.length];};const shapeCats=shapeV?[...new Set(shapeV.vals.filter(v=>v!=null))]:[],shapeOf=i=>{if(!shapeV||shapeV.vals[i]==null)return MK[0];return MK[shapeCats.indexOf(shapeV.vals[i])%MK.length];};let zlo=0,zhi=1;if(sizeV){const f=sizeV.vals.filter(v=>v!=null&&isFinite(v));if(f.length){zlo=Math.min(...f);zhi=Math.max(...f);}}const sizeOf=(i,depth)=>{let size=3.2;if(sizeV){const v=sizeV.vals[i];size=v==null?2:2+4.6*((v-zlo)/((zhi-zlo)||1));}return size*(.7+.55*depth);};icaDraw3DScene($("icaEmbedCanvas"),pts,[method.toUpperCase()+" 1",method.toUpperCase()+" 2",method.toUpperCase()+" 3"],ICA3D.embedding,colorOf,shapeOf,sizeOf);const HH='style="font-weight:600;margin-top:7px;color:#3a444b"';let out="<b>"+method.toUpperCase()+" 3D sur distance consensus ICA</b><div class='muted'>m="+curIcaDim+" · "+icaKInfo(B,+$("icaEmbedK").value)+" · coordonnées apprises sur D<sub>K</sub> = 1 − C<sub>K</sub> · glisser = tourner · molette = zoom</div>";if(colSrc){out+="<div "+HH+">Couleur : "+colSrc.label+"</div>";if(colV.cont){for(let t=4;t>=0;t--){const v=clo+(chi-clo)*t/4;out+='<div><i class="sw" style="background:'+viridis(t/4)+'"></i>'+(isFinite(v)?v.toFixed(2):"—")+"</div>";}}else cats.forEach((c,i)=>out+='<div><i class="sw" style="background:'+CAT[i%CAT.length]+'"></i>'+c+"</div>");}if(shapeSrc){out+="<div "+HH+">Forme : "+shapeSrc.label+"</div>";shapeCats.forEach((c,i)=>out+='<div><span style="font-size:14px;line-height:1;color:#33414a">'+MK[i%MK.length].g+"</span> "+c+"</div>");}if(sizeSrc)out+="<div "+HH+">Taille : "+sizeSrc.label+"</div><div class='muted'>"+(isFinite(zlo)?zlo.toFixed(2):"—")+" → "+(isFinite(zhi)?zhi.toFixed(2):"—")+" (petit → grand)</div>";$("icaEmbedLegend").innerHTML=out;}
 function renderIcaAssoc(){const B=icaBranch();if(!B)return;const A=B.assoc||{},per=(A.byClusterK||{})[String((B.consensus||{}).kFinal)]||{},rows=Object.keys(per).map(v=>{const o=per[v];return[v,o.test,icaFmt(o.pvalue,4),icaFmt(o.padj,4),icaFmt(o.cramers_v,3),o.n];});
   icaSetWarn("icaAssocWarn",rows.length?"":"Aucune association catégorielle ICA disponible (métadonnées absentes, aucune variable catégorielle exploitable, ou étape désactivée).");$("icaAssocTable").innerHTML=icaTable(["Variable clinique","Test","p","FDR","V de Cramér","n"],rows);
 }
 function renderIcaCorr(){const B=icaBranch();if(!B)return;const C=B.corr||{},rows=(C.pairs||[]).filter(o=>(o.a||"").startsWith("ica:")||(o.b||"").startsWith("ica:")).map(o=>[o.a,o.b,icaFmt(o.rho),icaFmt(o.p,4),icaFmt(o.padj,4),o.n]);
   icaSetWarn("icaCorrWarn",rows.length?"":"Aucune corrélation ICA disponible (il faut au moins une variable clinique continue et l'étape 9b active). ");$("icaCorrTable").innerHTML=icaTable(["Variable 1","Variable 2","ρ / r","p","FDR","n"],rows);
 }
-function renderIcaAll(){renderIcaProjection();renderIcaConsensus();renderIcaEmbed();renderIcaAssoc();renderIcaCorr();}
+function renderIcaAll(){renderIcaProjection();renderIcaMetageneGsea();renderIcaConsensus();renderIcaEmbed();renderIcaAssoc();renderIcaCorr();}
 function initICA(){const branches=ICA.branches||{},dims=(ICA.topDimensions&&ICA.topDimensions.length?ICA.topDimensions:Object.keys(branches)).map(String).filter(d=>branches[d]);
-  if(ICA.status!=="complete"||!dims.length){const msg=ICA.message||"Branche ICA non exécutée.";icaSetWarn("icaNotRun",msg);icaSetWarn("icaConsensusWarn",msg);["icaDimCtl","icaProjectionCtl","icaConsensusCtl","icaConsensusAddbar","icaConsensusGrid"].forEach(id=>$(id).style.display="none");icaSetWarn("icaAssocWarn",msg);icaSetWarn("icaCorrWarn",msg);return;}
+  if(ICA.status!=="complete"||!dims.length){const msg=ICA.message||"Branche ICA non exécutée.";icaSetWarn("icaNotRun",msg);icaSetWarn("icaGseaWarn",msg);icaSetWarn("icaConsensusWarn",msg);["icaDimCtl","icaProjectionCtl","icaProjectionAestheticCtl","icaGseaCtl","icaGseaTables","icaGseaLeadingEdge","icaConsensusCtl","icaConsensusAddbar","icaConsensusGrid"].forEach(id=>$(id).style.display="none");icaSetWarn("icaAssocWarn",msg);icaSetWarn("icaCorrWarn",msg);return;}
   const ds=$("icaDimSelect"),cd=$("icaConsensusDimSelect");[ds,cd].forEach(sel=>{sel.innerHTML="";dims.forEach(d=>sel.appendChild(icaDimensionOption(d)));});
   icaSetDimension(dims[0],true);$("icaDimInfo").textContent="★ MSTD · ↓/↑ dimensions testées voisines · ~ meilleure stabilité moyenne · "+((ICA.quality||{}).nRuns||"?")+" runs / dimension";
   ds.onchange=()=>{icaSetDimension(ds.value,true);renderIcaAll();};cd.onchange=()=>{icaSetDimension(cd.value,true);renderIcaAll();};$("icaConsensusKSelect").onchange=e=>{curIcaK=+e.target.value;renderIcaConsensus();};["icaProjX","icaProjY","icaProjZ"].forEach(id=>$(id).onchange=renderIcaProjection);
@@ -1305,15 +1569,18 @@ document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{document.querySelect
   t.classList.add("active");document.querySelectorAll(".pane").forEach(p=>p.classList.remove("active"));$("pane-"+t.dataset.tab).classList.add("active");});
 document.querySelectorAll(".subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".subtab").forEach(x=>x.classList.remove("active"));
   t.classList.add("active");document.querySelectorAll(".sub").forEach(p=>p.classList.remove("active"));$("sub-"+t.dataset.sub).classList.add("active");
-  if(t.dataset.sub==="sigdet")renderSigDet();if(t.dataset.sub==="embed")renderEmbed();
+  if(t.dataset.sub==="degsea")deRender();if(t.dataset.sub==="sigdet")renderSigDet();if(t.dataset.sub==="embed")renderEmbed();
   if(t.dataset.sub==="assoc")renderAssoc();if(t.dataset.sub==="corr")renderCorr();});
 document.querySelectorAll(".ica-subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".ica-subtab").forEach(x=>x.classList.remove("active"));
   t.classList.add("active");document.querySelectorAll(".ica-sub").forEach(p=>p.classList.remove("active"));$("ica-sub-"+t.dataset.icaSub).classList.add("active");
-  if(t.dataset.icaSub==="proj")renderIcaProjection();if(t.dataset.icaSub==="consensus")renderIcaConsensus();
+  if(t.dataset.icaSub==="proj"){renderIcaProjection();renderIcaMetageneGsea();}if(t.dataset.icaSub==="consensus")renderIcaConsensus();
   if(t.dataset.icaSub==="embed")renderIcaEmbed();if(t.dataset.icaSub==="assoc")renderIcaAssoc();if(t.dataset.icaSub==="corr")renderIcaCorr();});
+document.querySelectorAll(".diff-subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".diff-subtab").forEach(x=>x.classList.remove("active"));
+  t.classList.add("active");document.querySelectorAll(".diff-sub").forEach(p=>p.classList.remove("active"));$("diff-sub-"+t.dataset.diffSub).classList.add("active");
+  if(t.dataset.diffSub==="degsea")cdeRender();});
 document.querySelectorAll(".pre-subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".pre-subtab").forEach(x=>x.classList.remove("active"));
   t.classList.add("active");document.querySelectorAll(".pre-sub").forEach(p=>p.classList.remove("active"));$("pre-sub-"+t.dataset.preSub).classList.add("active");});
-window.addEventListener("resize",()=>{clearTimeout(window.__rt);window.__rt=setTimeout(()=>{if($("sub-unsup").classList.contains("active"))render();if($("ica-sub-consensus").classList.contains("active"))renderIcaConsensus();},200);});
+window.addEventListener("resize",()=>{clearTimeout(window.__rt);window.__rt=setTimeout(()=>{if($("sub-unsup").classList.contains("active"))render();if($("sub-degsea").classList.contains("active"))deRender();if($("diff-sub-degsea").classList.contains("active"))cdeRender();if($("ica-sub-consensus").classList.contains("active"))renderIcaConsensus();},200);});
 
 render();
 </script>

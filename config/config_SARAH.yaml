@@ -59,6 +59,10 @@ ica_resampling: none          # none | bootstrap | fast_bootstrap
 ica_max_iter: 2000
 ica_deterministic: y          # y = reproductible (n_jobs ICA forcé à 1) ; n = plus rapide, non déterministe
 ica_k_final: null             # null = sélection automatique, sinon k imposé pour l'ICA
+run_ica_gsea: y               # y | n — GSEA preranked sur les poids signés de chaque métagène
+ica_gsea_min_size: 15         # taille minimale d'un gene set
+ica_gsea_max_size: 500        # taille maximale d'un gene set
+                              # collections et permutations : gsea_collections / gsea_permutations ci-dessous
 
 # ================================================= 2 · Consensus clustering (+ choix de k)
 k_min: 3
@@ -103,13 +107,30 @@ gsea_collections:
   sigGeNeHetX: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/sigGeNeHetX.gmt  # Custom immun (164)
   signatures_select: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/signatures_select.gmt  # Custom curées
 
-degsea_mode: ova             # ova (one-vs-all) | ovo (one-vs-one) | both
+degsea_mode: both            # ova (one-vs-all) | ovo (one-vs-one) | both — nécessaire pour les deux types de volcanos du rapport
 degsea_all_k: y              # y | n — si y : DEGSEA calculé pour TOUS les k [k_min..k_max]
                              #   (tables/degsea/k<k>/ par k + panneau DEGSEA alignable sur chaque k
                              #   dans le rapport). Très coûteux. Défaut n : seul le k final.
 gsea_gene_sets: ~/.cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt  # .gmt unique de repli (si gsea_collections vide)
 gsea_permutations: 1000       # permutations du GSEA pré-classé
 gsea_heatmap_pval: 0.05       # heatmap : garde les pathways à FDR q-valeur GSEA < ce seuil dans >= 1 cluster (0.25 = convention GSEA)
+
+# DEGSEA clinique indépendant du consensus. Décommenter/adapter pour exécuter
+# plusieurs expériences ; chaque résultat est exporté dans tables/clinical_degsea/<nom>/.
+# clinical_degsea:
+#   response_age:
+#     design: "~ age + response"
+#     contrast: response          # accepte aussi la clé française : contraste
+#     control: NR
+#     test: R
+#     collections: [h, c2]        # noms issus de gsea_collections ; omission = toutes les collections
+#     min_group: 3
+#   response_age_batch:
+#     design: "~ age + batch + response"
+#     contrast: response
+#     control: NR
+#     test: R
+#     collections: [h]
 
 # ================================================= 7 · Projection de signatures (scoring + association clinique)
 compute_signatures: y         # y | n — score les signatures par tumeur (ssGSEA + expression moyenne) et teste l'association aux variables cliniques

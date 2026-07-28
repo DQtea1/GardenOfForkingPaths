@@ -61,6 +61,293 @@ def _clean_deep(v):
     return _clean(v)
 
 
+def _embedding_payload(coords: pd.DataFrame | None, samples) -> dict:
+    """Sérialise une table d'embedding, dans l'ordre des échantillons fourni."""
+    embed = {}
+    if not isinstance(coords, pd.DataFrame) or "sample" not in coords:
+        return embed
+    coord = coords.copy()
+    coord["sample"] = coord["sample"].astype(str)
+    coord = coord.set_index("sample").reindex(samples)
+    for name, (x, y, z) in {
+        "tsne": ("tsne1", "tsne2", "tsne3"),
+        "umap": ("umap1", "umap2", "umap3"),
+    }.items():
+        if x in coord and y in coord and coord[x].notna().any():
+            zz = coord[z] if z in coord else pd.Series(0.0, index=coord.index)
+            embed[name] = [
+                [_clean(a), _clean(b), _clean(c)]
+                for a, b, c in zip(coord[x], coord[y], zz)
+            ]
+    return embed
+
+
+def _degsea_contrast_label(tag: str) -> tuple[str, str, str]:
+    """Retourne libellé, schéma et cible d'un nom de contraste DEGSEA."""
+    import re
+
+    match = re.fullmatch(r"c(\d+)_vs_(rest|c\d+)", str(tag))
+    if not match:
+        return str(tag), "unknown", ""
+    target, reference = int(match.group(1)), match.group(2)
+    if reference == "rest":
+        return f"C{target} vs all", "one-vs-all", f"C{target}"
+    return f"C{target} vs C{int(reference[1:])}", "one-vs-one", f"C{target}"
+
+
+def _number_or_none(value):
+    """Convertit une cellule CSV DEGSEA en nombre JSON ou ``None``."""
+    try:
+        if pd.isna(value):
+            return None
+        return _clean(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _gsea_rows_payload(table: pd.DataFrame | None) -> list[dict]:
+    """Sérialise une table gseapy pour les tableaux GSEA interactifs."""
+    if not isinstance(table, pd.DataFrame) or table.empty:
+        return []
+    frame = table.copy()
+    if "Term" not in frame and frame.index.name == "Term":
+        frame = frame.reset_index()
+    if "Term" not in frame:
+        return []
+    pval_col = (
+        "NOM p-val" if "NOM p-val" in frame
+        else "pvalue" if "pvalue" in frame else None
+    )
+    padj_col = (
+        "FDR q-val" if "FDR q-val" in frame
+        else "padj" if "padj" in frame else None
+    )
+    lead_col = (
+        "Lead_genes" if "Lead_genes" in frame
+        else "leading_edge" if "leading_edge" in frame else None
+    )
+    rows = []
+    for row in frame.to_dict(orient="records"):
+        term = row.get("Term")
+        if pd.isna(term):
+            continue
+        leading_edge = row.get(lead_col) if lead_col else None
+        rows.append({
+            "term": str(term),
+            "NES": _number_or_none(row.get("NES")),
+            "pvalue": _number_or_none(row.get(pval_col)) if pval_col else None,
+            "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
+            "leadingEdge": (
+                None if leading_edge is None or pd.isna(leading_edge)
+                else str(leading_edge)
+            ),
+        })
+    return rows
+
+
+def _ica_metagene_gsea_payload(results: dict | None) -> dict:
+    """Convertit ``composante → collection → DataFrame`` en JSON."""
+    payload = {}
+    for component, collections in (results or {}).items():
+        serialized = {
+            str(collection): _gsea_rows_payload(table)
+            for collection, table in (collections or {}).items()
+        }
+        payload[str(component)] = serialized
+    return payload
+
+
+def _degsea_detail_payload(outdir: Path, k_final: int,
+                           degsea_by_k: dict | None) -> dict:
+    """Embarque les résultats complets DESeq2 et GSEA pour l'onglet volcano.
+
+    Les calculs DEGSEA restent inchangés : ce lecteur sérialise les CSV déjà
+    exportés par :mod:`degsea`. Il reconnaît les deux dispositions possibles :
+    ``tables/degsea/{ova,ovo}`` (K final seul) et
+    ``tables/degsea/k<K>/{ova,ovo}`` (``degsea_all_k = y``).
+    """
+    root = Path(outdir) / "tables" / "degsea"
+    if not root.exists():
+        return {}
+
+    bases: dict[int, Path] = {}
+    for path in root.iterdir():
+        if not path.is_dir() or not path.name.startswith("k"):
+            continue
+        try:
+            bases[int(path.name[1:])] = path
+        except ValueError:
+            continue
+    if not bases and any((root / scheme).is_dir() for scheme in ("ova", "ovo")):
+        bases[int(k_final)] = root
+
+    # Ne pas découvrir par erreur de vieux dossiers résiduels ne faisant pas
+    # partie du run courant quand le pipeline a fourni l'information de K.
+    known_k = {int(k) for k in (degsea_by_k or {})}
+    if known_k:
+        bases = {k: path for k, path in bases.items() if k in known_k}
+
+    payload: dict[str, dict] = {}
+    for k, base in sorted(bases.items()):
+        contrasts = []
+        for dirname in ("ova", "ovo"):
+            directory = base / dirname
+            if not directory.exists():
+                continue
+            for de_path in sorted(directory.glob("deseq2_*.csv")):
+                tag = de_path.stem.removeprefix("deseq2_")
+                try:
+                    de = pd.read_csv(de_path)
+                except Exception as exc:
+                    logger.warning("Rapport DEGSEA : lecture impossible de %s : %s", de_path, exc)
+                    continue
+                gene_col = "gene" if "gene" in de.columns else de.columns[0] if len(de.columns) else None
+                if gene_col is None:
+                    continue
+                lfc_col = "log2FoldChange" if "log2FoldChange" in de else None
+                p_col = "pvalue" if "pvalue" in de else None
+                padj_col = "padj" if "padj" in de else None
+                genes = []
+                for row in de.to_dict(orient="records"):
+                    gene = row.get(gene_col)
+                    if pd.isna(gene):
+                        continue
+                    genes.append({
+                        "gene": str(gene),
+                        "log2FoldChange": _number_or_none(row.get(lfc_col)) if lfc_col else None,
+                        "pvalue": _number_or_none(row.get(p_col)) if p_col else None,
+                        "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
+                    })
+
+                gsea = {}
+                suffix = f"_{tag}"
+                for gsea_path in sorted(directory.glob(f"gsea_*_{tag}.csv")):
+                    stem = gsea_path.stem
+                    if not stem.startswith("gsea_") or not stem.endswith(suffix):
+                        continue
+                    collection = stem[len("gsea_"):-len(suffix)]
+                    try:
+                        tab = pd.read_csv(gsea_path)
+                    except Exception as exc:
+                        logger.warning("Rapport DEGSEA : lecture impossible de %s : %s", gsea_path, exc)
+                        continue
+                    term_col = "Term" if "Term" in tab else None
+                    if term_col is None:
+                        continue
+                    nes_col = "NES" if "NES" in tab else None
+                    pval_col = "NOM p-val" if "NOM p-val" in tab else "pvalue" if "pvalue" in tab else None
+                    padj_col = "FDR q-val" if "FDR q-val" in tab else "padj" if "padj" in tab else None
+                    lead_col = "Lead_genes" if "Lead_genes" in tab else "leading_edge" if "leading_edge" in tab else None
+                    gsea[collection] = [
+                        {
+                            "term": str(row.get(term_col)),
+                            "NES": _number_or_none(row.get(nes_col)) if nes_col else None,
+                            "pvalue": _number_or_none(row.get(pval_col)) if pval_col else None,
+                            "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
+                            "leadingEdge": None if lead_col is None or pd.isna(row.get(lead_col)) else str(row.get(lead_col)),
+                        }
+                        for row in tab.to_dict(orient="records")
+                        if not pd.isna(row.get(term_col))
+                    ]
+                label, scheme, target = _degsea_contrast_label(tag)
+                contrasts.append({
+                    "id": tag, "label": label,
+                    "scheme": scheme if scheme != "unknown" else dirname,
+                    "target": target, "genes": genes, "gsea": gsea,
+                })
+        if contrasts:
+            payload[str(k)] = {"contrasts": contrasts}
+    return payload
+
+
+def _clinical_degsea_detail_payload(outdir: Path,
+                                    clinical_degsea: dict | None) -> dict:
+    """Embarque les sorties des expériences DEGSEA cliniques dans le rapport.
+
+    Une expérience clinique correspond à un seul contraste ajusté et à ses
+    collections GSEA. Contrairement au DEGSEA des clusters, elle n'a donc ni
+    axe ``k`` ni comparaisons one-vs-one : le nom de l'expérience devient le
+    sélecteur principal de l'interface.
+    """
+    root = Path(outdir) / "tables" / "clinical_degsea"
+    if not root.exists() or not clinical_degsea:
+        return {}
+
+    payload: dict[str, dict] = {}
+    for name, summary in sorted(clinical_degsea.items()):
+        directory = root / str(name)
+        de_path = directory / "deseq2.csv"
+        if not de_path.exists():
+            logger.warning("Rapport DEGSEA clinique : fichier absent : %s", de_path)
+            continue
+        try:
+            de = pd.read_csv(de_path)
+        except Exception as exc:
+            logger.warning("Rapport DEGSEA clinique : lecture impossible de %s : %s", de_path, exc)
+            continue
+        gene_col = "gene" if "gene" in de.columns else de.columns[0] if len(de.columns) else None
+        if gene_col is None:
+            continue
+        lfc_col = "log2FoldChange" if "log2FoldChange" in de else None
+        p_col = "pvalue" if "pvalue" in de else None
+        padj_col = "padj" if "padj" in de else None
+        genes = [
+            {
+                "gene": str(row.get(gene_col)),
+                "log2FoldChange": _number_or_none(row.get(lfc_col)) if lfc_col else None,
+                "pvalue": _number_or_none(row.get(p_col)) if p_col else None,
+                "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
+            }
+            for row in de.to_dict(orient="records")
+            if not pd.isna(row.get(gene_col))
+        ]
+
+        gsea = {}
+        for gsea_path in sorted(directory.glob("gsea_*.csv")):
+            collection = gsea_path.stem.removeprefix("gsea_")
+            try:
+                tab = pd.read_csv(gsea_path)
+            except Exception as exc:
+                logger.warning("Rapport DEGSEA clinique : lecture impossible de %s : %s", gsea_path, exc)
+                continue
+            term_col = "Term" if "Term" in tab else None
+            if term_col is None:
+                continue
+            nes_col = "NES" if "NES" in tab else None
+            pval_col = "NOM p-val" if "NOM p-val" in tab else "pvalue" if "pvalue" in tab else None
+            padj_col = "FDR q-val" if "FDR q-val" in tab else "padj" if "padj" in tab else None
+            lead_col = "Lead_genes" if "Lead_genes" in tab else "leading_edge" if "leading_edge" in tab else None
+            gsea[collection] = [
+                {
+                    "term": str(row.get(term_col)),
+                    "NES": _number_or_none(row.get(nes_col)) if nes_col else None,
+                    "pvalue": _number_or_none(row.get(pval_col)) if pval_col else None,
+                    "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
+                    "leadingEdge": None if lead_col is None or pd.isna(row.get(lead_col)) else str(row.get(lead_col)),
+                }
+                for row in tab.to_dict(orient="records")
+                if not pd.isna(row.get(term_col))
+            ]
+
+        summary = summary or {}
+        design = str(summary.get("design", ""))
+        contrast = str(summary.get("contrast", ""))
+        control, test = str(summary.get("control", "")), str(summary.get("test", ""))
+        details = " · ".join(part for part in (f"{test} vs {control}" if test or control else "", design) if part)
+        payload[str(name)] = {
+            "id": str(name),
+            "label": f"{name} — {details}" if details else str(name),
+            "design": design,
+            "contrast": contrast,
+            "control": control,
+            "test": test,
+            "nSamples": summary.get("n_samples"),
+            "genes": genes,
+            "gsea": gsea,
+        }
+    return payload
+
+
 def _link_stability(Z, dend, stab_by_id):
     """Rattache le score de stabilité Jaccard de chaque **branche** (nœud interne)
     à la liste `icoord`/`dcoord` du dendrogramme, dans le **même ordre** que celle-ci
@@ -248,6 +535,7 @@ def _ica_payload(ica, outdir: Path, *, linkage_method: str,
         tested_dimensions = scan["n_components"].dropna().astype(int).tolist()
     payload = {
         "status": "complete", "message": None,
+        "gseaEnabled": bool(ica.get("gseaEnabled", False)),
         "quality": {
             "testedDimensions": [int(x) for x in (tested_dimensions or [])],
             "nRuns": _clean(params.get("n_runs")),
@@ -291,17 +579,17 @@ def _ica_payload(ica, outdir: Path, *, linkage_method: str,
                 top_genes[component] = [
                     {"gene": str(g), "loading": _clean(vals.loc[g])} for g in sel]
 
-        coords = branch.get("coords")
-        embed = {}
-        if isinstance(coords, pd.DataFrame) and "sample" in coords:
-            coord = coords.copy(); coord["sample"] = coord["sample"].astype(str)
-            coord = coord.set_index("sample").reindex(projection.index)
-            for name, (x, y, z) in {"tsne": ("tsne1", "tsne2", "tsne3"),
-                                    "umap": ("umap1", "umap2", "umap3")}.items():
-                if x in coord and y in coord and coord[x].notna().any():
-                    zz = coord[z] if z in coord else pd.Series(0.0, index=coord.index)
-                    embed[name] = [[_clean(a), _clean(b), _clean(c)]
-                                   for a, b, c in zip(coord[x], coord[y], zz)]
+        # Les projections sont distinctes pour chaque K car elles sont apprises
+        # sur D_K = 1 - C_K. Le champ historique ``embed`` reste le K final
+        # pour conserver la compatibilité avec les rapports plus anciens.
+        embed_by_k = {
+            str(int(k)): _embedding_payload(coords_k, projection.index)
+            for k, coords_k in (branch.get("coords_by_k") or {}).items()
+        }
+        embed = embed_by_k.get(
+            str(int(branch["k_final"])),
+            _embedding_payload(branch.get("coords"), projection.index),
+        )
 
         meta, meta_types = fallback_meta, fallback_meta_types
         branch_meta = branch.get("meta")
@@ -330,11 +618,15 @@ def _ica_payload(ica, outdir: Path, *, linkage_method: str,
                 "scores": [[_clean(v) for v in projection.loc[s]] for s in projection.index],
                 "componentStability": comp_stability, "topGenes": top_genes,
             },
+            "metageneGsea": _ica_metagene_gsea_payload(
+                branch.get("metagene_gsea")
+            ),
             "consensus": _consensus_payload(
                 branch["result"], branch["k_final"], linkage_method,
                 min_cluster_size, k_criterion,
                 branch.get("branch_stability_by_k")),
-            "embed": embed, "assoc": branch.get("assoc") or {},
+            "embed": embed, "embedByK": embed_by_k,
+            "assoc": branch.get("assoc") or {},
             "corr": _corr_payload(branch.get("corr")),
         }
     return payload
@@ -348,10 +640,11 @@ def _gather(res, outdir):
 
     # déballage du conteneur (cf. results.PipelineResults)
     result, k_final = res.result, res.k_final
-    coords, meta = res.coords, res.meta
+    coords, coords_by_k, meta = res.coords, (res.coords_by_k or {}), res.meta
     sig_scores, sig_tests, deconv = res.sig_scores, res.sig_tests, res.deconv
     sig_provenance = res.sig_provenance
-    degsea_by_k, branch_stability_by_k = res.degsea_by_k, res.branch_stability_by_k
+    degsea_by_k, clinical_degsea = res.degsea_by_k, res.clinical_degsea
+    branch_stability_by_k = res.branch_stability_by_k
     linkage_method, min_cluster_size, k_criterion = (
         res.linkage_method, res.min_cluster_size, res.k_criterion)
 
@@ -465,6 +758,12 @@ def _gather(res, outdir):
             }
         data["degsea"][str(int(k))] = d
     data["degseaK"] = int(k_final)
+    data["degseaDetail"] = _degsea_detail_payload(
+        outdir, k_final, degsea_by_k
+    )
+    data["clinicalDegseaDetail"] = _clinical_degsea_detail_payload(
+        outdir, clinical_degsea
+    )
 
     # métadonnées cliniques
     data["meta"], data["metaTypes"] = {}, {}
@@ -482,18 +781,15 @@ def _gather(res, outdir):
                 data["meta"][var] = [None if pd.isna(v) else str(v) for v in col]
                 data["metaTypes"][var] = "categorical"
 
-    # embeddings — 3 coordonnées (z=0 si l'embedding est 2D) pour un rendu 3D
-    data["embed"] = {}
-    if coords is not None and "sample" in coords:
-        c = coords.copy()
-        c["sample"] = c["sample"].astype(str)
-        c = c.set_index("sample").reindex(samples)
-        for m, (a, b, zc) in {"tsne": ("tsne1", "tsne2", "tsne3"),
-                              "umap": ("umap1", "umap2", "umap3")}.items():
-            if a in c and b in c and c[a].notna().any():
-                z = c[zc] if (zc in c and c[zc].notna().any()) else pd.Series(0.0, index=c.index)
-                data["embed"][m] = [[_clean(x), _clean(y), _clean(zz)]
-                                    for x, y, zz in zip(c[a], c[b], z)]
+    # Embeddings propres à chaque K, calculés sur D_K = 1 - C_K. ``embed``
+    # reste volontairement un alias du K final pour les rapports existants.
+    data["embedByK"] = {
+        str(int(k)): _embedding_payload(coords_k, samples)
+        for k, coords_k in coords_by_k.items()
+    }
+    data["embed"] = data["embedByK"].get(
+        str(int(k_final)), _embedding_payload(coords, samples)
+    )
 
     # tables (toutes les .csv sous outdir/tables)
     data["tables"] = {}

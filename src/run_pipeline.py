@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import deconv as dc
 from src import degsea as dg
 from src import ica as ic
+from src import ica_gsea as ig
 from src import plots as pl
 from src import preprocessing as pp
 from src import purity as pur
@@ -113,6 +114,13 @@ def build_parser() -> argparse.ArgumentParser:
                             "'n' autorise le parallélisme interne, moins déterministe.")
     ica_g.add_argument("--ica_k_final", type=int, default=None,
                        help="k imposé pour le consensus sur les projections ICA ; sinon sélection auto indépendante.")
+    ica_g.add_argument("--run_ica_gsea", choices=["y", "n"], default="y",
+                       help="'y' (défaut) : annote chaque métagène des dimensions "
+                            "ICA conservées par GSEA pré-classé sur ses poids signés.")
+    ica_g.add_argument("--ica_gsea_min_size", type=int, default=15,
+                       help="taille minimale d'un gene set pour le GSEA des métagènes.")
+    ica_g.add_argument("--ica_gsea_max_size", type=int, default=500,
+                       help="taille maximale d'un gene set pour le GSEA des métagènes.")
 
     pur_g = p.add_argument_group("pureté tumorale (PUREE)")
     pur_g.add_argument("--purity_threshold", default="0",
@@ -181,6 +189,12 @@ def build_parser() -> argparse.ArgumentParser:
                           "un pathway dans la heatmap one-vs-all : tous ceux "
                           "significatifs après correction dans >= 1 cluster (défaut 0.05). "
                           "Convention GSEA usuelle : 0.25.")
+
+    clinical_deg = p.add_argument_group("DEGSEA clinique (DESeq2 ajusté + GSEA)")
+    clinical_deg.add_argument("--run_clinical_degsea", choices=["y", "n"], default="n",
+                             help="exécute les expériences clinical_degsea du YAML, "
+                                  "indépendamment du consensus clustering. Une entrée "
+                                  "clinical_degsea dans le YAML les active aussi.")
 
     sig = p.add_argument_group("projection de signatures (scoring + association clinique)")
     sig.add_argument("--compute_signatures", choices=["y", "n"], default="n",
@@ -288,6 +302,7 @@ def parse_args(argv=None):
     deconv_methods: dict = {}
     deconv_reference: dict = {}
     ordinal_variables: dict = {}
+    clinical_degsea: dict = {}
 
     # 1. YAML : écrase les défauts, uniquement pour des clés connues
     if args.config:
@@ -336,6 +351,14 @@ def parse_args(argv=None):
             elif isinstance(ov, (list, tuple)):
                 ordinal_variables = {str(k): None for k in ov}
             unknown.discard("ordinal_variables")
+        # Expériences DEGSEA cliniques : dictionnaire direct {nom: spécification}
+        # ou forme enveloppée {enabled: y/n, experiments: {...}}.
+        if "clinical_degsea" in config:
+            value = config["clinical_degsea"]
+            if not isinstance(value, dict):
+                raise ValueError("clinical_degsea doit être un dictionnaire d'expériences.")
+            clinical_degsea = value
+            unknown.discard("clinical_degsea")
 
         # 1b. Autres clés inconnues : avertissement non bloquant (fonctions à venir,
         #     p. ex. human_pathways, IPRES flat — remplacé par signature_sources).
@@ -364,6 +387,7 @@ def parse_args(argv=None):
     merged["deconv_methods"] = deconv_methods         # {méthode: {enabled, ...}}
     merged["deconv_reference"] = deconv_reference     # {format, path, celltype_col, ...}
     merged["ordinal_variables"] = ordinal_variables   # {variable: [modalités ordonnées] | None}
+    merged["clinical_degsea"] = clinical_degsea       # {expérience: {design, contrast, control, test, ...}}
     return argparse.Namespace(**merged)
 
 from dataclasses import dataclass, field
@@ -383,8 +407,10 @@ class _Ctx:
     sig_tests: object = None
     ica_result: object = None
     degsea_by_k: dict = field(default_factory=dict)
+    clinical_degsea: dict = field(default_factory=dict)
     deconv: dict = field(default_factory=dict)
     ica_branches: dict = field(default_factory=dict)
+    ica_metagene_gsea: dict = field(default_factory=dict)
 
 
 def _setup(argv) -> _Ctx:
@@ -585,18 +611,101 @@ def _run_ica_branches(c: _Ctx) -> None:
             "projection": branch.matrix,
             "stability": dec.stability.copy(),
             "metagenes": dec.metagenes,
+            "metagene_gsea": c.ica_metagene_gsea.get(int(dimension), {}),
             "result": branch.result,
             "k_values": branch.k_values,
             "k_final": int(branch.k_final),
             "labels": branch.labels,
             "items": branch.items,
             "coords": branch.coords,
+            "coords_by_k": branch.coords_by_k,
             "meta": branch.aligned_metadata(),
             "color_var": branch.color_var,
             "assoc": branch.assoc,
             "corr": branch.corr,
             "branch_stability_by_k": branch.branch_stability_by_k,
         }
+
+
+def _ica_metagene_gsea(c: _Ctx) -> None:
+    """Annote par GSEA chaque métagène des dimensions ICA sauvegardées."""
+    if c.ica_result is None:
+        return
+    if c.args.run_ica_gsea != "y":
+        c.log.info("1d. GSEA des métagènes ICA désactivé (run_ica_gsea = n).")
+        return
+
+    gene_sets = dict(c.args.gsea_collections or {})
+    if not gene_sets and c.args.gsea_gene_sets:
+        fallback = Path(c.args.gsea_gene_sets).expanduser()
+        gene_sets = {fallback.stem: str(fallback)}
+    gene_sets = dg.resolve_gene_sets(gene_sets)
+    if not gene_sets:
+        c.log.warning(
+            "1d. GSEA des métagènes ICA demandé, mais aucune collection GMT "
+            "existante n'est disponible ; étape sautée."
+        )
+        # Conserver toutes les dimensions et composantes dans le contrat de
+        # résultats permet au rapport d'expliquer l'absence d'enrichissements.
+        c.ica_metagene_gsea = {
+            int(dimension): {
+                str(component): {}
+                for component in c.ica_result.decompositions[
+                    int(dimension)
+                ].metagenes.index
+            }
+            for dimension in c.ica_result.persisted_dimensions
+        }
+        return
+
+    c.log.info(
+        "1d. Annotation GSEA des métagènes ICA : %d dimension(s), "
+        "%d collection(s), %d permutations…",
+        len(c.ica_result.persisted_dimensions), len(gene_sets),
+        c.args.gsea_permutations,
+    )
+    selected_dimensions = tuple(
+        int(dimension) for dimension in c.ica_result.persisted_dimensions
+    )
+    for dimension in selected_dimensions:
+        dec = c.ica_result.decompositions[int(dimension)]
+        roles = (getattr(c.ica_result, "dimension_roles", {}) or {}).get(
+            int(dimension), ()
+        )
+        c.log.info(
+            "GSEA ICA — m=%d (%s) : %d métagène(s)…",
+            int(dimension), ", ".join(map(str, roles)) or "dimension retenue",
+            len(dec.metagenes),
+        )
+        dimension_results = ig.run_ica_metagene_gsea(
+            dec.metagenes,
+            gene_sets,
+            c.outdir / "tables" / "ica" / f"m{int(dimension)}",
+            permutations=c.args.gsea_permutations,
+            min_size=c.args.ica_gsea_min_size,
+            max_size=c.args.ica_gsea_max_size,
+            n_jobs=c.eff_n_jobs,
+            seed=c.args.seed,
+        )
+        missing_components = set(map(str, dec.metagenes.index)) - set(
+            dimension_results
+        )
+        if missing_components:
+            raise RuntimeError(
+                f"GSEA ICA m={dimension} : métagènes non traités : "
+                + ", ".join(sorted(missing_components))
+            )
+        c.ica_metagene_gsea[int(dimension)] = dimension_results
+    missing = set(selected_dimensions) - set(c.ica_metagene_gsea)
+    if missing:  # garde-fou : aucune des dimensions retenues ne doit être omise
+        raise RuntimeError(
+            "GSEA ICA absent pour les dimensions sélectionnées : "
+            + ", ".join(map(str, sorted(missing)))
+        )
+    c.log.info(
+        "GSEA ICA terminé pour toutes les dimensions sélectionnées : %s.",
+        list(selected_dimensions),
+    )
 
 
 def _run_primary_branch(c: _Ctx) -> None:
@@ -618,53 +727,195 @@ def _run_primary_branch(c: _Ctx) -> None:
     ).run(run_associations=True)
 
 
-def _degsea(c: _Ctx) -> None:
-    args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
-    branch = c.primary
-    raw, result = c.raw, branch.result
-    k_values, k_final = branch.k_values, branch.k_final
-    # ------------------------------------------------ 6. DEGSEA (DESeq2 + GSEA)
-    nes = None
-    nes_by_coll = {}
-    degsea_by_k = {}                    # {k: {collection: matrice NES}} -> rapport
-    if args.run_degsea == "y":
-        # collections `load_*.gmt` du YAML si présentes, sinon le .gmt unique
-        gene_sets = args.gsea_collections or {
-            Path(args.gsea_gene_sets).stem: args.gsea_gene_sets}
-        all_k = args.degsea_all_k == "y"
-        ks_degsea = list(k_values) if all_k else [k_final]
-        log.info("DEGSEA : DESeq2 + GSEA par cluster (mode=%s, %d collection(s)) "
-                 "sur %d valeur(s) de k=%s — étape longue…",
-                 args.degsea_mode, len(gene_sets), len(ks_degsea), list(ks_degsea))
-        for kk in ks_degsea:
-            if all_k:
-                log.info("DEGSEA — k=%d (%d/%d)…", kk,
-                         ks_degsea.index(kk) + 1, len(ks_degsea))
-            labels_k = result.labels(kk, args.linkage)
-            res = dg.run_degsea(
-                raw, labels_k, result.sample_names, outdir,
-                gene_sets=gene_sets,
-                mode=args.degsea_mode,
-                permutations=args.gsea_permutations,
-                heatmap_pval=args.gsea_heatmap_pval,
-                subdir=(f"k{kk}" if all_k else ""),
-                n_jobs=eff_n_jobs,
-                seed=args.seed,
+def _enabled(value, default: bool = True) -> bool:
+    """Interprète les booléens YAML, y compris les formes ``y`` / ``n``."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"y", "yes", "true", "1", "on"}
+
+
+def _clinical_experiments(config: dict) -> dict[str, dict]:
+    """Normalise le dictionnaire YAML des expériences DEGSEA cliniques."""
+    if not config or not _enabled(config.get("enabled"), True):
+        return {}
+    raw = config.get("experiments", config)
+    if not isinstance(raw, dict):
+        raise ValueError("clinical_degsea.experiments doit être un dictionnaire.")
+    experiments = {}
+    for name, spec in raw.items():
+        if name == "enabled":
+            continue
+        if not isinstance(spec, dict):
+            raise ValueError(f"clinical_degsea.{name} doit être un dictionnaire.")
+        if not _enabled(spec.get("enabled"), True):
+            continue
+        experiment = dict(spec)
+        if "contrast" not in experiment and "contraste" in experiment:
+            experiment["contrast"] = experiment["contraste"]
+        required = ("design", "contrast", "control", "test")
+        missing = [field for field in required if not experiment.get(field)]
+        if missing:
+            raise ValueError(
+                f"clinical_degsea.{name} incomplet : clé(s) requise(s) {', '.join(missing)}."
             )
-            degsea_by_k[kk] = res
-            if kk == k_final:
-                nes_by_coll = res
-                # une heatmap NES par collection (pour le k final uniquement)
-                for coll, m in res.items():
-                    pl.plot_gsea_ova_heatmap(m, outdir / "figures",
-                                             pval=args.gsea_heatmap_pval, collection=coll)
-        # pour la figure de synthèse : Hallmark de préférence, sinon la 1re dispo
-        if nes_by_coll:
-            key = next((k for k in ("h", "HALLMARK", "hallmark") if k in nes_by_coll),
-                       next(iter(nes_by_coll)))
-            nes = nes_by_coll[key]
-        log.info("DEGSEA terminé : tables dans %s", outdir / "tables" / "degsea")
-    c.nes, c.degsea_by_k = nes, degsea_by_k
+        safe_name = str(name)
+        if Path(safe_name).name != safe_name or safe_name in {"", ".", ".."}:
+            raise ValueError(f"Nom d'expérience clinique invalide : {name!r}.")
+        experiments[safe_name] = experiment
+    return experiments
+
+
+def _clinical_gene_sets(args, experiment: dict) -> dict[str, str]:
+    """Résout les collections GMT demandées par une expérience clinique."""
+    available = dict(args.gsea_collections) or {
+        Path(args.gsea_gene_sets).stem: str(Path(args.gsea_gene_sets).expanduser())}
+    selected = experiment.get("collections", experiment.get("gsea_collections"))
+    if selected is None or selected == "all":
+        return available
+    if isinstance(selected, dict):
+        resolved = {}
+        for name, spec in selected.items():
+            if isinstance(spec, str):
+                path = spec
+            elif isinstance(spec, dict):
+                path = spec.get("path")
+            else:
+                path = None
+            if path:
+                resolved[str(name)] = str(Path(path).expanduser())
+        return resolved
+    if isinstance(selected, str):
+        if selected in available:
+            selected = [selected]
+        else:  # chemin GMT unique explicitement renseigné dans l'expérience
+            return {Path(selected).stem: str(Path(selected).expanduser())}
+    if not isinstance(selected, (list, tuple)):
+        raise ValueError("collections clinique doit être 'all', un nom, une liste ou un dictionnaire.")
+    unknown = [str(name) for name in selected if str(name) not in available]
+    if unknown:
+        raise ValueError(
+            "Collection(s) clinique(s) absente(s) de gsea_collections : "
+            + ", ".join(unknown)
+        )
+    return {str(name): available[str(name)] for name in selected}
+
+
+def _clinical_degsea(c: _Ctx) -> None:
+    """Exécute les expériences cliniques configurées, sans consensus clustering.
+
+    Cette étape ne lit ni labels ni ``AnalysisBranch`` : elle consomme seulement
+    les counts bruts, les métadonnées et le dictionnaire ``clinical_degsea``.
+    """
+    args, log = c.args, c.log
+    c.clinical_degsea = {}
+    experiments = _clinical_experiments(args.clinical_degsea)
+    if not experiments:
+        if args.run_clinical_degsea == "y":
+            log.warning("DEGSEA clinique demandé, mais aucune expérience clinical_degsea n'est configurée.")
+        return
+    if c.metadata is None:
+        raise ValueError("DEGSEA clinique configuré, mais aucune table de métadonnées n'est fournie.")
+    if args.already_normalized:
+        raise ValueError(
+            "DEGSEA clinique requiert des counts bruts ; il ne peut pas être lancé "
+            "avec --already-normalized."
+        )
+
+    log.info("DEGSEA clinique : %d expérience(s), indépendante(s) du consensus clustering.",
+             len(experiments))
+    for name, spec in experiments.items():
+        gene_sets = _clinical_gene_sets(args, spec)
+        result = dg.run_clinical_degsea(
+            c.raw, c.metadata,
+            design=str(spec["design"]),
+            contrast=str(spec["contrast"]),
+            control=str(spec["control"]),
+            test=str(spec["test"]),
+            gene_sets=gene_sets,
+            outdir=c.outdir / "tables" / "clinical_degsea" / name,
+            min_group=int(spec.get("min_group", 3)),
+            min_count=int(spec.get("min_count", 10)),
+            permutations=int(spec.get("gsea_permutations", args.gsea_permutations)),
+            n_jobs=c.eff_n_jobs,
+            seed=args.seed,
+        )
+        c.clinical_degsea[name] = {
+            "design": str(spec["design"]),
+            "contrast": str(spec["contrast"]),
+            "control": str(spec["control"]),
+            "test": str(spec["test"]),
+            "n_samples": result["n_samples"],
+            "n_test": result["n_test"],
+            "n_control": result["n_control"],
+            "n_dropped": result["n_dropped"],
+            "collections": sorted(result["gsea"]),
+        }
+        log.info(
+            "DEGSEA clinique [%s] terminé : n=%d (%s=%d vs %s=%d), %d collection(s).",
+            name, result["n_samples"], spec["test"], result["n_test"],
+            spec["control"], result["n_control"], len(result["gsea"]),
+        )
+
+
+def _degsea(c: _Ctx, k: int, gene_sets: dict[str, str], *,
+             output_subdir: str = "") -> dict:
+    """Exécute DEGSEA pour une partition consensus ``k`` donnée.
+
+    Le calcul par contraste est fourni par :func:`degsea.run_degsea` : DESeq2
+    n'est ajusté qu'une fois par contraste puis son classement est réutilisé
+    pour toutes les collections GSEA.
+    """
+    args, branch = c.args, c.primary
+    labels = branch.result.labels(int(k), args.linkage)
+    return dg.run_degsea(
+        c.raw, labels, branch.result.sample_names, c.outdir,
+        gene_sets=gene_sets,
+        mode=args.degsea_mode,
+        permutations=args.gsea_permutations,
+        heatmap_pval=args.gsea_heatmap_pval,
+        subdir=output_subdir,
+        n_jobs=c.eff_n_jobs,
+        seed=args.seed,
+    )
+
+
+def _degsea_all_k(c: _Ctx) -> None:
+    """Étape pipeline : orchestre DEGSEA sur le K final ou tous les K."""
+    args, log, outdir = c.args, c.log, c.outdir
+    branch = c.primary
+    c.nes, c.degsea_by_k = None, {}
+    if args.run_degsea != "y":
+        return
+
+    gene_sets = args.gsea_collections or {
+        Path(args.gsea_gene_sets).stem: args.gsea_gene_sets}
+    all_k = args.degsea_all_k == "y"
+    ks_degsea = list(branch.k_values) if all_k else [branch.k_final]
+    log.info("DEGSEA : DESeq2 + GSEA par cluster (mode=%s, %d collection(s)) "
+             "sur %d valeur(s) de k=%s — étape longue…",
+             args.degsea_mode, len(gene_sets), len(ks_degsea), list(ks_degsea))
+
+    nes_by_coll = {}
+    for index, k in enumerate(ks_degsea, start=1):
+        if all_k:
+            log.info("DEGSEA — k=%d (%d/%d)…", k, index, len(ks_degsea))
+        result = _degsea(c, k, gene_sets, output_subdir=f"k{k}" if all_k else "")
+        c.degsea_by_k[int(k)] = result
+        if k == branch.k_final:
+            nes_by_coll = result
+            for coll, matrix in result.items():
+                pl.plot_gsea_ova_heatmap(
+                    matrix, outdir / "figures",
+                    pval=args.gsea_heatmap_pval, collection=coll,
+                )
+
+    if nes_by_coll:
+        key = next((name for name in ("h", "HALLMARK", "hallmark") if name in nes_by_coll),
+                   next(iter(nes_by_coll)))
+        c.nes = nes_by_coll[key]
+    log.info("DEGSEA terminé : tables dans %s", outdir / "tables" / "degsea")
 
 
 def _signatures(c: _Ctx) -> None:
@@ -775,14 +1026,17 @@ def _report(c: _Ctx) -> None:
         results = PipelineResults(
             result=branch.result, k_final=branch.k_final, linkage_method=args.linkage,
             min_cluster_size=args.min_cluster_size, k_criterion=args.k_criterion,
-            coords=branch.coords, meta=branch.aligned_metadata(), sig_scores=c.sig_scores,
+            coords=branch.coords, coords_by_k=branch.coords_by_k,
+            meta=branch.aligned_metadata(), sig_scores=c.sig_scores,
             sig_provenance=c.sig_provenance,
             sig_tests=c.sig_tests, deconv=(c.deconv or None),
             degsea_by_k=(c.degsea_by_k or None),
+            clinical_degsea=(c.clinical_degsea or None),
             branch_stability_by_k=(branch.branch_stability_by_k or None),
             assoc=(branch.assoc or None), corr=(branch.corr or None),
             ica={"result": c.ica_result, "branches": c.ica_branches,
-                 "enabled": args.run_ica == "y"})
+                 "enabled": args.run_ica == "y",
+                 "gseaEnabled": args.run_ica_gsea == "y"})
         rp.build_report(results, outdir)
         log.info("Rapport d'analyse : %s", outdir / "report.html")
 
@@ -807,10 +1061,12 @@ def main(argv=None) -> int:
     _purity_filter(c)
     _outlier_filter(c)
     _load_metadata(c)
+    _clinical_degsea(c)
     _ica(c)
+    _ica_metagene_gsea(c)
     _run_ica_branches(c)
     _run_primary_branch(c)
-    _degsea(c)
+    _degsea_all_k(c)
     _signatures(c)
     _deconvolution(c)
     _correlations(c)

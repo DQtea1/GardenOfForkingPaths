@@ -134,6 +134,9 @@ class AnalysisBranch:
     labels: np.ndarray | None = None
     items: pd.DataFrame | None = None
     coords: pd.DataFrame | None = None
+    # Une table d'embeddings par K. Chaque table est calculée sur D_K = 1 - C_K,
+    # et non sur la seule distance du K retenu.
+    coords_by_k: dict[int, pd.DataFrame] = field(default_factory=dict)
     color_var: np.ndarray | None = None
     assoc: dict | None = None
     corr: dict | None = None
@@ -327,22 +330,34 @@ class AnalysisBranch:
 
     def _run_embeddings(self) -> None:
         s = self.settings
-        self.coords = emb.embeddings_table(
-            self.result.distance(self.k_final),
-            self.result.sample_names,
-            self.labels,
-            run_umap=s.run_umap,
-            n_components=s.tsne_dim,
-            perplexity=s.perplexity,
-            n_neighbors=s.n_neighbors,
-            min_dist=s.min_dist,
-            random_state=s.random_state,
-            n_jobs=s.n_jobs,
-        ).merge(self.items[["sample", "item_consensus"]], on="sample")
-        self.coords.to_csv(
-            self.paths.table_dir / f"embeddings_k{self.k_final}.csv",
-            index=False,
-        )
+        self.coords_by_k = {}
+        for k in self.k_values:
+            # C_K dépend de K : l'embedding doit donc être recalculé sur
+            # D_K = 1 - C_K. Le décalage de graine rend chaque K reproductible
+            # indépendamment de l'ordre des dimensions testées.
+            labels_k = self.result.labels(k, s.linkage_method)
+            items_k = mt.item_consensus(self.result, k)
+            coords_k = emb.embeddings_table(
+                self.result.distance(k),
+                self.result.sample_names,
+                labels_k,
+                run_umap=s.run_umap,
+                n_components=s.tsne_dim,
+                perplexity=s.perplexity,
+                n_neighbors=s.n_neighbors,
+                min_dist=s.min_dist,
+                random_state=s.random_state + int(k),
+                n_jobs=s.n_jobs,
+            ).merge(items_k[["sample", "item_consensus"]], on="sample")
+            self.coords_by_k[int(k)] = coords_k
+            coords_k.to_csv(
+                self.paths.table_dir / f"embeddings_k{k}.csv",
+                index=False,
+            )
+
+        # Compatibilité avec les consommateurs qui représentent la partition
+        # finale (figures statiques, synthèse) : ``coords`` reste le K retenu.
+        self.coords = self.coords_by_k[int(self.k_final)]
 
         plot_emb = pl.plot_embeddings_3d if s.tsne_dim == 3 else pl.plot_embeddings
         plot_emb(self.coords, self.paths.figure_dir, self.k_final)

@@ -24,6 +24,7 @@ import contextlib
 import io
 import logging
 import os
+import re
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
@@ -38,41 +39,87 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------
 # Briques : DESeq2 et GSEA sur un contraste
 # --------------------------------------------------------------------------
-def deseq2_contrast(counts: pd.DataFrame, groups: pd.Series,
-                    target: str, ref: str, n_cpus: int | None = None) -> pd.DataFrame:
-    """DESeq2 sur deux groupes. `counts` : tumeurs × gènes (counts entiers) ;
-    `groups` : labels alignés sur `counts.index`. `n_cpus` borne le parallélisme
-    interne de PyDESeq2 (mets 1 quand plusieurs contrastes tournent déjà en
-    parallèle, pour ne pas sursouscrire les cœurs). Renvoie le tableau de
-    résultats (index = gène : baseMean, log2FoldChange, stat, pvalue, padj)."""
+def deseq2_model(counts: pd.DataFrame, metadata: pd.DataFrame, design: str,
+                 contrast: tuple[str, str, str],
+                 n_cpus: int | None = None) -> pd.DataFrame:
+    """Ajuste un modèle DESeq2 général et renvoie un contraste catégoriel.
+
+    ``design`` est une formule PyDESeq2, par exemple ``"~ age + response"``.
+    ``contrast`` suit le format ``(variable, test, control)`` : le log2FC est
+    donc ``test / control``. Les counts et métadonnées doivent être strictement
+    alignés et sans valeur manquante pour les variables du design.
+    """
     from pydeseq2.dds import DeseqDataSet
     from pydeseq2.ds import DeseqStats
 
-    meta = pd.DataFrame({"group": groups.astype(str).to_numpy()}, index=counts.index)
+    if not isinstance(design, str) or not design.strip().startswith("~"):
+        raise ValueError("design DESeq2 invalide : une formule du type '~ age + response' est attendue.")
+    if len(contrast) != 3 or not contrast[0]:
+        raise ValueError("contrast doit être un triplet (variable, test, control).")
+    counts = counts.copy()
+    metadata = metadata.copy()
+    counts.index = counts.index.astype(str)
+    metadata.index = metadata.index.astype(str)
+    if counts.index.has_duplicates or metadata.index.has_duplicates:
+        raise ValueError("Les identifiants échantillons DESeq2 doivent être uniques.")
+    if not counts.index.equals(metadata.index):
+        raise ValueError("counts et metadata doivent être strictement alignés avant DESeq2.")
+    variable, test, control = map(str, contrast)
+    if variable not in metadata.columns:
+        raise ValueError(f"Variable de contraste absente des métadonnées : {variable!r}.")
+
     with contextlib.redirect_stdout(io.StringIO()):
-        dds = DeseqDataSet(counts=counts, metadata=meta, design="~group",
+        dds = DeseqDataSet(counts=counts.round().astype(int), metadata=metadata, design=design,
                            n_cpus=n_cpus, quiet=True)
         dds.deseq2()
-        st = DeseqStats(dds, contrast=["group", str(target), str(ref)],
+        st = DeseqStats(dds, contrast=[variable, test, control],
                         n_cpus=n_cpus, quiet=True)
         st.summary()
     return st.results_df.sort_values("stat", ascending=False)
 
 
-def gsea_prerank(results_df: pd.DataFrame, gene_sets: str | Path,
-                 permutations: int = 1000, min_size: int = 15,
-                 max_size: int = 500, threads: int = 4,
-                 seed: int = 0) -> pd.DataFrame | None:
-    """GSEA pré-classé sur la statistique de Wald DESeq2. Renvoie `res2d`
-    (Term, NES, NOM p-val, FDR q-val, Lead_genes…) ou `None` si indisponible."""
+def deseq2_contrast(counts: pd.DataFrame, groups: pd.Series,
+                    target: str, ref: str, n_cpus: int | None = None) -> pd.DataFrame:
+    """Compatibilité : contraste DESeq2 simple ``~ group``.
+
+    La version générique :func:`deseq2_model` porte désormais les covariables
+    cliniques et les formules arbitraires.
+    """
+    metadata = pd.DataFrame({"group": groups.astype(str).to_numpy()}, index=counts.index)
+    return deseq2_model(
+        counts, metadata, design="~ group",
+        contrast=("group", str(target), str(ref)), n_cpus=n_cpus,
+    )
+
+
+def gsea_prerank_scores(scores: pd.Series, gene_sets: str | Path,
+                        permutations: int = 1000, min_size: int = 15,
+                        max_size: int = 500, threads: int = 4,
+                        seed: int = 0) -> pd.DataFrame | None:
+    """GSEA pré-classé sur un vecteur de scores signés indexé par gène.
+
+    Cette brique est indépendante de DESeq2 : ``scores`` peut contenir une
+    statistique de Wald, les poids d'un métagène ICA ou tout autre classement
+    continu signé. Les doublons d'identifiants sont moyennés afin de fournir à
+    GSEA un rang unique par gène.
+
+    Renvoie ``gseapy.prerank(...).res2d`` (Term, NES, NOM p-val, FDR q-val,
+    Lead_genes…) ou ``None`` si le calcul est indisponible.
+    """
     try:
         import gseapy as gp
     except ImportError:
         logger.warning("gseapy absent : GSEA sauté (`pip install gseapy`).")
         return None
 
-    rnk = (results_df["stat"].dropna().sort_values(ascending=False)
-           .rename_axis("gene").reset_index())
+    if not isinstance(scores, pd.Series):
+        scores = pd.Series(scores)
+    ranked = pd.to_numeric(scores, errors="coerce").dropna()
+    ranked.index = ranked.index.astype(str)
+    if ranked.index.has_duplicates:
+        ranked = ranked.groupby(level=0, sort=False).mean()
+    ranked = ranked.sort_values(ascending=False)
+    rnk = ranked.rename_axis("gene").reset_index()
     rnk.columns = ["gene", "score"]
     if len(rnk) < min_size:
         return None
@@ -89,8 +136,154 @@ def gsea_prerank(results_df: pd.DataFrame, gene_sets: str | Path,
                 res[col] = pd.to_numeric(res[col], errors="coerce")
         return res
     except Exception as exc:  # gseapy lève sur données dégénérées
-        logger.warning("GSEA échoué pour un contraste : %s", exc)
+        logger.warning("GSEA pré-classé échoué : %s", exc)
         return None
+
+
+def gsea_prerank(results_df: pd.DataFrame, gene_sets: str | Path,
+                 permutations: int = 1000, min_size: int = 15,
+                 max_size: int = 500, threads: int = 4,
+                 seed: int = 0) -> pd.DataFrame | None:
+    """GSEA pré-classé sur la statistique de Wald DESeq2."""
+    if "stat" not in results_df:
+        raise ValueError("Le résultat DESeq2 doit contenir une colonne 'stat'.")
+    return gsea_prerank_scores(
+        results_df["stat"], gene_sets, permutations=permutations,
+        min_size=min_size, max_size=max_size, threads=threads, seed=seed,
+    )
+
+
+def resolve_gene_sets(gene_sets) -> dict[str, str]:
+    """Normalise des collections GMT et ignore les chemins inexistants."""
+    if isinstance(gene_sets, (str, Path)):
+        gene_sets = {Path(gene_sets).stem: str(gene_sets)}
+    resolved = {}
+    for name, path in (gene_sets or {}).items():
+        p = Path(os.path.expanduser(str(path)))
+        if p.exists():
+            resolved[str(name)] = str(p)
+        else:
+            logger.warning("GSEA : gene set introuvable, ignoré : %s (%s)", name, p)
+    return resolved
+
+
+# Alias interne conservé pour compatibilité avec les appels historiques.
+_resolve_gene_sets = resolve_gene_sets
+
+
+def _design_variables(design: str, metadata_columns) -> list[str]:
+    """Variables de métadonnées explicitement citées dans une formule simple.
+
+    Les noms des colonnes sont recherchés comme identifiants complets, ce qui
+    couvre ``~ age + response`` et ``~ C(batch) + response``. Les formules avec
+    transformations complexes restent acceptées par PyDESeq2, mais les valeurs
+    manquantes doivent alors être traitées par l'appelant avant cette fonction.
+    """
+    return [str(column) for column in metadata_columns
+            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(str(column))}(?![A-Za-z0-9_])", design)]
+
+
+def run_clinical_degsea(
+    counts: pd.DataFrame,
+    metadata: pd.DataFrame,
+    *,
+    design: str,
+    contrast: str,
+    control: str,
+    test: str,
+    gene_sets,
+    outdir: Path,
+    min_group: int = 3,
+    min_count: int = 10,
+    permutations: int = 1000,
+    n_jobs: int = 1,
+    seed: int = 0,
+) -> dict:
+    """DESeq2 + GSEA clinique, indépendant du consensus clustering.
+
+    Les deux groupes du contraste sont sélectionnés, les échantillons avec une
+    valeur manquante dans une variable utilisée par le design sont exclus, puis
+    le modèle est ajusté une seule fois. Son classement de Wald est réutilisé
+    pour toutes les collections GSEA. Les sorties sont écrites dans ``outdir``.
+    """
+    if not isinstance(metadata, pd.DataFrame):
+        raise TypeError("metadata doit être un DataFrame indexé par échantillon.")
+    if not isinstance(design, str) or not design.strip().startswith("~"):
+        raise ValueError("design clinique invalide : attendu, par exemple, '~ age + response'.")
+    contrast = str(contrast)
+    control, test = str(control), str(test)
+    if contrast not in metadata.columns:
+        raise ValueError(f"Contraste clinique absent des métadonnées : {contrast!r}.")
+    if control == test:
+        raise ValueError("control et test doivent désigner deux modalités distinctes.")
+
+    counts = counts.copy()
+    counts.index = counts.index.astype(str)
+    metadata = metadata.copy()
+    metadata.index = metadata.index.astype(str)
+    if counts.index.has_duplicates or metadata.index.has_duplicates:
+        raise ValueError("Les identifiants échantillons counts/métadonnées doivent être uniques.")
+    meta = metadata.reindex(counts.index)
+    design_vars = _design_variables(design, meta.columns)
+    if contrast not in design_vars:
+        raise ValueError(
+            f"La variable de contraste {contrast!r} doit apparaître dans le design {design!r}."
+        )
+    values = meta[contrast].astype("string")
+    selected_groups = values.isin([control, test])
+    complete_design = meta[design_vars].notna().all(axis=1)
+    keep_samples = selected_groups & complete_design
+    dropped = int((~keep_samples).sum())
+    cnt = counts.loc[keep_samples].round().astype(int)
+    meta = meta.loc[keep_samples].copy()
+    meta[contrast] = pd.Categorical(
+        meta[contrast].astype(str), categories=[control, test], ordered=True,
+    )
+    sizes = meta[contrast].value_counts()
+    n_control, n_test = int(sizes.get(control, 0)), int(sizes.get(test, 0))
+    if n_control < min_group or n_test < min_group:
+        raise ValueError(
+            f"Contraste {contrast}: {test} vs {control} : effectifs insuffisants "
+            f"({test}={n_test}, {control}={n_control}; minimum={min_group})."
+        )
+    keep_genes = cnt.columns[cnt.sum(axis=0) >= int(min_count)]
+    if not len(keep_genes):
+        raise ValueError("Aucun gène ne passe le filtre de counts pour le contraste clinique.")
+
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    threads = ((os.cpu_count() or 1) if n_jobs in (-1, 0, None)
+               else max(1, int(n_jobs)))
+    logger.info(
+        "DEGSEA clinique : %s (%d %s vs %d %s), design=%s ; %d échantillon(s) exclus.",
+        contrast, n_test, test, n_control, control, design, dropped,
+    )
+    results = deseq2_model(
+        cnt.loc[:, keep_genes], meta, design=design,
+        contrast=(contrast, test, control), n_cpus=threads,
+    )
+    results.to_csv(outdir / "deseq2.csv", index_label="gene")
+    meta.loc[:, design_vars].assign(**{contrast: meta[contrast].astype(str)}).to_csv(
+        outdir / "samples_used.csv", index_label="sample"
+    )
+
+    resolved_sets = _resolve_gene_sets(gene_sets)
+    gsea = {}
+    for name, path in resolved_sets.items():
+        table = gsea_prerank(results, path, permutations=permutations,
+                             threads=threads, seed=seed)
+        if table is not None:
+            table.to_csv(outdir / f"gsea_{name}.csv", index=False)
+        gsea[name] = table
+    return {
+        "results": results,
+        "gsea": gsea,
+        "n_samples": int(len(meta)),
+        "n_test": n_test,
+        "n_control": n_control,
+        "n_dropped": dropped,
+        "design_variables": design_vars,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -151,17 +344,8 @@ def run_degsea(
     Renvoie `{collection: matrice NES (pathways × clusters)}` (one-vs-all), pour
     les heatmaps de synthèse — dict vide si aucun résultat GSEA.
     """
-    # normalisation gene_sets -> dict {nom: chemin}, en ne gardant que l'existant
-    if isinstance(gene_sets, (str, Path)):
-        gene_sets = {Path(gene_sets).stem: str(gene_sets)}
-    resolved = {}
-    for name, path in gene_sets.items():
-        p = Path(os.path.expanduser(str(path)))
-        if p.exists():
-            resolved[name] = str(p)
-        else:
-            logger.warning("DEGSEA : gene set introuvable, ignoré : %s (%s)", name, p)
-    gene_sets = resolved
+    # Normalisation gene_sets -> {nom: chemin}, en ne gardant que l'existant.
+    gene_sets = _resolve_gene_sets(gene_sets)
     logger.info("DEGSEA : GSEA sur %d collection(s) : %s", len(gene_sets),
                 ", ".join(gene_sets) or "aucune (DESeq2 seul)")
 
