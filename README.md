@@ -1,11 +1,11 @@
 Run demo : 
-gof-demo                                  # console script
-python -m gardenofforks.demo_pipeline     # module form
+gof-demo OR
+python -m gardenofforks.demo_pipeline  
 
 Run pipeline :
 gof-run --config config_path.yaml
 
-# Consensus clustering de tumeurs atypiques — bulk RNA-seq
+# ICA + Consensus clustering + DESeq2 GSEA + Survival analysis
 
 Pipeline de classification non supervisée pour ~500 tumeurs, avec
 **rééchantillonnage double (patients ET gènes)** et visualisation t-SNE / UMAP
@@ -102,6 +102,26 @@ run en changeant un seul réglage :
 ```bash
 gof-run --config config/config_SARAH.yaml --k-max 12 --compute_jaccard n
 ```
+
+**Le YAML est validé avant le moindre calcul**, avec exactement les mêmes règles
+que la ligne de commande : valeurs autorisées, types, bornes, cohérence
+d'ensemble (`k_min <= k_max`, existence des fichiers d'entrée, étapes
+incompatibles…). Toutes les fautes sont signalées d'un coup, avec une suggestion
+quand c'est une coquille, et le pipeline s'arrête en une seconde au lieu de
+mourir au bout de plusieurs minutes au fond des workers :
+
+```console
+$ gof-run --config config/essai.yaml
+[config] configuration invalide :
+  - k_maxx : clé inconnue — voulez-vous dire 'k_max' ?
+  - metric : 'peason' n'est pas une valeur acceptée — voulez-vous dire 'pearson' ?
+  - k_max = 3 < k_min = 8 : la plage de k serait vide.
+```
+
+Une clé inconnue **proche** d'une option existante est une erreur (c'est une
+coquille, et l'ignorer ferait tourner l'analyse avec le défaut, sans signal) ;
+une clé sans voisin plausible reste un simple avertissement — le YAML sert aussi
+de brouillon pour des options à venir.
 
 Les clés du YAML utilisent des underscores (`n_top_genes`, `color_by`,
 `tsne_dim`, ...), pas des tirets ; `null` = défaut interne. `--counts` reste

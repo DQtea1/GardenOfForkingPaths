@@ -1,37 +1,27 @@
 #!/usr/bin/env python
-r"""Pipeline complet : prétraitement -> consensus clustering -> diagnostics ->
-embeddings t-SNE / UMAP -> figures et tables.
+"""Orchestration du pipeline : enchaîne les étapes et relie leurs dépendances.
+
+Le texte d'aide de `gof-run`, la définition des options et la validation de la
+configuration vivent dans :mod:`gardenofforks.config` ; ce module ne s'occupe
+que de l'ordre des étapes et du passage des résultats de l'une à l'autre.
 
 Ce module fait partie du paquet `gardenofforks` : il ne se lance pas par chemin
 de fichier (`python gardenofforks/run_pipeline.py` casse les imports relatifs),
-mais par la commande console ou la forme `-m` :
-
-    gof-run …                        # après `pip install -e ".[full]"`
-    python -m gardenofforks.run_pipeline …
-
-Exemples
---------
-# jeu de démonstration (500 tumeurs simulées, 4 sous-types)
-gof-make-demo-data --outdir data && gof-run --counts data/demo_counts.tsv \
-    --outdir results/demo --n-resamples 300
-
-# données réelles, matrice VST déjà normalisée (gènes en lignes)
-gof-run --counts data/vst.tsv --already-normalized \
-    --k-max 10 --n-resamples 1000 --base hierarchical --metric pearson \
-    --gene-mode bootstrap --outdir results/run01
+mais par `gof-run …` ou `python -m gardenofforks.run_pipeline …`.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
+from . import config as cf
 from . import deconv as dc
 from . import degsea as dg
 from . import ica as ic
@@ -44,361 +34,8 @@ from . import purity as pur
 from . import report as rp
 from . import sigproj as sp
 from .analysis_branch import AnalysisBranch, BranchPaths, BranchSettings
+from .config import ConfigError, build_parser, load_config
 from .results import PipelineResults
-
-
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--config", default=None, type=Path,
-                   help="fichier YAML de paramètres. Tout paramètre passé en "
-                        "ligne de commande a la priorité sur le YAML.")
-    io = p.add_argument_group("entrées / sorties")
-    io.add_argument("--counts", default=None, help="matrice csv/tsv/parquet "
-                    "(obligatoire, en ligne de commande ou dans le YAML)")
-    io.add_argument("--samples-in-rows", action="store_true",
-                    help="par défaut : gènes en lignes, échantillons en colonnes")
-    io.add_argument("--metadata", default=None,
-                    help="csv/tsv indexé par échantillon (annotations cliniques)")
-    io.add_argument("--color-by", default=None,
-                    help="colonne des métadonnées à superposer sur les embeddings")
-    io.add_argument("--outdir", default="results/run", type=Path)
-
-    pre = p.add_argument_group("prétraitement")
-    pre.add_argument("--already-normalized", action="store_true",
-                     help="entrée déjà en VST/rlog/logCPM : saute filtrage + normalisation")
-    pre.add_argument("--norm_method", choices=["vst", "logcpm"], default="vst",
-                     help="normalisation des counts bruts (si --already-normalized "
-                          "n'est pas mis) : 'vst' (DESeq2/PyDESeq2, défaut) ou 'logcpm'.")
-    pre.add_argument("--min-cpm", type=float, default=1.0)
-    pre.add_argument("--min-frac-samples", type=float, default=0.2)
-    pre.add_argument("--keep-technical", action="store_true")
-    pre.add_argument("--n-top-genes", type=int, default=5000)
-    pre.add_argument("--variance-method", choices=["mad", "var"], default="mad")
-    pre.add_argument("--scale-genes", action="store_true")
-    pre.add_argument("--outlier_sd_threshold", type=float, default=0.0,
-                     help="ACP sur la matrice prétraitée puis retrait des tumeurs "
-                          "à plus de N écarts-types sur une composante principale. "
-                          "0 ou absent = aucun retrait.")
-    pre.add_argument("--outlier_n_pc", type=int, default=10,
-                     help="nombre de composantes principales inspectées pour la "
-                          "détection d'outliers (défaut 10).")
-    pre.add_argument("--outlier_min_explained_var", type=float, default=0.0,
-                     help="si > 0, inspecte plutôt toutes les composantes dont la "
-                          "variance expliquée dépasse ce seuil (fraction ]0,1[ ; "
-                          "8 = 8 %%). Prioritaire sur --outlier_n_pc.")
-
-    ica_g = p.add_argument_group("ICA stabilisée (branche parallèle)")
-    ica_g.add_argument("--run_ica", choices=["y", "n"], default="y",
-                       help="'y' (défaut) : exécute la branche ICA stabilisée indépendante "
-                            "après le prétraitement ; 'n' la désactive. Nécessite "
-                            "`pip install stabilized-ica`.")
-    ica_g.add_argument("--ica_n_components_min", type=int, default=6,
-                       help="nombre minimal de composantes ICA à évaluer (MSTD).")
-    ica_g.add_argument("--ica_n_components_max", type=int, default=8,
-                       help="nombre maximal de composantes ICA à évaluer (MSTD).")
-    ica_g.add_argument("--ica_n_components_step", type=int, default=1,
-                       help="pas entre deux dimensions ICA testées (défaut 2).")
-    ica_g.add_argument("--ica_n_runs", type=int, default=100,
-                       help="nombre d'exécutions FastICA par dimension pour estimer la stabilité.")
-    ica_g.add_argument("--ica_top_dimensions", type=int, default=4,
-                       help="nombre maximal de branches ICA sauvegardées (1–4 ; défaut 4) : "
-                            "MSTD, voisin inférieur, voisin supérieur, puis meilleure "
-                            "stabilité moyenne.")
-    ica_g.add_argument("--ica_algorithm", default="fastica_par",
-                       choices=["fastica_par", "fastica_def", "picard_fastica", "picard",
-                                "picard_ext", "picard_orth"],
-                       help="solveur de stabilized-ica (défaut FastICA parallèle).")
-    ica_g.add_argument("--ica_fun", default="logcosh", choices=["logcosh", "exp", "cube", "tanh"],
-                       help="non-linéarité de l'ICA stabilisée (défaut logcosh).")
-    ica_g.add_argument("--ica_resampling", default="none",
-                       choices=["none", "bootstrap", "fast_bootstrap"],
-                       help="rééchantillonnage interne stabilized-ica ; 'none' est le défaut.")
-    ica_g.add_argument("--ica_max_iter", type=int, default=2000,
-                       help="itérations maximales du solveur ICA (défaut 2000).")
-    ica_g.add_argument("--ica_deterministic", choices=["y", "n"], default="y",
-                       help="'y' force les fits ICA en série pour une graine reproductible ; "
-                            "'n' autorise le parallélisme interne, moins déterministe.")
-    ica_g.add_argument("--ica_k_final", type=int, default=None,
-                       help="k imposé pour le consensus sur les projections ICA ; sinon sélection auto indépendante.")
-    ica_g.add_argument("--run_ica_gsea", choices=["y", "n"], default="y",
-                       help="'y' (défaut) : annote chaque métagène des dimensions "
-                            "ICA conservées par GSEA pré-classé sur ses poids signés.")
-    ica_g.add_argument("--ica_gsea_min_size", type=int, default=15,
-                       help="taille minimale d'un gene set pour le GSEA des métagènes.")
-    ica_g.add_argument("--ica_gsea_max_size", type=int, default=500,
-                       help="taille maximale d'un gene set pour le GSEA des métagènes.")
-
-    pur_g = p.add_argument_group("pureté tumorale (PUREE)")
-    pur_g.add_argument("--purity_threshold", default="0",
-                       help="seuil de pureté dans ]0,1[ pour filtrer les tumeurs. "
-                            "0 / null / false = aucun filtrage (PUREE n'est pas lancé).")
-    pur_g.add_argument("--purity_direction", choices=["higher", "lower"],
-                       default="higher",
-                       help="'higher' garde les puretés >= seuil (retire les "
-                            "faibles puretés) ; 'lower' garde les puretés <= seuil.")
-    pur_g.add_argument("--puree_dir", default="/home/quentin/02_MODELS/PUREE",
-                       help="dossier du dépôt PUREE (predict_purity.py, models/, data/).")
-    pur_g.add_argument("--puree_python",
-                       default="/home/quentin/miniforge3/envs/PUREE/bin/python",
-                       help="interpréteur Python de l'environnement PUREE.")
-    pur_g.add_argument("--puree_gene_id", choices=["HGNC", "ENSEMBL"], default="HGNC",
-                       help="type d'identifiant des gènes de la matrice d'entrée.")
-
-    con = p.add_argument_group("consensus clustering")
-    con.add_argument("--k-min", type=int, default=3)
-    con.add_argument("--k-max", type=int, default=6)
-    con.add_argument("--n-resamples", type=int, default=1000)
-    con.add_argument("--prop-samples", type=float, default=0.8)
-    con.add_argument("--prop-genes", type=float, default=0.8)
-    con.add_argument("--sample-mode", choices=["subsample", "bootstrap"],
-                     default="subsample")
-    con.add_argument("--gene-mode", choices=["subsample", "bootstrap"],
-                     default="subsample")
-    con.add_argument("--base", choices=["hierarchical", "kmeans", "kmedoids"],
-                     default="hierarchical")
-    con.add_argument("--metric", choices=["pearson", "spearman", "euclidean", "cosine"],
-                     default="pearson")
-    con.add_argument("--linkage", default="average",
-                     choices=["average", "complete", "ward", "single"])
-    con.add_argument("--k-final", type=int, default=None,
-                     help="k retenu ; par défaut choisi automatiquement (voir --k_criterion)")
-    con.add_argument("--k_criterion", choices=["pac", "deltak", "both"], default="both",
-                     help="critère de choix auto de k (si --k-final absent) : 'pac' "
-                          "(minimise le PAC), 'deltak' (coude de Δ(K)), 'both' (défaut).")
-    con.add_argument("--min-cluster-size", type=int, default=10)
-
-    stab = p.add_argument_group("stabilité des branches (Jaccard bootstrap)")
-    stab.add_argument("--compute_jaccard", choices=["y", "n"], default="y",
-                      help="'y' : après la partition finale, calcule la stabilité "
-                           "Jaccard de chaque branche de l'arbre consensus par "
-                           "bootstrap des gènes (n_resamples arbres). Défaut 'y'.")
-
-    deg = p.add_argument_group("DEGSEA (DESeq2 + GSEA par cluster)")
-    deg.add_argument("--run_degsea", choices=["y", "n"], default="n",
-                     help="'y' : après les embeddings, DESeq2 + GSEA par cluster "
-                          "(one-vs-all et one-vs-one). Étape longue. Défaut 'n'.")
-    deg.add_argument("--degsea_mode", choices=["ova", "ovo", "both"], default="both",
-                     help="contrastes DESeq2 : ova (one-vs-all), ovo (one-vs-one, "
-                          "coûteux : k(k-1)/2), both (défaut).")
-    deg.add_argument("--degsea_all_k", choices=["y", "n"], default="n",
-                     help="'y' : calcule le DEGSEA pour TOUS les k de la plage "
-                          "[k_min..k_max] (une sous-arborescence tables/degsea/k<k>/ "
-                          "par k, et un panneau DEGSEA aligné sur n'importe quel k "
-                          "dans le rapport). Très coûteux. Défaut 'n' : uniquement "
-                          "le k recommandé par le critère combiné PAC+Delta(K).")
-    deg.add_argument("--gsea_gene_sets",
-                     default=str(Path.home() / ".cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt"),
-                     help="fichier .gmt de gene sets pour le GSEA (hallmarks MSigDB par défaut).")
-    deg.add_argument("--gsea_permutations", type=int, default=1000,
-                     help="nombre de permutations du GSEA pré-classé (défaut 1000).")
-    deg.add_argument("--gsea_heatmap_pval", type=float, default=0.05,
-                     help="seuil de **FDR q-valeur GSEA** (permutations) pour inclure "
-                          "un pathway dans la heatmap one-vs-all : tous ceux "
-                          "significatifs après correction dans >= 1 cluster (défaut 0.05). "
-                          "Convention GSEA usuelle : 0.25.")
-
-    clinical_deg = p.add_argument_group("DEGSEA clinique (DESeq2 ajusté + GSEA)")
-    clinical_deg.add_argument("--run_clinical_degsea", choices=["y", "n"], default="n",
-                             help="exécute les expériences clinical_degsea du YAML, "
-                                  "indépendamment du consensus clustering. Une entrée "
-                                  "clinical_degsea dans le YAML les active aussi.")
-
-    sig = p.add_argument_group("projection de signatures (scoring + association clinique)")
-    sig.add_argument("--compute_signatures", choices=["y", "n"], default="n",
-                     help="'y' : après DEGSEA, score les signatures par tumeur "
-                          "(ssGSEA + expression moyenne) et teste leur association "
-                          "aux variables cliniques. Défaut 'n'.")
-    sig.add_argument("--signatures_gmt", default=None,
-                     help="fichier .gmt des signatures à scorer. Défaut : la "
-                          "collection load_signatures_select du YAML, sinon "
-                          "--gsea_gene_sets.")
-    sig.add_argument("--sig_corr_method", choices=["spearman", "pearson"],
-                     default="spearman",
-                     help="corrélation score↔variable continue (défaut spearman).")
-    sig.add_argument("--sig_top_n", type=int, default=8,
-                     help="nombre de top signatures affichées par variable (défaut 8).")
-    sig.add_argument("--sig_pval", type=float, default=0.05,
-                     help="seuil de FDR pour retenir une signature comme "
-                          "significativement associée (défaut 0.05).")
-
-    dec = p.add_argument_group("déconvolution (omnideconv / immunedeconv)")
-    dec.add_argument("--run_deconv", choices=["y", "n"], default="n",
-                     help="'y' : batterie de déconvolution (MCPcounter, xCell, "
-                          "quanTIseq, EPIC, et DWLS/BayesPrism si référence "
-                          "single-cell). Étape longue. Défaut 'n'. Méthodes et "
-                          "paramètres : bloc deconv_methods du YAML ; référence : "
-                          "bloc deconv_reference.")
-    dec.add_argument("--deconv_rscript", default="Rscript",
-                     help="interpréteur Rscript (omnideconv + immunedeconv installés).")
-
-    chi = p.add_argument_group("association catégorielle (khi² d'indépendance)")
-    chi.add_argument("--run_chi2", choices=["y", "n"], default="y",
-                     help="'y' (défaut) : croise cluster (chaque k) × variables "
-                          "cliniques catégorielles et clinique × clinique — khi² "
-                          "d'indépendance (Fisher/Monte-Carlo en repli), V de Cramér "
-                          "et résidus standardisés ajustés. Sauté sans métadonnées "
-                          "catégorielles. Étape légère.")
-    chi.add_argument("--chi2_mc_resamples", type=int, default=2000,
-                     help="permutations du khi² de Monte-Carlo (repli des tables R×C "
-                          "aux conditions de Cochran non remplies ; défaut 2000).")
-
-    cor = p.add_argument_group("corrélations continues (9b)")
-    cor.add_argument("--run_correlations", choices=["y", "n"], default="y",
-                     help="'y' (défaut) : corrèle deux à deux les variables CONTINUES "
-                          "par patient — clinique continue × signatures/déconvolution "
-                          "et signatures × déconvolution (Spearman + FDR). Léger. "
-                          "Sauté sans variable continue exploitable.")
-    cor.add_argument("--corr_method", choices=["spearman", "pearson"], default="spearman",
-                     help="méthode de corrélation (défaut spearman, robuste).")
-    cor.add_argument("--corr_all_pairs", choices=["y", "n"], default="n",
-                     help="'y' : calcule AUSSI signature×signature et déconv×déconv "
-                          "(redondant / compositionnel — à interpréter avec prudence). "
-                          "Défaut 'n'.")
-
-    rep = p.add_argument_group("rapport d'analyse (HTML interactif)")
-    rep.add_argument("--create_report", choices=["y", "n"], default="y",
-                     help="'y' (défaut) : génère outdir/report.html — rapport "
-                          "interactif autonome de tous les résultats.")
-
-    embg = p.add_argument_group("embeddings")
-    embg.add_argument("--t-SNE_dim", dest="tsne_dim", type=int, choices=[2, 3],
-                      default=2,
-                      help="dimensions des embeddings t-SNE / UMAP : 2 (PNG "
-                           "statiques, défaut) ou 3 (HTML interactif rotatable, "
-                           "survol = ID de la tumeur ; nécessite plotly)")
-    embg.add_argument("--perplexity", type=float, default=30.0)
-    embg.add_argument("--n-neighbors", type=int, default=15)
-    embg.add_argument("--min-dist", type=float, default=0.1)
-    embg.add_argument("--no-umap", action="store_true")
-
-    p.add_argument("--parallel", choices=["y", "n"], default="y",
-                   help="'y' (défaut) : parallélise le rééchantillonnage consensus, "
-                        "la stabilité Jaccard, DEGSEA et les embeddings sur --n-jobs "
-                        "cœurs. 'n' : force tout en séquentiel (n_jobs=1), utile pour "
-                        "déboguer ou sur une machine partagée.")
-    p.add_argument("--n-jobs", type=int, default=-1)
-    p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--log_file", default="run.log",
-                   help="fichier journal horodaté (relatif à outdir si non absolu ; "
-                        "défaut run.log). Toute la progression y est écrite.")
-    return p
-
-
-def _load_yaml(path: Path) -> dict:
-    try:
-        import yaml
-    except ImportError as exc:  # pragma: no cover
-        raise ImportError("PyYAML absent : `pip install pyyaml` pour utiliser "
-                          "--config.") from exc
-    with open(path) as fh:
-        data = yaml.safe_load(fh) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} : le YAML doit être un dictionnaire clé: valeur.")
-    return data
-
-
-def parse_args(argv=None):
-    """Fusionne, par priorité croissante : défauts argparse < YAML < ligne de
-    commande. Les clés du YAML sont les noms `dest` (avec des underscores :
-    `n_top_genes`, `color_by`, `tsne_dim`, ...)."""
-    parser = build_parser()
-    args = parser.parse_args(argv)                 # défauts appliqués
-    merged = vars(args)
-    gsea_collections: dict[str, str] = {}
-    signature_sources: dict = {}
-    deconv_methods: dict = {}
-    deconv_reference: dict = {}
-    ordinal_variables: dict = {}
-    clinical_degsea: dict = {}
-
-    # 1. YAML : écrase les défauts, uniquement pour des clés connues
-    if args.config:
-        config = _load_yaml(args.config)
-        unknown = set(config) - set(merged) - {"config"}
-
-        # 1a. Collections de gene sets GSEA. Forme recommandée : un dict
-        #     `gsea_collections: {nom: chemin.gmt}` (valeur str = chemin activé,
-        #     ou {enabled: bool, path: ...}). Forme héritée aussi acceptée :
-        #     des clés plates `load_<nom>: chemin.gmt`.
-        if isinstance(config.get("gsea_collections"), dict):
-            for name, spec in config["gsea_collections"].items():
-                if isinstance(spec, str):
-                    path, enabled = spec, True
-                elif isinstance(spec, dict):
-                    path, enabled = spec.get("path"), spec.get("enabled", True)
-                else:
-                    continue
-                if enabled and path:
-                    gsea_collections[str(name)] = str(Path(path).expanduser())
-            unknown.discard("gsea_collections")
-        for key in sorted(k for k in unknown if k.startswith("load_")):
-            val = config[key]
-            if isinstance(val, str) and val.strip().lower().endswith(".gmt"):
-                gsea_collections[key[len("load_"):]] = str(Path(val).expanduser())
-                unknown.discard(key)   # consommée ; les load_* non-.gmt restent signalées
-
-        # 1a-bis. dicts imbriqués : sources de signatures (étape 7) et réglages
-        #         de déconvolution (étape 8).
-        if isinstance(config.get("signature_sources"), dict):
-            signature_sources = config["signature_sources"]
-            unknown.discard("signature_sources")
-        if isinstance(config.get("deconv_methods"), dict):
-            deconv_methods = config["deconv_methods"]
-            unknown.discard("deconv_methods")
-        if isinstance(config.get("deconv_reference"), dict):
-            deconv_reference = config["deconv_reference"]
-            unknown.discard("deconv_reference")
-        # variables ORDINALES pour le test de tendance (9a). Deux formes :
-        #   dict {stade: [I, II, III], grade: [G1, G2, G3]}  (ordre explicite, recommandé)
-        #   liste [stade, grade]                             (ordre = tri des modalités)
-        if "ordinal_variables" in config:
-            ov = config["ordinal_variables"]
-            if isinstance(ov, dict):
-                ordinal_variables = {str(k): (list(v) if v else None) for k, v in ov.items()}
-            elif isinstance(ov, (list, tuple)):
-                ordinal_variables = {str(k): None for k in ov}
-            unknown.discard("ordinal_variables")
-        # Expériences DEGSEA cliniques : dictionnaire direct {nom: spécification}
-        # ou forme enveloppée {enabled: y/n, experiments: {...}}.
-        if "clinical_degsea" in config:
-            value = config["clinical_degsea"]
-            if not isinstance(value, dict):
-                raise ValueError("clinical_degsea doit être un dictionnaire d'expériences.")
-            clinical_degsea = value
-            unknown.discard("clinical_degsea")
-
-        # 1b. Autres clés inconnues : avertissement non bloquant (fonctions à venir,
-        #     p. ex. human_pathways, IPRES flat — remplacé par signature_sources).
-        if unknown:
-            print(f"[config] clés ignorées (non gérées par le pipeline) : "
-                  f"{', '.join(sorted(unknown))}", file=sys.stderr)
-
-        for key, val in config.items():
-            if key != "config" and key in merged:   # seules les clés connues
-                merged[key] = val
-
-    # 2. Ligne de commande : réappliquée par-dessus le YAML (priorité maximale).
-    #    On repère les arguments réellement saisis en reparsant avec des défauts
-    #    supprimés — seules les clés présentes ont été passées explicitement.
-    for action in parser._actions:
-        action.default = argparse.SUPPRESS
-    provided = vars(parser.parse_args(argv))
-    provided.pop("config", None)
-    merged.update(provided)
-
-    if not merged.get("counts"):
-        parser.error("--counts est obligatoire (en ligne de commande ou dans le YAML).")
-
-    merged["gsea_collections"] = gsea_collections     # {nom: chemin .gmt}
-    merged["signature_sources"] = signature_sources   # {nom: {format, path, ...}}
-    merged["deconv_methods"] = deconv_methods         # {méthode: {enabled, ...}}
-    merged["deconv_reference"] = deconv_reference     # {format, path, celltype_col, ...}
-    merged["ordinal_variables"] = ordinal_variables   # {variable: [modalités ordonnées] | None}
-    merged["clinical_degsea"] = clinical_degsea       # {expérience: {design, contrast, control, test, ...}}
-    return argparse.Namespace(**merged)
-
-from dataclasses import dataclass, field
 
 
 @dataclass
@@ -423,7 +60,7 @@ class _Ctx:
 
 def _setup(argv) -> _Ctx:
     # ------------------------------------------ 0. configuration & démarrage
-    args = parse_args(argv)
+    args = load_config(argv)
 
     outdir = Path(args.outdir)
     (outdir / "figures").mkdir(parents=True, exist_ok=True)
@@ -659,11 +296,9 @@ def _ica_metagene_gsea(c: _Ctx) -> None:
         c.log.info("1d. GSEA des métagènes ICA désactivé (run_ica_gsea = n).")
         return
 
-    gene_sets = dict(c.args.gsea_collections or {})
-    if not gene_sets and c.args.gsea_gene_sets:
-        fallback = Path(c.args.gsea_gene_sets).expanduser()
-        gene_sets = {fallback.stem: str(fallback)}
-    gene_sets = dg.resolve_gene_sets(gene_sets)
+    gene_sets = dg.resolve_gene_sets(
+        cf.collections_or_fallback(c.args.gsea_collections, c.args.gsea_gene_sets)
+    )
     if not gene_sets:
         c.log.warning(
             "1d. GSEA des métagènes ICA demandé, mais aucune collection GMT "
@@ -751,81 +386,6 @@ def _run_primary_branch(c: _Ctx) -> None:
     ).run(run_associations=True)
 
 
-def _enabled(value, default: bool = True) -> bool:
-    """Interprète les booléens YAML, y compris les formes ``y`` / ``n``."""
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"y", "yes", "true", "1", "on"}
-
-
-def _clinical_experiments(config: dict) -> dict[str, dict]:
-    """Normalise le dictionnaire YAML des expériences DEGSEA cliniques."""
-    if not config or not _enabled(config.get("enabled"), True):
-        return {}
-    raw = config.get("experiments", config)
-    if not isinstance(raw, dict):
-        raise ValueError("clinical_degsea.experiments doit être un dictionnaire.")
-    experiments = {}
-    for name, spec in raw.items():
-        if name == "enabled":
-            continue
-        if not isinstance(spec, dict):
-            raise ValueError(f"clinical_degsea.{name} doit être un dictionnaire.")
-        if not _enabled(spec.get("enabled"), True):
-            continue
-        experiment = dict(spec)
-        if "contrast" not in experiment and "contraste" in experiment:
-            experiment["contrast"] = experiment["contraste"]
-        required = ("design", "contrast", "control", "test")
-        missing = [field for field in required if not experiment.get(field)]
-        if missing:
-            raise ValueError(
-                f"clinical_degsea.{name} incomplet : clé(s) requise(s) {', '.join(missing)}."
-            )
-        safe_name = str(name)
-        if Path(safe_name).name != safe_name or safe_name in {"", ".", ".."}:
-            raise ValueError(f"Nom d'expérience clinique invalide : {name!r}.")
-        experiments[safe_name] = experiment
-    return experiments
-
-
-def _clinical_gene_sets(args, experiment: dict) -> dict[str, str]:
-    """Résout les collections GMT demandées par une expérience clinique."""
-    available = dict(args.gsea_collections) or {
-        Path(args.gsea_gene_sets).stem: str(Path(args.gsea_gene_sets).expanduser())}
-    selected = experiment.get("collections", experiment.get("gsea_collections"))
-    if selected is None or selected == "all":
-        return available
-    if isinstance(selected, dict):
-        resolved = {}
-        for name, spec in selected.items():
-            if isinstance(spec, str):
-                path = spec
-            elif isinstance(spec, dict):
-                path = spec.get("path")
-            else:
-                path = None
-            if path:
-                resolved[str(name)] = str(Path(path).expanduser())
-        return resolved
-    if isinstance(selected, str):
-        if selected in available:
-            selected = [selected]
-        else:  # chemin GMT unique explicitement renseigné dans l'expérience
-            return {Path(selected).stem: str(Path(selected).expanduser())}
-    if not isinstance(selected, (list, tuple)):
-        raise ValueError("collections clinique doit être 'all', un nom, une liste ou un dictionnaire.")
-    unknown = [str(name) for name in selected if str(name) not in available]
-    if unknown:
-        raise ValueError(
-            "Collection(s) clinique(s) absente(s) de gsea_collections : "
-            + ", ".join(unknown)
-        )
-    return {str(name): available[str(name)] for name in selected}
-
-
 def _clinical_degsea(c: _Ctx) -> None:
     """Exécute les expériences cliniques configurées, sans consensus clustering.
 
@@ -834,23 +394,22 @@ def _clinical_degsea(c: _Ctx) -> None:
     """
     args, log = c.args, c.log
     c.clinical_degsea = {}
-    experiments = _clinical_experiments(args.clinical_degsea)
+    experiments = cf.clinical_experiments(args.clinical_degsea)
     if not experiments:
         if args.run_clinical_degsea == "y":
             log.warning("DEGSEA clinique demandé, mais aucune expérience clinical_degsea n'est configurée.")
         return
+    # L'incompatibilité avec --already-normalized est refusée en amont par
+    # config.validate ; seules les métadonnées ne sont connues qu'ici.
     if c.metadata is None:
         raise ValueError("DEGSEA clinique configuré, mais aucune table de métadonnées n'est fournie.")
-    if args.already_normalized:
-        raise ValueError(
-            "DEGSEA clinique requiert des counts bruts ; il ne peut pas être lancé "
-            "avec --already-normalized."
-        )
 
     log.info("DEGSEA clinique : %d expérience(s), indépendante(s) du consensus clustering.",
              len(experiments))
     for name, spec in experiments.items():
-        gene_sets = _clinical_gene_sets(args, spec)
+        gene_sets = cf.clinical_gene_sets(
+            args.gsea_collections, args.gsea_gene_sets, spec
+        )
         result = dg.run_clinical_degsea(
             c.raw, c.metadata,
             design=str(spec["design"]),
@@ -913,8 +472,7 @@ def _degsea_all_k(c: _Ctx) -> None:
     if args.run_degsea != "y":
         return
 
-    gene_sets = args.gsea_collections or {
-        Path(args.gsea_gene_sets).stem: args.gsea_gene_sets}
+    gene_sets = cf.collections_or_fallback(args.gsea_collections, args.gsea_gene_sets)
     all_k = args.degsea_all_k == "y"
     try:
         recommended_k = int(mt.suggest_k(
@@ -1109,7 +667,13 @@ def _save(c: _Ctx) -> None:
 
 def main(argv=None) -> int:
     """Orchestre les dépendances entre entrées, branches et enrichissements."""
-    c = _setup(argv)
+    try:
+        c = _setup(argv)
+    except ConfigError as exc:
+        # Faute de configuration : message net sur stderr, sans pile d'appels —
+        # rien n'a encore été calculé, il n'y a rien d'autre à diagnostiquer.
+        print(f"[config] {exc}", file=sys.stderr)
+        return 2
     _load_data(c)
     _purity_filter(c)
     _outlier_filter(c)
