@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from src import ica_gsea
-from src import run_pipeline
-from src.report import _ica_metagene_gsea_payload
+from gardenofforks import ica_gsea
+from gardenofforks import run_pipeline
+from gardenofforks.report import _ica_metagene_gsea_payload
 
 
 def _gsea_table() -> pd.DataFrame:

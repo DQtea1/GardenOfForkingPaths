@@ -81,8 +81,14 @@ def main(outdir: str | Path = "data") -> None:
     print(f"{out}/demo_metadata.tsv   vérité terrain : 4 sous-types, {n_atyp} atypiques")
 
 
-if __name__ == "__main__":
+def cli(argv=None) -> int:
+    """Point d'entrée console (`gof-make-demo-data`)."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--outdir", default="data",
                         help="dossier de sortie pour demo_counts.tsv / demo_metadata.tsv")
-    main(parser.parse_args().outdir)
+    main(parser.parse_args(argv).outdir)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from src import report
-from src import run_pipeline
+from gardenofforks import report
+from gardenofforks import run_pipeline
 
 
 class _Log:

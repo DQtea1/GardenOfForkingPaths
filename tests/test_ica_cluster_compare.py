@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.ica_cluster_compare import compare_ica_clusters
+from gardenofforks.ica_cluster_compare import compare_ica_clusters
 
 
 def _metasamples() -> pd.DataFrame:

@@ -1,3 +1,12 @@
-src/__pycache__/
 __pycache__/
+*.py[cod]
+
+# sorties de run
 demo/
+results/
+
+# packaging / outillage
+*.egg-info/
+build/
+dist/
+.pytest_cache/

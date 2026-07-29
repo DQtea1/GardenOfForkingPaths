@@ -48,8 +48,8 @@ outlier_min_explained_var: 0.0  # si > 0 : inspecte les CP à variance expliqué
 # stabilité moyenne, puis applique consensus/embeddings/associations sur chaque
 # projection ICA. Nécessite : pip install stabilized-ica
 run_ica: y
-ica_n_components_min: 3       # borne basse de la fourchette MSTD
-ica_n_components_max: 12      # borne haute de la fourchette MSTD
+ica_n_components_min: 5       # borne basse de la fourchette MSTD
+ica_n_components_max: 10      # borne haute de la fourchette MSTD
 ica_n_components_step: 1      # pas entre dimensions testées
 ica_n_runs: 100                # FastICA répétées par dimension (stabilité)
 ica_top_dimensions: 4         # maximum 1–4 : MSTD, ↓ voisin, ↑ voisin, ~ meilleure stabilité moyenne
@@ -65,7 +65,7 @@ ica_gsea_max_size: 500        # taille maximale d'un gene set
 
 # ================================================= 2 · Consensus clustering (+ choix de k)
 k_min: 3
-k_max: 12
+k_max: 8
 n_resamples: 2000
 prop_samples: 0.8
 prop_genes: 0.8
@@ -107,7 +107,7 @@ gsea_collections:
   signatures_select: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/signatures_select.gmt  # Custom curées
 
 degsea_mode: ova            # ova (one-vs-all) | ovo (one-vs-one) | both — nécessaire pour les deux types de volcanos du rapport
-degsea_all_k: n              # y | n — si y : DEGSEA calculé pour TOUS les k [k_min..k_max]
+degsea_all_k: y              # y | n — si y : DEGSEA calculé pour TOUS les k [k_min..k_max]
                              #   (tables/degsea/k<k>/ par k + panneau DEGSEA alignable sur chaque k
                              #   dans le rapport). Très coûteux. Défaut n : seul le k recommandé PAC+Delta(K).
 gsea_gene_sets: ~/.cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt  # .gmt unique de repli (si gsea_collections vide)

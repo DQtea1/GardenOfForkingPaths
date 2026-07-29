@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Contrôle par modèle nul — l'étape que tout le monde saute.
+r"""Contrôle par modèle nul — l'étape que tout le monde saute.
 
 Le consensus clustering produit **toujours** des matrices d'apparence
 « blocs » et des PAC bas, même sur des données sans aucune structure de
@@ -18,30 +18,32 @@ Deux nuls sont calculés ici :
 
 Usage
 -----
-python null_check.py --counts data/demo_counts.tsv --outdir results/demo \
+gof-nullcheck --counts data/demo_counts.tsv --outdir results/demo \
     --n-resamples 200 --k-max 7
+
+Équivalent sans la commande console (le lancement par chemin de fichier casse
+les imports relatifs du paquet) :
+
+    python -m gardenofforks.null_check …
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 
-from src import consensus as cc
-from src import metrics as mt
-from src import preprocessing as pp
+from . import consensus as cc
+from . import metrics as mt
+from . import preprocessing as pp
 
 
 def permute_genes(X: np.ndarray, rng: np.random.Generator) -> np.ndarray:

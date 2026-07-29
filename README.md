@@ -1,3 +1,10 @@
+Run demo : 
+gof-demo                                  # console script
+python -m gardenofforks.demo_pipeline     # module form
+
+Run pipeline :
+gof-run --config config_path.yaml
+
 # Consensus clustering de tumeurs atypiques — bulk RNA-seq
 
 Pipeline de classification non supervisée pour ~500 tumeurs, avec
@@ -13,11 +20,13 @@ calculée **à partir de la distance consensus**, pas de l'expression brute.
 │   ├── GUIDE_config.md              # comment régler chaque paramètre (algo, distance, linkage…)
 │   └── pipeline_map.html            # carte interactive du processus (3 granularités + params)
 ├── README.md
-└── src/                             # package `src` (lancer depuis la racine : python src/<script>.py)
-    ├── run_pipeline.py              # pipeline complet (CLI)
-    ├── null_check.py                # contrôle par modèle nul — à ne pas sauter
+├── pyproject.toml                   # métadonnées, dépendances et commandes `gof-*`
+├── tests/                           # pytest
+└── gardenofforks/                   # package installable (`pip install -e ".[full]"`)
+    ├── run_pipeline.py              # pipeline complet (CLI) -> gof-run
+    ├── null_check.py                # contrôle par modèle nul — à ne pas sauter -> gof-nullcheck
+    ├── demo_pipeline.py             # démo bout en bout -> gof-demo
     ├── make_demo_data.py            # 500 tumeurs simulées, 4 sous-types + atypiques
-    ├── requirements.txt
     ├── analysis_branch.py            # flux partagé : consensus, k, embeddings et clinique
     ├── preprocessing.py             # filtrage, VST/logCPM, gènes variables, centrage, outliers ACP
     ├── ica.py                       # ICA stabilisée : scan MSTD, métagènes et projections
@@ -39,28 +48,43 @@ calculée **à partir de la distance consensus**, pas de l'expression brute.
 
 ## Démarrage rapide
 
-Les scripts se lancent depuis la racine du dépôt (`python src/<script>.py …`) ;
-le dossier `src/` est mis automatiquement sur le `sys.path`.
+Le paquet s'installe une fois ; les commandes `gof-*` se lancent ensuite depuis
+n'importe quel dossier de travail.
 
 ```bash
-pip install -r src/requirements.txt
+# installation (une seule fois). L'extra `full` couvre toutes les étapes
+# optionnelles — c'est ce qu'il faut pour la configuration PAR DÉFAUT, qui
+# active la normalisation VST (pydeseq2), l'ICA stabilisée et le GSEA.
+pip install -e ".[full]"
 
-# 1. jeu de démonstration, pour valider l'installation (~30 s)
-python src/make_demo_data.py
-python src/run_pipeline.py --counts data/demo_counts.tsv \
+# 0. démo bout en bout, pour valider l'installation (~30 s) : simule les
+#    données puis lance le pipeline dessus, dans ./demo/
+gof-demo
+
+# 1. le même en deux temps, si on veut régler les paramètres
+gof-make-demo-data --outdir data
+gof-run --counts data/demo_counts.tsv \
     --metadata data/demo_metadata.tsv --color-by true_subtype \
     --outdir results/demo --n-resamples 300 --k-max 7
 
 # cohorte SARAH — le plus simple est de passer par le fichier de config dédié :
-python src/run_pipeline.py --config config/config_SARAH.yaml
+gof-run --config config/config_SARAH.yaml
 
 # 2. tes données (counts bruts, gènes en lignes)
-python src/run_pipeline.py --counts data/counts.tsv --outdir results/run01 \
+gof-run --counts data/counts.tsv --outdir results/run01 \
     --n-resamples 1000 --k-max 10 --n-top-genes 5000
 
 # 3. contrôle nul, obligatoire avant toute interprétation
-python src/null_check.py --counts data/counts.tsv --outdir results/run01/null
+gof-nullcheck --counts data/counts.tsv --outdir results/run01/null
 ```
+
+Installation minimale, sans les étapes optionnelles : `pip install -e .` — il
+faut alors lancer avec `--norm_method logcpm` (ou `--already-normalized`) et
+`--run_ica n`. Extras disponibles à la carte : `vst`, `gsea`, `degsea`, `ica`,
+`umap`, `plotly`, `parquet`, `dev`.
+
+Chaque commande a son équivalent module, utile pour déboguer :
+`python -m gardenofforks.run_pipeline …`
 
 ## Fichier de configuration
 
@@ -68,7 +92,7 @@ Plutôt que de tout passer en ligne de commande, on peut remplir un fichier de
 `config/` (un modèle commenté listant *tous* les paramètres) et lancer :
 
 ```bash
-python src/run_pipeline.py --config config/config_SARAH.yaml
+gof-run --config config/config_SARAH.yaml
 ```
 
 Priorité : défauts internes < fichier `--config` < ligne de commande. Un paramètre
@@ -76,7 +100,7 @@ saisi au terminal l'emporte donc toujours sur le YAML — pratique pour rejouer 
 run en changeant un seul réglage :
 
 ```bash
-python src/run_pipeline.py --config config/config_SARAH.yaml --k-max 12 --compute_jaccard n
+gof-run --config config/config_SARAH.yaml --k-max 12 --compute_jaccard n
 ```
 
 Les clés du YAML utilisent des underscores (`n_top_genes`, `color_by`,

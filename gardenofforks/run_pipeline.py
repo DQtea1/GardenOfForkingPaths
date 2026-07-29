@@ -1,15 +1,22 @@
 #!/usr/bin/env python
-"""Pipeline complet : prétraitement -> consensus clustering -> diagnostics ->
+r"""Pipeline complet : prétraitement -> consensus clustering -> diagnostics ->
 embeddings t-SNE / UMAP -> figures et tables.
+
+Ce module fait partie du paquet `gardenofforks` : il ne se lance pas par chemin
+de fichier (`python gardenofforks/run_pipeline.py` casse les imports relatifs),
+mais par la commande console ou la forme `-m` :
+
+    gof-run …                        # après `pip install -e ".[full]"`
+    python -m gardenofforks.run_pipeline …
 
 Exemples
 --------
 # jeu de démonstration (500 tumeurs simulées, 4 sous-types)
-python make_demo_data.py && python run_pipeline.py --counts data/demo_counts.tsv \
+gof-make-demo-data --outdir data && gof-run --counts data/demo_counts.tsv \
     --outdir results/demo --n-resamples 300
 
 # données réelles, matrice VST déjà normalisée (gènes en lignes)
-python run_pipeline.py --counts data/vst.tsv --already-normalized \
+gof-run --counts data/vst.tsv --already-normalized \
     --k-max 10 --n-resamples 1000 --base hierarchical --metric pearson \
     --gene-mode bootstrap --outdir results/run01
 """
@@ -25,21 +32,19 @@ from pathlib import Path
 
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from src import deconv as dc
-from src import degsea as dg
-from src import ica as ic
-from src import ica_cluster_compare as icc
-from src import ica_gsea as ig
-from src import metrics as mt
-from src import plots as pl
-from src import preprocessing as pp
-from src import purity as pur
-from src import report as rp
-from src import sigproj as sp
-from src.analysis_branch import AnalysisBranch, BranchPaths, BranchSettings
-from src.results import PipelineResults
+from . import deconv as dc
+from . import degsea as dg
+from . import ica as ic
+from . import ica_cluster_compare as icc
+from . import ica_gsea as ig
+from . import metrics as mt
+from . import plots as pl
+from . import preprocessing as pp
+from . import purity as pur
+from . import report as rp
+from . import sigproj as sp
+from .analysis_branch import AnalysisBranch, BranchPaths, BranchSettings
+from .results import PipelineResults
 
 
 def build_parser() -> argparse.ArgumentParser:
