@@ -26,7 +26,7 @@ norm_method: logcpm              # normalisation des counts bruts : vst (DESeq2/
 min_cpm: 1.0
 min_frac_samples: 0.2
 keep_technical: false         # true = garde les gènes RP/MT/HB
-n_top_genes: 5000
+n_top_genes: 3000
 variance_method: mad          # mad | var
 scale_genes: false            # true = z-score par gène
 
@@ -66,7 +66,7 @@ ica_gsea_max_size: 500        # taille maximale d'un gene set
 
 # ================================================= 2 · Consensus clustering (+ choix de k)
 k_min: 3
-k_max: 15
+k_max: 14
 n_resamples: 2000
 prop_samples: 0.8
 prop_genes: 0.8
@@ -96,8 +96,8 @@ run_degsea: y                 # y | n — DESeq2 + GSEA par cluster (étape long
 # Commenter la ligne pour ne pas utiliser une collection. Si toutes commentées.
 gsea_collections:
   c1: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c1.gmt   # Positional — bandes cytogénétiques (300)
-  c2: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c2.gmt   # Curated — Reactome/KEGG/WikiPathways… (6495)
-  c3: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c3.gmt   # Regulatory targets — TFT + miRNA (3713)
+  # c2: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c2.gmt   # Curated — Reactome/KEGG/WikiPathways… (6495)
+  # c3: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c3.gmt   # Regulatory targets — TFT + miRNA (3713)
   c4: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c4.gmt   # Computational cancer — CGN + CM (858)
   # c5: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c5.gmt   # Ontology — GO + HPO (28339, TRÈS LENT)
   c6: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c6.gmt   # Oncogenic (189)
