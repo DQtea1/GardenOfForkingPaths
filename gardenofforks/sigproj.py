@@ -165,17 +165,27 @@ def score_mean_expression(expr_samples_x_genes: pd.DataFrame,
 # --------------------------------------------------------------------------
 def associate(scores: pd.DataFrame, metadata: pd.DataFrame,
               corr_method: str = "spearman", min_group: int = 3,
-              max_levels: int = 6) -> pd.DataFrame:
+              max_levels: int = 6, max_text_levels: int = 20) -> pd.DataFrame:
     """Teste chaque (signature × variable). `scores` : signatures × échantillons ;
-    `metadata` : échantillons × variables (aligné). Renvoie une table longue."""
+    `metadata` : échantillons × variables (aligné). Renvoie une table longue.
+
+    Une variable catégorielle est testée **par paire de modalités**, donc à un
+    coût quadratique en modalités *et* multiplié par le nombre de signatures :
+    une colonne texte à 60 modalités produit à elle seule 1770 × n_signatures
+    tests, qui gonflent la correction FDR sans porter d'hypothèse. D'où le
+    plafond `max_text_levels` au-delà duquel la colonne est écartée.
+    """
     from scipy.stats import mannwhitneyu, pearsonr, spearmanr
 
     meta = metadata.reindex(scores.columns)
     rows = []
+    dropped = []
     for var in meta.columns:
         col = meta[var]
-        kind = _is_categorical(col, max_levels)
+        kind = _is_categorical(col, max_levels, max_text_levels)
         if kind is None:
+            if not col.dropna().empty:
+                dropped.append((str(var), int(col.dropna().nunique())))
             continue
 
         if kind:  # ---- catégorielle : Wilcoxon (Mann-Whitney) par paire ----
@@ -216,6 +226,14 @@ def associate(scores: pd.DataFrame, metadata: pd.DataFrame,
                                  test=corr_method, n1=len(d), n2=np.nan,
                                  statistic=float(r), effect=float(r),
                                  median_diff=np.nan, pvalue=float(p)))
+
+    if dropped:
+        dropped.sort(key=lambda t: -t[1])
+        logger.info(
+            "Association : %d variable(s) écartée(s) (> %d modalités textuelles, "
+            "identifiant plutôt que variable) — %s.",
+            len(dropped), max_text_levels,
+            ", ".join(f"{v} ({n} modalités)" for v, n in dropped[:8]))
 
     df = pd.DataFrame(rows)
     if len(df):
@@ -278,7 +296,8 @@ def pair_pvals(score_row, groups, min_group: int = 3) -> dict:
 
 def stratified_signature_tests(scores: dict, cluster_labels_by_k: dict,
                                metadata: pd.DataFrame | None,
-                               max_levels: int = 6, min_group: int = 3):
+                               max_levels: int = 6, min_group: int = 3,
+                               max_text_levels: int = 20):
     """Tests de Wilcoxon (Mann-Whitney) des scores de signature entre modalités,
     pour **chaque stratification affichée dans le rapport** :
 
@@ -361,7 +380,7 @@ def stratified_signature_tests(scores: dict, cluster_labels_by_k: dict,
         meta = metadata.reindex(scores[methods[0]].columns)
         for var in meta.columns:
             col = meta[var]
-            if _is_categorical(col, max_levels) is not True:
+            if _is_categorical(col, max_levels, max_text_levels) is not True:
                 continue
             if sum(col.value_counts() >= min_group) < 2:  # < 2 modalités exploitables
                 continue
@@ -397,6 +416,7 @@ def run_signature_projection(
     top_n: int = 8,
     sig_pval: float = 0.05,
     min_group: int = 3,
+    max_text_levels: int = 20,
     n_jobs: int = -1,
     seed: int = 0,
 ) -> dict:
@@ -423,7 +443,7 @@ def run_signature_projection(
     }
     for method, mat in scores.items():
         mat.to_csv(sig_dir / f"scores_{method}.csv")
-    logger.info("Projection 7.1 : scores sauvegardés (%d signatures scorées).",
+    logger.info("Projection 7.1 :  bites sauvegardées (%d signatures scorées).",
                 scores["ssgsea"].shape[0])
 
     if metadata is None or metadata.shape[1] == 0:
@@ -433,20 +453,22 @@ def run_signature_projection(
 
     # 7.2  association + 7.3  figures, pour chaque méthode
     for method, mat in scores.items():
-        assoc = associate(mat, metadata, corr_method=corr_method, min_group=min_group)
+        assoc = associate(mat, metadata, corr_method=corr_method, min_group=min_group,
+                          max_text_levels=max_text_levels)
         assoc.to_csv(sig_dir / f"association_{method}.csv", index=False)
         n_sig = int((assoc["padj"] <= sig_pval).sum()) if len(assoc) else 0
         logger.info("Projection 7.2 [%s] : %d tests, %d significatifs (FDR <= %.3g).",
                     method, len(assoc), n_sig, sig_pval)
-
-        cat_vars = (assoc.loc[assoc["var_type"] == "categorical", "variable"].unique()
-                    if len(assoc) else [])
-        for var in cat_vars:
-            top = top_signatures(assoc, var, top_n, sig_pval)
-            if not top:
-                continue
-            pl.plot_signature_boxplots(mat, metadata[var], top, var, method,
-                                       assoc, figs)
-            pl.plot_signature_heatmap(mat, metadata[var], top, var, method, figs)
-        logger.info("Projection 7.3 [%s] : figures par variable -> %s", method, figs)
+        
+        # Added unnecessary computing time
+        # cat_vars = (assoc.loc[assoc["var_type"] == "categorical", "variable"].unique()
+        #             if len(assoc) else [])
+        # for var in cat_vars:
+        #     top = top_signatures(assoc, var, top_n, sig_pval)
+        #     if not top:
+        #         continue
+        #     pl.plot_signature_boxplots(mat, metadata[var], top, var, method,
+        #                                assoc, figs)
+        #     pl.plot_signature_heatmap(mat, metadata[var], top, var, method, figs)
+        # logger.info("Projection 7.3 [%s] : figures par variable -> %s", method, figs)
     return scores

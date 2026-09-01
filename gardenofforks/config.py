@@ -70,6 +70,52 @@ _STRUCTURED_KEYS = (
 )
 
 
+def _add_gene_filter_options(group, prefix: str, scope: str) -> None:
+    """Déclare le jeu d'options `<prefix>_*` de filtrage des gènes d'un DEGSEA.
+
+    Les deux DEGSEA — clinique (onglet « Expression Différentielle ») et par
+    cluster (onglet « Consensus-Clustering ») — partagent la même mécanique de
+    filtrage mais des **seuils indépendants** : une seule définition ici, deux
+    préfixes à l'appel. Côté exécution, le pendant est
+    :meth:`gardenofforks.degsea.GeneFilters.from_args`, qui relit ces mêmes
+    options par préfixe.
+
+    Rappel : un DEGSEA part des counts BRUTS (DESeq2 modélise des comptages),
+    donc aucun filtre de l'étape 1 — min_cpm, keep_technical, n_top_genes — ne
+    s'y applique ; ces options rejouent ces familles de filtres pour lui.
+    """
+    add = group.add_argument
+    add(f"--{prefix}_filter_low_counts", choices=["y", "n"], default="n",
+        help=f"'y' : {scope} — ne garde que les gènes atteignant "
+             f"--{prefix}_min_count_per_sample counts bruts chez au moins "
+             f"--{prefix}_min_frac_samples des tumeurs testées.")
+    add(f"--{prefix}_min_count_per_sample", type=int, default=15,
+        help="counts bruts minimum par tumeur pour le filtre ci-dessus (défaut 15).")
+    add(f"--{prefix}_min_frac_samples", type=float, default=0.3,
+        help="fraction minimale de tumeurs atteignant ce seuil (0.3 = 30 %%, défaut).")
+    add(f"--{prefix}_filter_technical", choices=["y", "n"], default="n",
+        help="'y' : retire les gènes techniques (ribosomiques, mitochondriaux, "
+             "hémoglobines) avant DESeq2.")
+    add(f"--{prefix}_technical_patterns", default=None,
+        help="expressions régulières des gènes techniques (liste YAML, ou liste "
+             "séparée par des virgules en ligne de commande). Défaut : ^RP[LS], "
+             "^MT-, ^MRP[LS], ^HB[ABDEGMQZ]\\d?$.")
+    add(f"--{prefix}_filter_unmapped", choices=["y", "n"], default="n",
+        help="'y' : retire les identifiants qui ne sont pas des gènes annotés — "
+             "clones génomiques (AC243964.4) et identifiants Ensembl non convertis.")
+    add(f"--{prefix}_unmapped_patterns", default=None,
+        help="expressions régulières des identifiants non annotés (liste YAML, ou "
+             "séparée par des virgules). Défaut : ^[A-Z]{1,2}\\d{5,6}\\.\\d+$, ^ENSG\\d+.")
+    add(f"--{prefix}_select_variable", choices=["y", "n"], default="n",
+        help="'y' : ne teste que les N gènes les plus variables. ATTENTION : "
+             "présélectionner sur la variance biaise l'estimation de la dispersion "
+             "DESeq2 et invalide le filtrage indépendant, donc les FDR. Défaut 'n'.")
+    add(f"--{prefix}_n_top_genes", type=int, default=5000,
+        help="nombre de gènes conservés par le filtre de variance ci-dessus (défaut 5000).")
+    add(f"--{prefix}_variance_method", choices=["mad", "var"], default="mad",
+        help="mesure de variabilité pour ce filtre : mad (robuste, défaut) | var.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=_CLI_DESCRIPTION,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -210,6 +256,9 @@ def build_parser() -> argparse.ArgumentParser:
                           "par k, et un panneau DEGSEA aligné sur n'importe quel k "
                           "dans le rapport). Très coûteux. Défaut 'n' : uniquement "
                           "le k recommandé par le critère combiné PAC+Delta(K).")
+    # Filtrage des gènes en entrée du DEGSEA par cluster : mêmes filtres que le
+    # DEGSEA clinique, seuils indépendants (cf. _add_gene_filter_options).
+    _add_gene_filter_options(deg, "degsea", "DEGSEA par cluster")
     deg.add_argument("--gsea_gene_sets",
                      default=str(Path.home() / ".cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt"),
                      help="fichier .gmt de gene sets pour le GSEA (hallmarks MSigDB par défaut).")
@@ -226,6 +275,23 @@ def build_parser() -> argparse.ArgumentParser:
                              help="exécute les expériences clinical_degsea du YAML, "
                                   "indépendamment du consensus clustering. Une entrée "
                                   "clinical_degsea dans le YAML les active aussi.")
+    # Filtrage des gènes en entrée du DEGSEA clinique : mêmes filtres que le
+    # DEGSEA par cluster, seuils indépendants (cf. _add_gene_filter_options).
+    clinical_deg.add_argument("--clinical_degsea_drop_pca_outliers",
+                             choices=["y", "n"], default="n",
+                             help="'y' : restreint le DEGSEA clinique aux tumeurs "
+                                  "conservées par les filtres de l'étape 1 (pureté "
+                                  "PUREE + outliers ACP). Défaut 'n' : le DEGSEA "
+                                  "clinique porte sur TOUTES les tumeurs de la "
+                                  "matrice, y compris les outliers ACP. Sans objet "
+                                  "pour le DEGSEA par cluster, qui part déjà de la "
+                                  "partition, donc des tumeurs filtrées.")
+    _add_gene_filter_options(clinical_deg, "clinical_degsea", "DEGSEA clinique")
+    clinical_deg.add_argument("--contrast_col_desq", default=None,
+                             help="colonne des métadonnées à relire en chaînes juste "
+                                  "après le chargement. Une variable de contraste "
+                                  "codée en entiers (0/1) serait sinon traitée par "
+                                  "DESeq2 comme une covariable continue.")
 
     sig = p.add_argument_group("projection de signatures (scoring + association clinique)")
     sig.add_argument("--compute_signatures", choices=["y", "n"], default="n",
@@ -244,6 +310,13 @@ def build_parser() -> argparse.ArgumentParser:
     sig.add_argument("--sig_pval", type=float, default=0.05,
                      help="seuil de FDR pour retenir une signature comme "
                           "significativement associée (défaut 0.05).")
+    sig.add_argument("--sig_max_text_levels", type=int, default=20,
+                     help="nombre maximum de modalités d'une variable clinique "
+                          "TEXTE encore testée contre les signatures (défaut 20). "
+                          "Au-delà, la colonne est traitée comme un identifiant "
+                          "(centre, lot, date) et écartée : elle serait sinon "
+                          "testée par paire de modalités, ce qui fait exploser le "
+                          "nombre de tests et dilue la correction FDR.")
 
     dec = p.add_argument_group("déconvolution (omnideconv / immunedeconv)")
     dec.add_argument("--run_deconv", choices=["y", "n"], default="n",

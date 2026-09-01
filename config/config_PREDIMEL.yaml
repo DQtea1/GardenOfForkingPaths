@@ -78,6 +78,49 @@ k_final: null                 # entier pour forcer k ; null = choix automatique 
 k_criterion: pac             # choix auto de k : pac (min PAC) | deltak (coude Δ(K)) | both
 min_cluster_size: 10
 
+# ================================================= 2b · Consensus Clustering — DEGSEA (filtrage des gènes)
+# Filtrage des gènes en entrée du DEGSEA par cluster (onglet « Résultats
+# Consensus-Clustering » > sous-onglet « DEGSEA » du rapport).
+#
+# ATTENTION : le DEGSEA part des counts BRUTS — DESeq2 modélise des comptages,
+# pas une matrice normalisée. Les filtres de la section 1 (min_cpm,
+# keep_technical, n_top_genes) ne s'appliquent QU'À la matrice du clustering et
+# ne touchent pas le DEGSEA. Les options ci-dessous rejouent ces familles de
+# filtres pour l'analyse différentielle par cluster.
+#
+# Ces seuils sont INDÉPENDANTS de ceux du DEGSEA clinique (clinical_degsea_*,
+# section 6) : les deux onglets peuvent être filtrés différemment.
+# Le filtrage est appliqué une seule fois, sur la partition entière, pour que
+# tous les contrastes (one-vs-all et one-vs-one) partagent le même univers de
+# gènes et que les NES restent comparables d'un cluster à l'autre.
+# Les tumeurs, elles, sont déjà celles de la partition : les outliers ACP et le
+# filtre de pureté de l'étape 1 y sont donc déjà appliqués (contrairement au
+# DEGSEA clinique, qui a son option clinical_degsea_drop_pca_outliers).
+
+degsea_filter_low_counts: y            # y | n — filtre d'expression sur counts bruts
+degsea_min_count_per_sample: 15        # counts bruts minimum par tumeur
+degsea_min_frac_samples: 0.30          # ... atteints par >= 30 % des tumeurs de la partition
+
+degsea_filter_technical: y             # y | n — retire ribosomiques / mitochondriaux / hémoglobines
+degsea_technical_patterns:             # expressions régulières (commenter le bloc = défauts)
+  - "^RP[LS]"                          # protéines ribosomiques
+  - "^MRP[LS]"                         # ribosomiques mitochondriales
+  - "^MT-"                             # gènes mitochondriaux
+  - "^HB[ABDEGMQZ]\\d?$"               # hémoglobines
+
+degsea_filter_unmapped: y              # y | n — retire ce qui n'est pas un gène annoté
+degsea_unmapped_patterns:
+  - "^[A-Z]{1,2}\\d{5,6}\\.\\d+$"      # clones génomiques : AC243964.4, AL139246.5, Z98884.2
+  - "^ENSG\\d+"                        # identifiants Ensembl non convertis en symboles HGNC
+
+# Présélection par variance. DÉCONSEILLÉ pour du différentiel : DESeq2 estime sa
+# tendance de dispersion sur l'ensemble des gènes, et son filtrage indépendant
+# suppose un univers non présélectionné — restreindre aux plus variables biaise
+# les deux, donc les padj. À n'activer que pour une exploration rapide.
+degsea_select_variable: n              # y | n
+degsea_n_top_genes: 5000
+degsea_variance_method: mad            # mad (robuste) | var
+
 # ================================================= 4b · Stabilité des branches (Jaccard bootstrap)
 compute_jaccard: y            # y | n
 
@@ -113,6 +156,46 @@ degsea_all_k: y              # y | n — si y : DEGSEA calculé pour TOUS les k 
 gsea_gene_sets: ~/.cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt  # .gmt unique de repli (si gsea_collections vide)
 gsea_permutations: 1000       # permutations du GSEA pré-classé
 gsea_heatmap_pval: 0.05       # heatmap : garde tous les pathways à p-valeur nominale < ce seuil dans >= 1 cluster
+
+# ---------------------------------------------------------------------------
+# Filtrage des gènes en entrée du DEGSEA clinique  (onglet « Résultats
+# Expression Différentielle » du rapport).
+#
+# ATTENTION : le DEGSEA part des counts BRUTS — DESeq2 modélise des comptages,
+# pas une matrice normalisée. Les filtres de la section 1 (min_cpm,
+# keep_technical, n_top_genes) ne s'appliquent QU'À la matrice du clustering et
+# ne touchent pas le DEGSEA. Les options ci-dessous rejouent ces familles de
+# filtres pour l'analyse différentielle, avec leurs propres seuils.
+# Elles sont appliquées APRÈS la sélection des échantillons du contraste : les
+# seuils portent donc sur la cohorte réellement testée.
+clinical_degsea_drop_pca_outliers: n   # y | n — y : restreint le DEGSEA clinique aux tumeurs conservées
+                                       #   à l'étape 1 (pureté PUREE + outliers ACP). n (défaut) : le DEGSEA
+                                       #   clinique porte sur TOUTES les tumeurs, outliers ACP inclus.
+
+clinical_degsea_filter_low_counts: y   # y | n — filtre d'expression sur counts bruts
+clinical_degsea_min_count_per_sample: 15   # counts bruts minimum par tumeur
+clinical_degsea_min_frac_samples: 0.30     # ... atteints par >= 30 % des tumeurs testées
+
+clinical_degsea_filter_technical: y    # y | n — retire ribosomiques / mitochondriaux / hémoglobines
+clinical_degsea_technical_patterns:    # expressions régulières (commenter le bloc = défauts)
+  - "^RP[LS]"                          # protéines ribosomiques
+  - "^MRP[LS]"                         # ribosomiques mitochondriales
+  - "^MT-"                             # gènes mitochondriaux
+  - "^HB[ABDEGMQZ]\\d?$"               # hémoglobines
+
+clinical_degsea_filter_unmapped: y     # y | n — retire ce qui n'est pas un gène annoté
+clinical_degsea_unmapped_patterns:
+  - "^[A-Z]{1,2}\\d{5,6}\\.\\d+$"      # clones génomiques : AC243964.4, AL139246.5, Z98884.2
+  - "^ENSG\\d+"                        # identifiants Ensembl non convertis en symboles HGNC
+
+# Présélection par variance. DÉCONSEILLÉ pour du différentiel : DESeq2 estime sa
+# tendance de dispersion sur l'ensemble des gènes, et son filtrage indépendant
+# suppose un univers non présélectionné — restreindre aux plus variables biaise
+# les deux, donc les padj. À n'activer que pour une exploration rapide.
+clinical_degsea_select_variable: n     # y | n
+clinical_degsea_n_top_genes: 5000
+clinical_degsea_variance_method: mad   # mad (robuste) | var
+# ---------------------------------------------------------------------------
 
 # DEGSEA clinique indépendant du consensus. Décommenter/adapter pour exécuter
 # plusieurs expériences ; chaque résultat est exporté dans tables/clinical_degsea/<nom>/.

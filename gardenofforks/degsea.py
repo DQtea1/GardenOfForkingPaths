@@ -26,6 +26,7 @@ import logging
 import os
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
@@ -33,7 +34,102 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
+from . import preprocessing as pp
+
 logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------
+# Filtrage des gènes en entrée d'un DEGSEA
+# --------------------------------------------------------------------------
+def _as_patterns(value, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Normalise une liste de motifs venue du YAML (liste) ou du terminal
+    (chaîne séparée par des virgules). `None` -> défaut, liste vide -> aucun."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return tuple(p.strip() for p in value.split(",") if p.strip())
+    return tuple(str(p) for p in value)
+
+
+@dataclass(frozen=True)
+class GeneFilters:
+    """Filtrage appliqué aux counts **bruts** juste avant DESeq2.
+
+    Le DEGSEA part de la matrice brute, jamais de la matrice prétraitée du
+    clustering (DESeq2 modélise des comptages). Ces filtres rejouent donc, pour
+    l'analyse différentielle, les mêmes familles de filtres que l'étape 1 — mais
+    avec leurs propres seuils, parce que le bon compromis n'est pas le même pour
+    du clustering et pour un test gène par gène.
+    """
+    low_counts: bool = False
+    min_count: int = 15
+    min_frac_samples: float = 0.3
+    technical: bool = False
+    technical_patterns: tuple[str, ...] = pp.TECHNICAL_PATTERNS
+    unmapped: bool = False
+    unmapped_patterns: tuple[str, ...] = pp.UNMAPPED_PATTERNS
+    variable: bool = False
+    n_top_genes: int = 5000
+    variance_method: str = "mad"
+
+    @classmethod
+    def from_args(cls, args, prefix: str = "clinical_degsea") -> GeneFilters:
+        """Construit les réglages à partir des options `<prefix>_*` du YAML."""
+        def opt(name, default=None):
+            # `null` dans le YAML doit reprendre le défaut, pas propager None.
+            value = getattr(args, f"{prefix}_{name}", default)
+            return default if value is None else value
+
+        return cls(
+            low_counts=opt("filter_low_counts", "n") == "y",
+            min_count=int(opt("min_count_per_sample", 15)),
+            min_frac_samples=float(opt("min_frac_samples", 0.3)),
+            technical=opt("filter_technical", "n") == "y",
+            technical_patterns=_as_patterns(opt("technical_patterns"),
+                                            pp.TECHNICAL_PATTERNS),
+            unmapped=opt("filter_unmapped", "n") == "y",
+            unmapped_patterns=_as_patterns(opt("unmapped_patterns"),
+                                           pp.UNMAPPED_PATTERNS),
+            variable=opt("select_variable", "n") == "y",
+            n_top_genes=int(opt("n_top_genes", 5000)),
+            variance_method=str(opt("variance_method", "mad")),
+        )
+
+    def apply(self, counts: pd.DataFrame) -> pd.DataFrame:
+        """Applique les filtres actifs à `counts` (échantillons × gènes bruts).
+
+        L'ordre compte : on retire d'abord ce qui n'a pas à être testé (gènes
+        techniques, identifiants non annotés), puis on filtre sur l'expression,
+        et seulement ensuite on sélectionne les plus variables — sur ce qui reste.
+        """
+        n0 = counts.shape[1]
+        if self.technical:
+            counts = pp.drop_genes_matching(counts, self.technical_patterns,
+                                            "techniques")
+        if self.unmapped:
+            counts = pp.drop_genes_matching(counts, self.unmapped_patterns,
+                                            "non annotés")
+        if self.low_counts:
+            counts = pp.filter_low_counts(counts, self.min_count,
+                                          self.min_frac_samples)
+        if self.variable:
+            # Le classement se fait sur du logCPM : sur des counts bruts, la
+            # variance suit la moyenne et la profondeur de librairie, elle ne
+            # mesure rien de biologique. Les counts bruts sont ensuite sous-
+            # ensemblés sur les gènes retenus.
+            ranked = pp.select_variable_genes(pp.log_cpm(counts),
+                                              self.n_top_genes,
+                                              self.variance_method)
+            counts = counts.loc[:, ranked.columns]
+        if counts.shape[1] != n0:
+            logger.info("DEGSEA : %d / %d gènes conservés après filtrage.",
+                        counts.shape[1], n0)
+        if not counts.shape[1]:
+            raise ValueError(
+                "Filtrage DEGSEA : aucun gène ne survit aux filtres configurés "
+                "— desserre min_count / min_frac_samples.")
+        return counts
 
 
 # --------------------------------------------------------------------------
@@ -51,6 +147,7 @@ def deseq2_model(counts: pd.DataFrame, metadata: pd.DataFrame, design: str,
     """
     from pydeseq2.dds import DeseqDataSet
     from pydeseq2.ds import DeseqStats
+    from pydeseq2.default_inference import DefaultInference
 
     if not isinstance(design, str) or not design.strip().startswith("~"):
         raise ValueError("design DESeq2 invalide : une formule du type '~ age + response' est attendue.")
@@ -68,12 +165,29 @@ def deseq2_model(counts: pd.DataFrame, metadata: pd.DataFrame, design: str,
     if variable not in metadata.columns:
         raise ValueError(f"Variable de contraste absente des métadonnées : {variable!r}.")
 
+    # Sur une cohorte large, aucun gène n'est non nul dans TOUS les échantillons :
+    # la médiane des ratios devient impossible et PyDESeq2 bascule de lui-même en
+    # mode `iterative` — 10 fits de dispersions complets, chacun suivi d'un Powell
+    # sur autant de paramètres qu'il y a d'échantillons. Des heures. `poscounts`
+    # est la méthode prévue par DESeq2 pour ce cas, et elle est vectorisée.
+    int_counts = counts.round().astype(int)
+    size_factors_fit_type = "ratio"
+    if (int_counts.to_numpy() == 0).any(axis=0).all():
+        size_factors_fit_type = "poscounts"
+        logger.info(
+            "DESeq2 : aucun gène non nul sur les %d échantillons — size factors "
+            "estimés par 'poscounts' (médiane des ratios inapplicable).",
+            int_counts.shape[0],
+        )
+
+    inference = DefaultInference(n_cpus=n_cpus)
     with contextlib.redirect_stdout(io.StringIO()):
-        dds = DeseqDataSet(counts=counts.round().astype(int), metadata=metadata, design=design,
-                           n_cpus=n_cpus, quiet=True)
+        dds = DeseqDataSet(counts=int_counts, metadata=metadata, design=design,
+                           size_factors_fit_type=size_factors_fit_type,
+                           quiet=True, inference=inference)
         dds.deseq2()
         st = DeseqStats(dds, contrast=[variable, test, control],
-                        n_cpus=n_cpus, quiet=True)
+                        quiet=True, inference=inference)
         st.summary()
     return st.results_df.sort_values("stat", ascending=False)
 
@@ -195,6 +309,7 @@ def run_clinical_degsea(
     outdir: Path,
     min_group: int = 3,
     min_count: int = 10,
+    gene_filters: GeneFilters | None = None,
     permutations: int = 1000,
     n_jobs: int = 1,
     seed: int = 0,
@@ -246,6 +361,11 @@ def run_clinical_degsea(
             f"Contraste {contrast}: {test} vs {control} : effectifs insuffisants "
             f"({test}={n_test}, {control}={n_control}; minimum={min_group})."
         )
+    # Filtres configurables, appliqués APRÈS la sélection des échantillons : les
+    # seuils d'expression portent ainsi sur la cohorte réellement testée, pas sur
+    # des tumeurs que le design exclut.
+    if gene_filters is not None:
+        cnt = gene_filters.apply(cnt)
     keep_genes = cnt.columns[cnt.sum(axis=0) >= int(min_count)]
     if not len(keep_genes):
         raise ValueError("Aucun gène ne passe le filtre de counts pour le contraste clinique.")
@@ -319,6 +439,7 @@ def run_degsea(
     mode: str = "both",
     min_group: int = 3,
     min_count: int = 10,
+    gene_filters: GeneFilters | None = None,
     permutations: int = 1000,
     heatmap_pval: float = 0.05,
     subdir: str = "",
@@ -353,6 +474,12 @@ def run_degsea(
     if subdir:
         base = base / subdir      # une sous-arbo par k quand on balaie tous les k
     cnt = counts.loc[sample_names].round().astype(int)
+    # Filtrage appliqué UNE fois, sur la partition entière, et non par contraste :
+    # tous les contrastes partagent alors le même univers de gènes, sans quoi les
+    # NES d'une heatmap pathways × clusters seraient calculés sur des classements
+    # de tailles différentes, donc non comparables d'un cluster à l'autre.
+    if gene_filters is not None:
+        cnt = gene_filters.apply(cnt)
     lab = pd.Series(np.asarray(labels), index=list(sample_names))
 
     sizes = lab.value_counts()

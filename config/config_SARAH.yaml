@@ -16,9 +16,9 @@
 # ============================================================= 1 · Entrées / sorties
 counts: /mnt/d/03_SARAH_projet/00_DATA/01_BULK/01_MERGED_BULKS/00_Unfiltered/RNAseq_counts.csv                  # OBLIGATOIRE : matrice csv/tsv/parquet (gènes en lignes)
 samples_in_rows: false        # true si les échantillons sont en lignes
-metadata: /mnt/d/03_SARAH_projet/00_DATA/02_CLINIC/data_quentin.csv                # csv/tsv indexé par échantillon (annotations cliniques)
+metadata: /mnt/d/03_SARAH_projet/00_DATA/02_CLINIC/data_quentin_ITD.csv                # csv/tsv indexé par échantillon (annotations cliniques)
 color_by: histo_classe                # colonne des métadonnées à superposer sur les embeddings
-outdir: /mnt/d/03_SARAH_projet/01_OUTPUTS/ConsensusClustering/V3           # dossier de sortie
+outdir: /mnt/d/03_SARAH_projet/01_OUTPUTS/GardenOfForks/Run_final           # dossier de sortie
 
 # ================================================= 1 · Prétraitement (normalisation, gènes variables)
 already_normalized: false     # true si entrée déjà en VST/rlog/logCPM (saute filtrage + normalisation)
@@ -38,7 +38,7 @@ puree_python: /home/quentin/miniforge3/envs/PUREE/bin/python  # interpréteur de
 puree_gene_id: HGNC           # HGNC (symboles) | ENSEMBL
 
 # ================================================= 1b · Filtrage d'outliers (ACP)
-outlier_sd_threshold: 3       # ACP + retrait des tumeurs à > N SD sur une CP ; 0 = aucun retrait
+outlier_sd_threshold: 5       # ACP + retrait des tumeurs à > N SD sur une CP ; 0 = aucun retrait
 outlier_n_pc: 3               # nombre de composantes inspectées pour la détection d'outliers
 outlier_min_explained_var: 0.0  # si > 0 : inspecte les CP à variance expliquée > seuil (0.08 = 8 %) au lieu de n_pc
 
@@ -49,7 +49,7 @@ outlier_min_explained_var: 0.0  # si > 0 : inspecte les CP à variance expliqué
 # projection ICA. Nécessite : pip install stabilized-ica
 run_ica: y
 ica_n_components_min: 6       # borne basse de la fourchette MSTD
-ica_n_components_max: 15      # borne haute de la fourchette MSTD
+ica_n_components_max: 9      # borne haute de la fourchette MSTD
 ica_n_components_step: 1      # pas entre dimensions testées
 ica_n_runs: 100               # FastICA répétées par dimension (stabilité)
 ica_top_dimensions: 3         # maximum 1–4 : MSTD, ↓ voisin, ↑ voisin, ~ meilleure stabilité moyenne
@@ -66,7 +66,7 @@ ica_gsea_max_size: 500        # taille maximale d'un gene set
 
 # ================================================= 2 · Consensus clustering (+ choix de k)
 k_min: 3
-k_max: 14
+k_max: 7
 n_resamples: 2000
 prop_samples: 0.8
 prop_genes: 0.8
@@ -78,6 +78,50 @@ linkage: average              # average | complete | ward | single
 k_final: null                 # entier pour forcer k ; null = choix automatique (voir k_criterion)
 k_criterion: pac             # choix auto de k : pac (min PAC) | deltak (coude Δ(K)) | both
 min_cluster_size: 10
+
+# ================================================= 2b · Consensus Clustering — DEGSEA (filtrage des gènes)
+# Filtrage des gènes en entrée du DEGSEA par cluster (onglet « Résultats
+# Consensus-Clustering » > sous-onglet « DEGSEA » du rapport).
+#
+# ATTENTION : le DEGSEA part des counts BRUTS — DESeq2 modélise des comptages,
+# pas une matrice normalisée. Les filtres de la section 1 (min_cpm,
+# keep_technical, n_top_genes) ne s'appliquent QU'À la matrice du clustering et
+# ne touchent pas le DEGSEA. Les options ci-dessous rejouent ces familles de
+# filtres pour l'analyse différentielle par cluster.
+#
+# Ces seuils sont INDÉPENDANTS de ceux du DEGSEA clinique (clinical_degsea_*,
+# section 6) : les deux onglets peuvent être filtrés différemment.
+# Le filtrage est appliqué une seule fois, sur la partition entière, pour que
+# tous les contrastes (one-vs-all et one-vs-one) partagent le même univers de
+# gènes et que les NES restent comparables d'un cluster à l'autre.
+# Les tumeurs, elles, sont déjà celles de la partition : les outliers ACP et le
+# filtre de pureté de l'étape 1 y sont donc déjà appliqués (contrairement au
+# DEGSEA clinique, qui a son option clinical_degsea_drop_pca_outliers).
+
+degsea_filter_low_counts: y            # y | n — filtre d'expression sur counts bruts
+degsea_min_count_per_sample: 15        # counts bruts minimum par tumeur
+degsea_min_frac_samples: 0.30          # ... atteints par >= 30 % des tumeurs de la partition
+
+degsea_filter_technical: y             # y | n — retire ribosomiques / mitochondriaux / hémoglobines
+degsea_technical_patterns:             # expressions régulières (commenter le bloc = défauts)
+  - "^RP[LS]"                          # protéines ribosomiques
+  - "^MRP[LS]"                         # ribosomiques mitochondriales
+  - "^MT-"                             # gènes mitochondriaux
+  - "^HB[ABDEGMQZ]\\d?$"               # hémoglobines
+  # - "^MIR"                             # microARNs
+
+degsea_filter_unmapped: y              # y | n — retire ce qui n'est pas un gène annoté
+degsea_unmapped_patterns:
+  - "^[A-Z]{1,2}\\d{5,6}\\.\\d+$"      # clones génomiques : AC243964.4, AL139246.5, Z98884.2
+  - "^ENSG\\d+"                        # identifiants Ensembl non convertis en symboles HGNC
+
+# Présélection par variance. DÉCONSEILLÉ pour du différentiel : DESeq2 estime sa
+# tendance de dispersion sur l'ensemble des gènes, et son filtrage indépendant
+# suppose un univers non présélectionné — restreindre aux plus variables biaise
+# les deux, donc les padj. À n'activer que pour une exploration rapide.
+degsea_select_variable: n              # y | n
+degsea_n_top_genes: 5000
+degsea_variance_method: mad            # mad (robuste) | var
 
 # ================================================= 4b · Stabilité des branches (Jaccard bootstrap)
 compute_jaccard: y            # y | n
@@ -97,14 +141,14 @@ run_degsea: y                 # y | n — DESeq2 + GSEA par cluster (étape long
 gsea_collections:
   c1: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c1.gmt   # Positional — bandes cytogénétiques (300)
   # c2: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c2.gmt   # Curated — Reactome/KEGG/WikiPathways… (6495)
-  # c3: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c3.gmt   # Regulatory targets — TFT + miRNA (3713)
+  c3: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c3.gmt   # Regulatory targets — TFT + miRNA (3713)
   c4: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c4.gmt   # Computational cancer — CGN + CM (858)
   # c5: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c5.gmt   # Ontology — GO + HPO (28339, TRÈS LENT)
   c6: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c6.gmt   # Oncogenic (189)
   # c7: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c7.gmt   # Immunologic — ImmuneSigDB + vaccins (5219)
-  # c8: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c8.gmt   # Cell type — single-cell (830)
+  c8: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/c8.gmt   # Cell type — single-cell (830)
   h:  /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/h.gmt    # Hallmark (50)
-  sigGeNeHetX: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/sigGeNeHetX.gmt  # Custom immun (164)
+  # sigGeNeHetX: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/sigGeNeHetX.gmt  # Custom immun (164)
   signatures_select: /mnt/d/00_PUBLIC_DATA/00_DATASETS/00_REFDATA/gene_sets_and_pathways/gmt/signatures_select.gmt  # Custom curées
 
 degsea_mode: ova            # ova (one-vs-all) | ovo (one-vs-one) | both — nécessaire pour les deux types de volcanos du rapport
@@ -115,22 +159,94 @@ gsea_gene_sets: ~/.cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt  # .gmt unique 
 gsea_permutations: 1000       # permutations du GSEA pré-classé
 gsea_heatmap_pval: 0.05       # heatmap : garde les pathways à FDR q-valeur GSEA < ce seuil dans >= 1 cluster (0.25 = convention GSEA)
 
+# ---------------------------------------------------------------------------
+# Filtrage des gènes en entrée du DEGSEA clinique  (onglet « Résultats
+# Expression Différentielle » du rapport).
+#
+# ATTENTION : le DEGSEA part des counts BRUTS — DESeq2 modélise des comptages,
+# pas une matrice normalisée. Les filtres de la section 1 (min_cpm,
+# keep_technical, n_top_genes) ne s'appliquent QU'À la matrice du clustering et
+# ne touchent pas le DEGSEA. Les options ci-dessous rejouent ces familles de
+# filtres pour l'analyse différentielle, avec leurs propres seuils.
+# Elles sont appliquées APRÈS la sélection des échantillons du contraste : les
+# seuils portent donc sur la cohorte réellement testée.
+clinical_degsea_drop_pca_outliers: n   # y | n — y : restreint le DEGSEA clinique aux tumeurs conservées
+                                       #   à l'étape 1 (pureté PUREE + outliers ACP). n (défaut) : le DEGSEA
+                                       #   clinique porte sur TOUTES les tumeurs, outliers ACP inclus.
+
+clinical_degsea_filter_low_counts: y   # y | n — filtre d'expression sur counts bruts
+clinical_degsea_min_count_per_sample: 15   # counts bruts minimum par tumeur
+clinical_degsea_min_frac_samples: 0.30     # ... atteints par >= 30 % des tumeurs testées
+
+clinical_degsea_filter_technical: y    # y | n — retire ribosomiques / mitochondriaux / hémoglobines
+clinical_degsea_technical_patterns:    # expressions régulières (commenter le bloc = défauts)
+  - "^RP[LS]"                          # protéines ribosomiques
+  - "^MRP[LS]"                         # ribosomiques mitochondriales
+  - "^MT-"                             # gènes mitochondriaux
+  - "^HB[ABDEGMQZ]\\d?$"               # hémoglobines
+  # - "^MIR"                             # microARNs
+
+
+clinical_degsea_filter_unmapped: y     # y | n — retire ce qui n'est pas un gène annoté
+clinical_degsea_unmapped_patterns:
+  - "^[A-Z]{1,2}\\d{5,6}\\.\\d+$"      # clones génomiques : AC243964.4, AL139246.5, Z98884.2
+  - "^ENSG\\d+"                        # identifiants Ensembl non convertis en symboles HGNC
+
+# Présélection par variance. DÉCONSEILLÉ pour du différentiel : DESeq2 estime sa
+# tendance de dispersion sur l'ensemble des gènes, et son filtrage indépendant
+# suppose un univers non présélectionné — restreindre aux plus variables biaise
+# les deux, donc les padj. À n'activer que pour une exploration rapide.
+clinical_degsea_select_variable: n     # y | n
+clinical_degsea_n_top_genes: 5000
+clinical_degsea_variance_method: mad   # mad (robuste) | var
+# ---------------------------------------------------------------------------
+
 # DEGSEA clinique indépendant du consensus. Décommenter/adapter pour exécuter
 # plusieurs expériences ; chaque résultat est exporté dans tables/clinical_degsea/<nom>/.
-# clinical_degsea:
-#   response_age:
-#     design: "~ age + response"
-#     contrast: response          # accepte aussi la clé française : contraste
-#     control: NR
-#     test: R
-#     collections: [h, c2]        # noms issus de gsea_collections ; omission = toutes les collections
-#     min_group: 3
-#   response_age_batch:
-#     design: "~ age + batch + response"
-#     contrast: response
-#     control: NR
-#     test: R
-#     collections: [h]
+contrast_col_desq : "ITD_interet"
+clinical_degsea:
+  ITD_interet:
+    design: "~ ITD_interet"
+    contrast: "ITD_interet"          # accepte aussi la clé française : contraste
+    control: "0"
+    test: "1"
+    collections: [h]        # noms issus de gsea_collections ; omission = toutes les collections
+    min_group: 1
+  ITD_interet_age_sexe:
+    design: "~ age + sexe + ITD_interet"
+    contrast: "ITD_interet"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 1
+  ITD_interet_histo_classe:
+    design: "~ histo_classe + ITD_interet"
+    contrast: "ITD_interet"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 1
+  ITD_interet_histo_subclass:
+    design: "~ histo_subclass + ITD_interet"
+    contrast: "ITD_interet"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 1
+  ITD_interet_age_sexe_histo_classe:
+    design: "~ age + sexe + histo_classe + ITD_interet"
+    contrast: "ITD_interet"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 1
+  ITD_interet_age_sexe_histo_subclass:
+    design: "~ age + sexe + histo_subclass + ITD_interet"
+    contrast: "ITD_interet"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 1
 
 # ================================================= 7 · Projection de signatures (scoring + association clinique)
 compute_signatures: y         # y | n — score les signatures par tumeur (ssGSEA + expression moyenne) et teste l'association aux variables cliniques
@@ -176,9 +292,9 @@ deconv_reference:
 # les paramètres inconnus d'une méthode sont ignorés (filtrés côté R).
 deconv_methods:
   mcp_counter: {enabled: true}                            # scores d'abondance (sans référence)
-  xcell:       {enabled: true}                            # scores d'enrichissement, 64 types (sans référence)
-  quantiseq:   {enabled: true, tumor: true}               # fractions absolues (tumor=true retire "uncharacterized")
-  epic:        {enabled: true, tumor: true}               # fractions (signature TRef adaptée aux tumeurs)
+  xcell:       {enabled: false}                            # scores d'enrichissement, 64 types (sans référence)
+  quantiseq:   {enabled: false, tumor: true}               # fractions absolues (tumor=true retire "uncharacterized")
+  epic:        {enabled: false, tumor: true}               # fractions (signature TRef adaptée aux tumeurs)
   dwls:        {enabled: false, dwls_method: mast_optimized}  # fractions, via référence single-cell
   bayesprism:  {enabled: false}                            # fractions, via référence single-cell — TRÈS LENT
 

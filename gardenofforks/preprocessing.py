@@ -84,17 +84,58 @@ def filter_low_expression(
     return counts.loc[:, keep]
 
 
-def drop_technical_genes(
-    expr: pd.DataFrame,
-    patterns: tuple[str, ...] = ("^RP[LS]", "^MT-", "^MRP[LS]", "^HB[ABDEGMQZ]\\d?$"),
-) -> pd.DataFrame:
-    """Retire ribosomiques / mitochondriaux / hémoglobines, qui dominent
-    souvent la variance et créent des clusters purement techniques."""
+TECHNICAL_PATTERNS: tuple[str, ...] = (
+    "^RP[LS]", "^MT-", "^MRP[LS]", "^HB[ABDEGMQZ]\\d?$",
+)
+
+# Identifiants qui ne désignent pas un gène annoté : clones génomiques laissés
+# par l'annotation Ensembl/GENCODE (AC243964.4, AL139246.5, Z98884.2) et
+# identifiants Ensembl jamais convertis en symboles HGNC. Ils n'ont pas de
+# correspondance dans les gene sets GSEA et polluent les tables DESeq2.
+# Volontairement étroit : les vrais lncRNA (LINC…, …-AS1) ne sont PAS visés.
+UNMAPPED_PATTERNS: tuple[str, ...] = (
+    "^[A-Z]{1,2}\\d{5,6}\\.\\d+$",
+    "^ENSG\\d+",
+)
+
+
+def drop_genes_matching(expr: pd.DataFrame, patterns, label: str) -> pd.DataFrame:
+    """Retire les colonnes dont le nom correspond à l'une des expressions
+    régulières `patterns`. `label` ne sert qu'au message de journal."""
+    patterns = tuple(patterns or ())
+    if not patterns:
+        return expr
     mask = np.zeros(expr.shape[1], dtype=bool)
     for pat in patterns:
         mask |= expr.columns.str.match(pat, case=False, na=False)
-    logger.info("Gènes techniques retirés : %d", int(mask.sum()))
+    logger.info("Gènes %s retirés : %d / %d", label, int(mask.sum()), expr.shape[1])
     return expr.loc[:, ~mask]
+
+
+def drop_technical_genes(
+    expr: pd.DataFrame,
+    patterns: tuple[str, ...] = TECHNICAL_PATTERNS,
+) -> pd.DataFrame:
+    """Retire ribosomiques / mitochondriaux / hémoglobines, qui dominent
+    souvent la variance et créent des clusters purement techniques."""
+    return drop_genes_matching(expr, patterns, "techniques")
+
+
+def filter_low_counts(counts: pd.DataFrame, min_count: int = 15,
+                      min_frac_samples: float = 0.3) -> pd.DataFrame:
+    """Garde les gènes atteignant `min_count` counts **bruts** dans au moins
+    `min_frac_samples` des échantillons.
+
+    Différent de :func:`filter_low_expression`, qui raisonne en CPM (donc
+    normalisé par la profondeur) : ici le seuil porte sur le comptage brut, ce
+    qui est la formulation usuelle en entrée de DESeq2 (« au moins N reads chez
+    au moins X % des patients »).
+    """
+    keep = (counts.to_numpy() >= int(min_count)).mean(axis=0) >= float(min_frac_samples)
+    logger.info("Filtrage counts bruts (>= %d dans >= %.0f%% des échantillons) : "
+                "%d / %d gènes conservés", int(min_count),
+                100 * float(min_frac_samples), int(keep.sum()), len(keep))
+    return counts.loc[:, keep]
 
 
 def log_cpm(counts: pd.DataFrame, prior_count: float = 1.0) -> pd.DataFrame:

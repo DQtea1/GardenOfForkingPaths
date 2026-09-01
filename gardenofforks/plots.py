@@ -434,192 +434,192 @@ def plot_embeddings_3d(emb: pd.DataFrame, outdir: Path, k: int,
     return paths
 
 
-def plot_cluster_overview(
-    result: ConsensusResult, k: int, outdir: Path,
-    linkage_method: str = "average",
-    branch_stability: BranchStability | None = None,
-    items: pd.DataFrame | None = None,
-    color_by=None, color_label: str = "color_by",
-    nes: pd.DataFrame | None = None,
-    n_top_pathways: int = 5,
-) -> Path:
-    """Figure de synthèse combinant, autour d'un axe commun (l'ordre du
-    dendrogramme) :
+# def plot_cluster_overview(
+#     result: ConsensusResult, k: int, outdir: Path,
+#     linkage_method: str = "average",
+#     branch_stability: BranchStability | None = None,
+#     items: pd.DataFrame | None = None,
+#     color_by=None, color_label: str = "color_by",
+#     nes: pd.DataFrame | None = None,
+#     n_top_pathways: int = 5,
+# ) -> Path:
+#     """Figure de synthèse combinant, autour d'un axe commun (l'ordre du
+#     dendrogramme) :
 
-      - **haut** : arbre consensus, branches colorées par leur stabilité Jaccard ;
-      - **centre** : heatmap de la matrice consensus réordonnée + barre de clusters ;
-      - **gauche** : proportion de chaque modalité de `color_by` par cluster ;
-      - **droite** : enrichissement GSEA (NES, one-vs-all) des top voies par cluster ;
-      - **bas** : item consensus (stabilité des tumeurs) par cluster.
+#       - **haut** : arbre consensus, branches colorées par leur stabilité Jaccard ;
+#       - **centre** : heatmap de la matrice consensus réordonnée + barre de clusters ;
+#       - **gauche** : proportion de chaque modalité de `color_by` par cluster ;
+#       - **droite** : enrichissement GSEA (NES, one-vs-all) des top voies par cluster ;
+#       - **bas** : item consensus (stabilité des tumeurs) par cluster.
 
-    Les panneaux latéraux sont alignés sur les blocs de clusters de la heatmap.
-    """
-    import matplotlib.colors as mcolors
+#     Les panneaux latéraux sont alignés sur les blocs de clusters de la heatmap.
+#     """
+#     import matplotlib.colors as mcolors
 
-    C = result.consensus[k]
-    D = result.distance(k)
-    Z = linkage(squareform(D, checks=False), method=linkage_method)
-    order = leaves_list(Z)
-    n = C.shape[0]
-    labels_ord = result.labels(k, linkage_method)[order]
-    Cord = C[np.ix_(order, order)]
-    X = 10 * n
+#     C = result.consensus[k]
+#     D = result.distance(k)
+#     Z = linkage(squareform(D, checks=False), method=linkage_method)
+#     order = leaves_list(Z)
+#     n = C.shape[0]
+#     labels_ord = result.labels(k, linkage_method)[order]
+#     Cord = C[np.ix_(order, order)]
+#     X = 10 * n
 
-    # blocs de clusters contigus dans l'ordre des feuilles
-    blocks = []
-    i = 0
-    while i < n:
-        lab = int(labels_ord[i]); j = i
-        while j < n and labels_ord[j] == lab:
-            j += 1
-        blocks.append((lab, i, j)); i = j
-    block_labels = [b[0] for b in blocks]
-    color_for = {lab: CLUSTER_COLORS[idx % len(CLUSTER_COLORS)]
-                 for idx, lab in enumerate(block_labels)}
+#     # blocs de clusters contigus dans l'ordre des feuilles
+#     blocks = []
+#     i = 0
+#     while i < n:
+#         lab = int(labels_ord[i]); j = i
+#         while j < n and labels_ord[j] == lab:
+#             j += 1
+#         blocks.append((lab, i, j)); i = j
+#     block_labels = [b[0] for b in blocks]
+#     color_for = {lab: CLUSTER_COLORS[idx % len(CLUSTER_COLORS)]
+#                  for idx, lab in enumerate(block_labels)}
 
-    fig = plt.figure(figsize=(16, 12))
-    gs = fig.add_gridspec(4, 3, height_ratios=[1.35, 0.16, 4.5, 1.7],
-                          width_ratios=[1.75, 4.5, 2.5], hspace=0.09, wspace=0.08)
+#     fig = plt.figure(figsize=(16, 12))
+#     gs = fig.add_gridspec(4, 3, height_ratios=[1.35, 0.16, 4.5, 1.7],
+#                           width_ratios=[1.75, 4.5, 2.5], hspace=0.09, wspace=0.08)
 
-    # ---- arbre consensus (haut) ----
-    ax_d = fig.add_subplot(gs[0, 1])
-    norm_s = Normalize(0.0, 1.0); cmap_s = plt.get_cmap("RdYlGn")
-    stab = (dict(zip(branch_stability.node_ids, branch_stability.stability))
-            if branch_stability is not None else {})
+#     # ---- arbre consensus (haut) ----
+#     ax_d = fig.add_subplot(gs[0, 1])
+#     norm_s = Normalize(0.0, 1.0); cmap_s = plt.get_cmap("RdYlGn")
+#     stab = (dict(zip(branch_stability.node_ids, branch_stability.stability))
+#             if branch_stability is not None else {})
 
-    def _link_color(nid):
-        s = stab.get(nid)
-        return "#8a8a8a" if s is None else mcolors.to_hex(cmap_s(norm_s(s)))
+#     def _link_color(nid):
+#         s = stab.get(nid)
+#         return "#8a8a8a" if s is None else mcolors.to_hex(cmap_s(norm_s(s)))
 
-    dendrogram(Z, ax=ax_d, no_labels=True,
-               link_color_func=_link_color if branch_stability is not None
-               else (lambda _: "#555555"))
-    ax_d.set_xlim(0, X); ax_d.set_axis_off()
+#     dendrogram(Z, ax=ax_d, no_labels=True,
+#                link_color_func=_link_color if branch_stability is not None
+#                else (lambda _: "#555555"))
+#     ax_d.set_xlim(0, X); ax_d.set_axis_off()
 
-    # ---- barre d'annotation des clusters ----
-    ax_a = fig.add_subplot(gs[1, 1])
-    ann = np.zeros(n, int)
-    for idx, (lab, a, b) in enumerate(blocks):
-        ann[a:b] = idx
-    ann_rgb = np.array([mcolors.to_rgb(color_for[block_labels[a]]) for a in ann])[None]
-    ax_a.imshow(ann_rgb, aspect="auto", extent=[0, X, 0, 1])
-    ax_a.set_xlim(0, X); ax_a.set_xticks([]); ax_a.set_yticks([])
+#     # ---- barre d'annotation des clusters ----
+#     ax_a = fig.add_subplot(gs[1, 1])
+#     ann = np.zeros(n, int)
+#     for idx, (lab, a, b) in enumerate(blocks):
+#         ann[a:b] = idx
+#     ann_rgb = np.array([mcolors.to_rgb(color_for[block_labels[a]]) for a in ann])[None]
+#     ax_a.imshow(ann_rgb, aspect="auto", extent=[0, X, 0, 1])
+#     ax_a.set_xlim(0, X); ax_a.set_xticks([]); ax_a.set_yticks([])
 
-    # ---- heatmap consensus (centre) ----
-    ax_h = fig.add_subplot(gs[2, 1])
-    im_h = ax_h.imshow(Cord, cmap=CONSENSUS_CMAP, vmin=0, vmax=1, aspect="auto",
-                       extent=[0, X, X, 0], interpolation="nearest")
-    ax_h.set_xlim(0, X); ax_h.set_ylim(X, 0)
-    ax_h.set_xticks([]); ax_h.set_yticks([])
+#     # ---- heatmap consensus (centre) ----
+#     ax_h = fig.add_subplot(gs[2, 1])
+#     im_h = ax_h.imshow(Cord, cmap=CONSENSUS_CMAP, vmin=0, vmax=1, aspect="auto",
+#                        extent=[0, X, X, 0], interpolation="nearest")
+#     ax_h.set_xlim(0, X); ax_h.set_ylim(X, 0)
+#     ax_h.set_xticks([]); ax_h.set_yticks([])
 
-    # ---- boxplot item consensus (bas) ----
-    ax_b = fig.add_subplot(gs[3, 1])
-    positions = [10 * (a + b) / 2 for (_, a, b) in blocks]
-    if items is not None:
-        data = [items.loc[items["cluster"] == lab, "item_consensus"].dropna().values
-                for lab in block_labels]
-        widths = [max(0.8 * 10 * (b - a), 6) for (_, a, b) in blocks]
-        bp = ax_b.boxplot(data, positions=positions, widths=widths, showfliers=False,
-                          patch_artist=True, manage_ticks=False)
-        for patch, lab in zip(bp["boxes"], block_labels):
-            patch.set_facecolor(color_for[lab]); patch.set_alpha(0.75)
-        for med in bp["medians"]:
-            med.set_color("black")
-        ax_b.axhline(0.8, ls="--", lw=0.8, color="grey")
-        allv = np.concatenate([d for d in data if len(d)]) if any(len(d) for d in data) \
-            else np.array([1.0])
-        lo = min(0.75, float(np.nanmin(allv)) - 0.03)   # garde la ligne 0,8 visible
-        ax_b.set_ylim(max(0.0, lo), 1.02)
-    ax_b.set_xlim(0, X)
-    ax_b.set_xticks(positions)
-    ax_b.set_xticklabels([f"C{lab}\n(n={b - a})" for (lab, a, b) in blocks], fontsize=8)
-    ax_b.set_ylabel("item consensus")
-    ax_b.spines[["top", "right"]].set_visible(False)
+#     # ---- boxplot item consensus (bas) ----
+#     ax_b = fig.add_subplot(gs[3, 1])
+#     positions = [10 * (a + b) / 2 for (_, a, b) in blocks]
+#     if items is not None:
+#         data = [items.loc[items["cluster"] == lab, "item_consensus"].dropna().values
+#                 for lab in block_labels]
+#         widths = [max(0.8 * 10 * (b - a), 6) for (_, a, b) in blocks]
+#         bp = ax_b.boxplot(data, positions=positions, widths=widths, showfliers=False,
+#                           patch_artist=True, manage_ticks=False)
+#         for patch, lab in zip(bp["boxes"], block_labels):
+#             patch.set_facecolor(color_for[lab]); patch.set_alpha(0.75)
+#         for med in bp["medians"]:
+#             med.set_color("black")
+#         ax_b.axhline(0.8, ls="--", lw=0.8, color="grey")
+#         allv = np.concatenate([d for d in data if len(d)]) if any(len(d) for d in data) \
+#             else np.array([1.0])
+#         lo = min(0.75, float(np.nanmin(allv)) - 0.03)   # garde la ligne 0,8 visible
+#         ax_b.set_ylim(max(0.0, lo), 1.02)
+#     ax_b.set_xlim(0, X)
+#     ax_b.set_xticks(positions)
+#     ax_b.set_xticklabels([f"C{lab}\n(n={b - a})" for (lab, a, b) in blocks], fontsize=8)
+#     ax_b.set_ylabel("item consensus")
+#     ax_b.spines[["top", "right"]].set_visible(False)
 
-    # ---- proportions des modalités (gauche) ----
-    ax_l = fig.add_subplot(gs[2, 0])
-    mod_handles = []
-    if color_by is not None:
-        carr = np.array(["NA" if (v is None or (isinstance(v, float) and np.isnan(v)))
-                         else str(v) for v in np.asarray(color_by, dtype=object)])
-        modalities = sorted(set(carr))
-        palette = plt.get_cmap("tab20").colors
-        mod_color = {m: palette[i % len(palette)] for i, m in enumerate(modalities)}
-        for (lab, a, b) in blocks:
-            vals = carr[order[a:b]]
-            center, height, left = 10 * (a + b) / 2, 0.85 * 10 * (b - a), 0.0
-            for m in modalities:
-                p = float(np.mean(vals == m))
-                if p > 0:
-                    ax_l.barh(center, p, height=height, left=left, color=mod_color[m],
-                              edgecolor="white", linewidth=0.3)
-                    left += p
-        ax_l.set_xlim(0, 1); ax_l.set_ylim(X, 0); ax_l.set_yticks([])
-        ax_l.set_xlabel("proportion")
-        ax_l.spines[["top", "right", "left"]].set_visible(False)
-        mod_handles = [Patch(color=mod_color[m], label=m) for m in modalities]
-    else:
-        ax_l.axis("off")
+#     # ---- proportions des modalités (gauche) ----
+#     ax_l = fig.add_subplot(gs[2, 0])
+#     mod_handles = []
+#     if color_by is not None:
+#         carr = np.array(["NA" if (v is None or (isinstance(v, float) and np.isnan(v)))
+#                          else str(v) for v in np.asarray(color_by, dtype=object)])
+#         modalities = sorted(set(carr))
+#         palette = plt.get_cmap("tab20").colors
+#         mod_color = {m: palette[i % len(palette)] for i, m in enumerate(modalities)}
+#         for (lab, a, b) in blocks:
+#             vals = carr[order[a:b]]
+#             center, height, left = 10 * (a + b) / 2, 0.85 * 10 * (b - a), 0.0
+#             for m in modalities:
+#                 p = float(np.mean(vals == m))
+#                 if p > 0:
+#                     ax_l.barh(center, p, height=height, left=left, color=mod_color[m],
+#                               edgecolor="white", linewidth=0.3)
+#                     left += p
+#         ax_l.set_xlim(0, 1); ax_l.set_ylim(X, 0); ax_l.set_yticks([])
+#         ax_l.set_xlabel("proportion")
+#         ax_l.spines[["top", "right", "left"]].set_visible(False)
+#         mod_handles = [Patch(color=mod_color[m], label=m) for m in modalities]
+#     else:
+#         ax_l.axis("off")
 
-    # ---- enrichissement GSEA (droite) ----
-    ax_r = fig.add_subplot(gs[2, 2])
-    im_r = None
-    if nes is not None and not nes.empty:
-        sel = []
-        for lab in block_labels:
-            col = f"c{lab}"
-            if col in nes.columns:
-                for t in nes[col].abs().sort_values(ascending=False).index[:n_top_pathways]:
-                    if t not in sel:
-                        sel.append(t)
-        y_edges = [10 * b[1] for b in blocks] + [X]
-        Cr = np.array([[nes.loc[p, f"c{lab}"]
-                        if (f"c{lab}" in nes.columns and p in nes.index) else np.nan
-                        for p in sel] for lab in block_labels])
-        vmax = float(np.nanmax(np.abs(Cr))) or 1.0
-        im_r = ax_r.pcolormesh(np.arange(len(sel) + 1), y_edges, Cr,
-                               cmap="RdBu_r", vmin=-vmax, vmax=vmax)
-        ax_r.set_ylim(X, 0); ax_r.set_yticks([])
-        ax_r.set_xticks(np.arange(len(sel)) + 0.5)
-        ax_r.set_xticklabels([p[:38] for p in sel], rotation=90, fontsize=7)
-        ax_r.xaxis.set_ticks_position("bottom")
-    else:
-        ax_r.axis("off")
-        ax_r.text(0.5, 0.5, "GSEA non calculé\n(run_degsea = n)", ha="center",
-                  va="center", fontsize=9, color="grey")
+#     # ---- enrichissement GSEA (droite) ----
+#     ax_r = fig.add_subplot(gs[2, 2])
+#     im_r = None
+#     if nes is not None and not nes.empty:
+#         sel = []
+#         for lab in block_labels:
+#             col = f"c{lab}"
+#             if col in nes.columns:
+#                 for t in nes[col].abs().sort_values(ascending=False).index[:n_top_pathways]:
+#                     if t not in sel:
+#                         sel.append(t)
+#         y_edges = [10 * b[1] for b in blocks] + [X]
+#         Cr = np.array([[nes.loc[p, f"c{lab}"]
+#                         if (f"c{lab}" in nes.columns and p in nes.index) else np.nan
+#                         for p in sel] for lab in block_labels])
+#         vmax = float(np.nanmax(np.abs(Cr))) or 1.0
+#         im_r = ax_r.pcolormesh(np.arange(len(sel) + 1), y_edges, Cr,
+#                                cmap="RdBu_r", vmin=-vmax, vmax=vmax)
+#         ax_r.set_ylim(X, 0); ax_r.set_yticks([])
+#         ax_r.set_xticks(np.arange(len(sel)) + 0.5)
+#         ax_r.set_xticklabels([p[:38] for p in sel], rotation=90, fontsize=7)
+#         ax_r.xaxis.set_ticks_position("bottom")
+#     else:
+#         ax_r.axis("off")
+#         ax_r.text(0.5, 0.5, "GSEA non calculé\n(run_degsea = n)", ha="center",
+#                   va="center", fontsize=9, color="grey")
 
-    # ---- légendes & barres de couleur (une paire par coin, pour aérer) ----
-    # haut-gauche : légende clusters + barre consensus
-    ax_tl = fig.add_subplot(gs[0, 0]); ax_tl.axis("off")
-    ax_tl.legend(handles=[Patch(color=color_for[lab], label=f"C{lab}")
-                          for lab in block_labels], title="cluster",
-                 loc="upper center", ncol=len(block_labels) if len(block_labels) <= 4 else 2,
-                 fontsize=8, frameon=False, bbox_to_anchor=(0.5, 1.05))
-    fig.colorbar(im_h, cax=ax_tl.inset_axes([0.12, 0.12, 0.8, 0.09]),
-                 orientation="horizontal", label="indice de consensus")
+#     # ---- légendes & barres de couleur (une paire par coin, pour aérer) ----
+#     # haut-gauche : légende clusters + barre consensus
+#     ax_tl = fig.add_subplot(gs[0, 0]); ax_tl.axis("off")
+#     ax_tl.legend(handles=[Patch(color=color_for[lab], label=f"C{lab}")
+#                           for lab in block_labels], title="cluster",
+#                  loc="upper center", ncol=len(block_labels) if len(block_labels) <= 4 else 2,
+#                  fontsize=8, frameon=False, bbox_to_anchor=(0.5, 1.05))
+#     fig.colorbar(im_h, cax=ax_tl.inset_axes([0.12, 0.12, 0.8, 0.09]),
+#                  orientation="horizontal", label="indice de consensus")
 
-    # bas-gauche : légende des modalités + barre de stabilité
-    ax_bl = fig.add_subplot(gs[3, 0]); ax_bl.axis("off")
-    if mod_handles:
-        ax_bl.legend(handles=mod_handles, title=color_label, loc="upper center",
-                     ncol=2, fontsize=7, frameon=False, bbox_to_anchor=(0.5, 0.86))
-    if branch_stability is not None:
-        sm = plt.cm.ScalarMappable(norm=norm_s, cmap=cmap_s); sm.set_array([])
-        fig.colorbar(sm, cax=ax_bl.inset_axes([0.12, 0.06, 0.8, 0.09]),
-                     orientation="horizontal", label="stabilité de branche (Jaccard)")
+#     # bas-gauche : légende des modalités + barre de stabilité
+#     ax_bl = fig.add_subplot(gs[3, 0]); ax_bl.axis("off")
+#     if mod_handles:
+#         ax_bl.legend(handles=mod_handles, title=color_label, loc="upper center",
+#                      ncol=2, fontsize=7, frameon=False, bbox_to_anchor=(0.5, 0.86))
+#     if branch_stability is not None:
+#         sm = plt.cm.ScalarMappable(norm=norm_s, cmap=cmap_s); sm.set_array([])
+#         fig.colorbar(sm, cax=ax_bl.inset_axes([0.12, 0.06, 0.8, 0.09]),
+#                      orientation="horizontal", label="stabilité de branche (Jaccard)")
 
-    # haut-droite : titre + barre NES
-    ax_tr = fig.add_subplot(gs[0, 2]); ax_tr.axis("off")
-    ax_tr.text(0.5, 0.9, "Enrichissement GSEA (one-vs-all)", ha="center",
-               fontsize=10, transform=ax_tr.transAxes)
-    if im_r is not None:
-        fig.colorbar(im_r, cax=ax_tr.inset_axes([0.15, 0.5, 0.7, 0.11]),
-                     orientation="horizontal", label="NES")
-    # bas-droite laissé libre : les noms de voies débordent du panneau de droite
+#     # haut-droite : titre + barre NES
+#     ax_tr = fig.add_subplot(gs[0, 2]); ax_tr.axis("off")
+#     ax_tr.text(0.5, 0.9, "Enrichissement GSEA (one-vs-all)", ha="center",
+#                fontsize=10, transform=ax_tr.transAxes)
+#     if im_r is not None:
+#         fig.colorbar(im_r, cax=ax_tr.inset_axes([0.15, 0.5, 0.7, 0.11]),
+#                      orientation="horizontal", label="NES")
+#     # bas-droite laissé libre : les noms de voies débordent du panneau de droite
 
-    fig.suptitle(f"Synthèse du consensus clustering — k = {k}  ·  {n} tumeurs",
-                 fontsize=15, y=0.999)
-    return _save(fig, outdir, f"cluster_overview_k{k}.png")
+#     fig.suptitle(f"Synthèse du consensus clustering — k = {k}  ·  {n} tumeurs",
+#                  fontsize=15, y=0.999)
+#     return _save(fig, outdir, f"cluster_overview_k{k}.png")
 
 
 def plot_item_consensus(items: pd.DataFrame, outdir: Path, k: int) -> Path:

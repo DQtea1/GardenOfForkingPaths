@@ -34,16 +34,26 @@ def benjamini_hochberg(pvals) -> np.ndarray:
     return out
 
 
-def is_categorical(series: pd.Series, max_levels: int = 6) -> bool | None:
+def is_categorical(series: pd.Series, max_levels: int = 6,
+                   max_text_levels: int | None = None) -> bool | None:
     """True = catégorielle, False = continue, None = inexploitable (vide).
 
     Non numérique -> catégorielle ; numérique -> catégorielle si <= `max_levels`
     modalités distinctes, continue sinon.
+
+    `max_text_levels` plafonne la cardinalité d'une colonne **non numérique** :
+    au-delà elle est déclarée inexploitable (`None`) au lieu de catégorielle.
+    C'est ce qui sépare une vraie variable (sexe, sous-type histologique) d'un
+    identifiant déguisé (centre, lot, date de prélèvement) : sur ce dernier, un
+    test par paire de modalités explose en nombre sans rien signifier. `None`
+    (défaut) = aucun plafond, comportement historique.
     """
     s = series.dropna()
     if s.empty:
         return None
     if not pd.api.types.is_numeric_dtype(s):
+        if max_text_levels is not None and s.nunique() > max_text_levels:
+            return None
         return True
     return s.nunique() <= max_levels
 

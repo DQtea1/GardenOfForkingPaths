@@ -123,8 +123,39 @@ def _load_metadata(c: _Ctx) -> None:
     if not c.args.metadata:
         c.metadata = None
         return
-    metadata = pd.read_csv(c.args.metadata, sep=None, engine="python", index_col=0)
+    # utf-8-sig : absorbe le BOM des exports Excel. Les tables cliniques
+    # accentuées sont souvent en cp1252 : on retente plutôt que de planter.
+    try:
+        metadata = pd.read_csv(c.args.metadata, sep=None, engine="python",
+                               index_col=0, encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        metadata = pd.read_csv(c.args.metadata, sep=None, engine="python",
+                               index_col=0, encoding="cp1252")
+        c.log.warning("Métadonnées non-UTF-8 : relues en cp1252 — %s",
+                      c.args.metadata)
     metadata.index = metadata.index.astype(str)
+
+    # DESeq2 lit toute colonne numérique du design comme une covariable
+    # continue : une variable de contraste codée 0/1 doit être en chaînes pour
+    # être traitée comme catégorielle. `string` (et non `str`) laisse les NA
+    # manquants, que le design clinique doit encore pouvoir exclure.
+    col = c.args.contrast_col_desq
+    if col:
+        if col not in metadata.columns:
+            raise ConfigError(
+                f"contrast_col_desq : colonne absente des métadonnées — {col!r}.")
+        values = metadata[col]
+        if pd.api.types.is_numeric_dtype(values) and not pd.api.types.is_bool_dtype(values):
+            # Un seul NA suffit à faire relire une colonne d'entiers en float :
+            # sans ce détour par Int64, 0 deviendrait "0.0" et ne correspondrait
+            # plus au `control: "0"` du YAML — contraste vide, sans erreur.
+            finite = values.dropna()
+            if finite.eq(finite.round()).all():
+                values = values.astype("Int64")
+        metadata[col] = values.astype("string")
+        c.log.info("Contraste DESeq2 %r relu en chaînes : %s", col,
+                   ", ".join(map(str, pd.unique(metadata[col].dropna()))))
+
     c.metadata = metadata
 
 
@@ -404,6 +435,24 @@ def _clinical_degsea(c: _Ctx) -> None:
     if c.metadata is None:
         raise ValueError("DEGSEA clinique configuré, mais aucune table de métadonnées n'est fournie.")
 
+    # Par défaut le DEGSEA clinique porte sur TOUTE la matrice : les tumeurs
+    # écartées à l'étape 1 (pureté PUREE, outliers ACP) y reviennent, car ces
+    # filtres sont jugés sur la matrice du clustering et n'engagent pas un
+    # contraste clinique. `clinical_degsea_drop_pca_outliers: y` aligne les deux.
+    counts = c.raw
+    if args.clinical_degsea_drop_pca_outliers == "y":
+        if c.X_df is None:
+            log.warning("clinical_degsea_drop_pca_outliers=y mais aucune matrice "
+                        "filtrée disponible — filtre ignoré.")
+        else:
+            kept = counts.index.intersection(c.X_df.index)
+            n_out = counts.shape[0] - len(kept)
+            counts = counts.loc[kept]
+            log.info("DEGSEA clinique : aligné sur les tumeurs conservées à "
+                     "l'étape 1 — %d tumeur(s) écartée(s), %d conservée(s).",
+                     n_out, len(kept))
+
+    gene_filters = dg.GeneFilters.from_args(args)
     log.info("DEGSEA clinique : %d expérience(s), indépendante(s) du consensus clustering.",
              len(experiments))
     for name, spec in experiments.items():
@@ -411,7 +460,7 @@ def _clinical_degsea(c: _Ctx) -> None:
             args.gsea_collections, args.gsea_gene_sets, spec
         )
         result = dg.run_clinical_degsea(
-            c.raw, c.metadata,
+            counts, c.metadata,
             design=str(spec["design"]),
             contrast=str(spec["contrast"]),
             control=str(spec["control"]),
@@ -420,6 +469,7 @@ def _clinical_degsea(c: _Ctx) -> None:
             outdir=c.outdir / "tables" / "clinical_degsea" / name,
             min_group=int(spec.get("min_group", 3)),
             min_count=int(spec.get("min_count", 10)),
+            gene_filters=gene_filters,
             permutations=int(spec.get("gsea_permutations", args.gsea_permutations)),
             n_jobs=c.eff_n_jobs,
             seed=args.seed,
@@ -455,6 +505,7 @@ def _degsea(c: _Ctx, k: int, gene_sets: dict[str, str], *,
     return dg.run_degsea(
         c.raw, labels, branch.result.sample_names, c.outdir,
         gene_sets=gene_sets,
+        gene_filters=dg.GeneFilters.from_args(args, prefix="degsea"),
         mode=args.degsea_mode,
         permutations=args.gsea_permutations,
         heatmap_pval=args.gsea_heatmap_pval,
@@ -563,14 +614,16 @@ def _signatures(c: _Ctx) -> None:
             sig_scores = sp.run_signature_projection(
                 expr_full, signatures, meta_full, outdir,
                 corr_method=args.sig_corr_method, top_n=args.sig_top_n,
-                sig_pval=args.sig_pval, n_jobs=eff_n_jobs, seed=args.seed,
+                sig_pval=args.sig_pval, max_text_levels=args.sig_max_text_levels,
+                n_jobs=eff_n_jobs, seed=args.seed,
             )
             # tests de Wilcoxon (one-vs-rest) score de signature x modalité, pour
             # chaque k (stratif. cluster) et chaque variable clinique catégorielle
             # -> étoiles au-dessus des boxplots du rapport (7.2 bis).
             cluster_labels_by_k = {k: result.labels(k, args.linkage) for k in k_values}
             sig_tests, sig_tests_tidy = sp.stratified_signature_tests(
-                sig_scores, cluster_labels_by_k, meta_full)
+                sig_scores, cluster_labels_by_k, meta_full,
+                max_text_levels=args.sig_max_text_levels)
             if len(sig_tests_tidy):
                 sig_tests_tidy.to_csv(
                     outdir / "tables" / "signatures" / "signature_group_tests.csv",
@@ -687,7 +740,7 @@ def main(argv=None) -> int:
     _signatures(c)
     _deconvolution(c)
     _correlations(c)
-    _synthesis(c)
+    # _synthesis(c)
     _report(c)
     _save(c)
     return 0
