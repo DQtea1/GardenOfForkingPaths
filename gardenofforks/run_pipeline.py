@@ -24,6 +24,7 @@ import pandas as pd
 from . import config as cf
 from . import deconv as dc
 from . import degsea as dg
+from . import harmonize_ids as hid
 from . import ica as ic
 from . import ica_cluster_compare as icc
 from . import ica_gsea as ig
@@ -98,12 +99,15 @@ def _setup(argv) -> _Ctx:
     return _Ctx(args=args, log=log, outdir=outdir, t_start=t_start, eff_n_jobs=eff_n_jobs)
 
 
-def _load_data(c: _Ctx) -> None:
-    args, log = c.args, c.log
-    # ---------------------------------------------------------------- 1. data
-    raw = pp.load_matrix(args.counts, genes_in_rows=not args.samples_in_rows)
-    X_df = pp.preprocess(
-        raw,
+def _preprocess_matrix(c: _Ctx) -> None:
+    """(Re)construit la matrice du clustering à partir de `c.raw`.
+
+    Isolée de `_load_data` parce que l'harmonisation des identifiants change
+    `c.raw` : la matrice prétraitée doit alors être rebâtie sur le nouvel index.
+    """
+    args = c.args
+    c.X_df = pp.preprocess(
+        c.raw,
         already_normalized=args.already_normalized,
         min_cpm=args.min_cpm,
         min_frac_samples=args.min_frac_samples,
@@ -114,8 +118,50 @@ def _load_data(c: _Ctx) -> None:
         scale=args.scale_genes,
         norm_method=args.norm_method,
     )
-    log.info("Matrice prétraitée : %d tumeurs x %d gènes", *X_df.shape)
-    c.raw, c.X_df = raw, X_df
+    c.log.info("Matrice prétraitée : %d tumeurs x %d gènes", *c.X_df.shape)
+
+
+def _load_data(c: _Ctx) -> None:
+    # ---------------------------------------------------------------- 1. data
+    c.raw = pp.load_matrix(c.args.counts, genes_in_rows=not c.args.samples_in_rows)
+    _preprocess_matrix(c)
+
+
+def _harmonize_gene_ids(c: _Ctx) -> None:
+    """Étape 1a — ramène tous les identifiants de gènes aux symboles HGNC.
+
+    Deux sous-étapes : un diagnostic des espaces d'identifiants présents, puis la
+    conversion proprement dite. Le diagnostic est journalisé et exporté même
+    quand la matrice s'avère homogène — c'est lui qui prouve qu'elle l'est.
+    """
+    args, log, outdir = c.args, c.log, c.outdir
+    if args.harmonize_gene_ids != "y":
+        return
+
+    # ---- sous-étape 1 : de quel type est chaque identifiant, et qui les porte ?
+    report = hid.id_type_report(c.raw)
+    hid.log_report(report, log)
+    report["by_type"].to_csv(outdir / "tables" / "gene_id_types.csv",
+                             index_label="type_id")
+    report["by_sample"].to_csv(outdir / "tables" / "gene_id_types_by_sample.csv",
+                               index_label="sample")
+
+    # ---- sous-étape 2 : conversion vers les symboles approuvés
+    # Elle a lieu même sur une matrice homogène : un jeu tout en symboles peut
+    # encore contenir des symboles périmés, que le crosswalk remet à jour.
+    hgnc = hid.load_hgnc_dataset(args.harmonize_hgnc_file)
+    crosswalk = hid.build_crosswalk(hgnc,
+                                    map_aliases=args.harmonize_map_aliases == "y")
+    harmonized, trace = hid.harmonize(
+        c.raw, crosswalk, id_types=report["id_types"],
+        drop_unmapped=args.harmonize_drop_unmapped == "y")
+    trace.to_csv(outdir / "tables" / "gene_id_harmonization.csv", index=False)
+    c.raw = harmonized
+
+    # La matrice du clustering a été bâtie sur l'ancien index : on la refait.
+    log.info("Harmonisation : reconstruction de la matrice prétraitée sur les "
+             "identifiants harmonisés.")
+    _preprocess_matrix(c)
 
 
 def _load_metadata(c: _Ctx) -> None:
@@ -452,7 +498,7 @@ def _clinical_degsea(c: _Ctx) -> None:
                      "l'étape 1 — %d tumeur(s) écartée(s), %d conservée(s).",
                      n_out, len(kept))
 
-    gene_filters = dg.GeneFilters.from_args(args)
+    gene_filters = dg.DegseaFilters.from_args(args)
     log.info("DEGSEA clinique : %d expérience(s), indépendante(s) du consensus clustering.",
              len(experiments))
     for name, spec in experiments.items():
@@ -505,7 +551,7 @@ def _degsea(c: _Ctx, k: int, gene_sets: dict[str, str], *,
     return dg.run_degsea(
         c.raw, labels, branch.result.sample_names, c.outdir,
         gene_sets=gene_sets,
-        gene_filters=dg.GeneFilters.from_args(args, prefix="degsea"),
+        gene_filters=dg.DegseaFilters.from_args(args, prefix="degsea"),
         mode=args.degsea_mode,
         permutations=args.gsea_permutations,
         heatmap_pval=args.gsea_heatmap_pval,
@@ -728,6 +774,7 @@ def main(argv=None) -> int:
         print(f"[config] {exc}", file=sys.stderr)
         return 2
     _load_data(c)
+    _harmonize_gene_ids(c)
     _purity_filter(c)
     _outlier_filter(c)
     _load_metadata(c)

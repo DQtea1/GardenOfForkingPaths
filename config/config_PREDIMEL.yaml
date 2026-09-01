@@ -20,6 +20,35 @@ metadata: /mnt/d/00_PUBLIC_DATA/00_DATASETS/01_BULK/00_MERGED/01_MELANOMA/PREDIM
 color_by: antipd1                # colonne des métadonnées à superposer sur les embeddings
 outdir: /mnt/d/03_SARAH_projet/01_OUTPUTS/ConsensusClustering/PREDIMEL           # dossier de sortie
 
+# ================================================= 1a · Harmonisation des identifiants de gènes
+# Une matrice qui fusionne plusieurs lots peut mélanger plusieurs espaces
+# d'identifiants (Entrez « 10264 », Ensembl « ENSG00000141510 », symboles
+# « TP53 »). La jointure les rend DISJOINTS : chaque lot est non nul sur son
+# espace et à zéro partout ailleurs. Conséquences, toutes silencieuses :
+#   - tout filtre de prévalence (« exprimé chez >= 30 % des tumeurs ») élimine
+#     par construction l'espace minoritaire ;
+#   - ces tumeurs deviennent entièrement nulles et font échouer DESeq2 ;
+#   - GSEA, signatures et déconvolution ne reconnaissent que les symboles HGNC.
+#
+# L'étape journalise d'abord un DIAGNOSTIC (tables/gene_id_types.csv et
+# gene_id_types_by_sample.csv : quel identifiant est de quel type, quelle tumeur
+# porte ses comptes sur quel espace), puis convertit vers les symboles.
+# La trace de conversion part dans tables/gene_id_harmonization.csv.
+harmonize_gene_ids: n         # y | n — active l'harmonisation vers les symboles HGNC
+
+# La table de correspondance est le « HGNC complete gene set » de genenames.org
+# — exactement le jeu de données que le paquet R `hgnc` charge via
+# import_hgnc_dataset() et interroge via crosswalk(). Il couvre en une passe
+# entrez_id, ensembl_gene_id, refseq_accession, prev_symbol et alias_symbol.
+# Téléchargé une seule fois (~17 Mo) puis mis en cache sous
+# ~/.cache/gardenofforks/ : les runs suivants sont hors ligne.
+harmonize_hgnc_file: null     # null = téléchargement + cache ; un chemin fige la version
+
+harmonize_map_aliases: y      # y | n — ramène aussi les symboles PÉRIMÉS et les alias
+                              #   à leur symbole approuvé (p53 -> TP53, A1BGAS -> A1BG-AS1).
+                              #   Les alias ambigus (plusieurs cibles) sont toujours ignorés.
+harmonize_drop_unmapped: n    # y = retire les IDs inconnus du jeu HGNC ; n = les garde tels quels
+
 # ================================================= 1 · Prétraitement (normalisation, gènes variables)
 already_normalized: false     # true si entrée déjà en VST/rlog/logCPM (saute filtrage + normalisation)
 norm_method: vst              # normalisation des counts bruts : vst (DESeq2/PyDESeq2, défaut) | logcpm
@@ -121,6 +150,15 @@ degsea_select_variable: n              # y | n
 degsea_n_top_genes: 5000
 degsea_variance_method: mad            # mad (robuste) | var
 
+# DERNIER filtre de la série, et le seul qui porte sur les TUMEURS : il juge
+# chaque tumeur sur les gènes finalement retenus ci-dessus. Une tumeur quasi
+# vide sur ces gènes-là n'est pas interprétable, et elle fait échouer DESeq2 :
+# l'estimation 'poscounts' des size factors prend la médiane de ses comptes
+# positifs, donc renvoie NaN s'il n'y en a aucun — NaN qui se propage ensuite à
+# TOUTES les tumeurs via la moyenne géométrique des size factors.
+degsea_filter_zero_samples: y          # y | n
+degsea_max_zero_frac: 0.80             # retire les tumeurs à plus de 80 % de gènes à 0
+
 # ================================================= 4b · Stabilité des branches (Jaccard bootstrap)
 compute_jaccard: y            # y | n
 
@@ -195,6 +233,15 @@ clinical_degsea_unmapped_patterns:
 clinical_degsea_select_variable: n     # y | n
 clinical_degsea_n_top_genes: 5000
 clinical_degsea_variance_method: mad   # mad (robuste) | var
+
+# DERNIER filtre de la série, et le seul qui porte sur les TUMEURS : il juge
+# chaque tumeur sur les gènes finalement retenus ci-dessus. Une tumeur quasi
+# vide sur ces gènes-là n'est pas interprétable, et elle fait échouer DESeq2 :
+# l'estimation 'poscounts' des size factors prend la médiane de ses comptes
+# positifs, donc renvoie NaN s'il n'y en a aucun — NaN qui se propage ensuite à
+# TOUTES les tumeurs via la moyenne géométrique des size factors.
+clinical_degsea_filter_zero_samples: y   # y | n
+clinical_degsea_max_zero_frac: 0.80      # retire les tumeurs à plus de 80 % de gènes à 0
 # ---------------------------------------------------------------------------
 
 # DEGSEA clinique indépendant du consensus. Décommenter/adapter pour exécuter

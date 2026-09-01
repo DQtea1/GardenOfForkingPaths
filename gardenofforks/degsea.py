@@ -34,6 +34,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
+from . import config as cf
 from . import preprocessing as pp
 
 logger = logging.getLogger(__name__)
@@ -42,18 +43,13 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------
 # Filtrage des gènes en entrée d'un DEGSEA
 # --------------------------------------------------------------------------
-def _as_patterns(value, default: tuple[str, ...]) -> tuple[str, ...]:
-    """Normalise une liste de motifs venue du YAML (liste) ou du terminal
-    (chaîne séparée par des virgules). `None` -> défaut, liste vide -> aucun."""
-    if value is None:
-        return default
-    if isinstance(value, str):
-        return tuple(p.strip() for p in value.split(",") if p.strip())
-    return tuple(str(p) for p in value)
+#: normalisation des options « liste » (motifs, chemins) — définie une seule fois
+#: dans :mod:`gardenofforks.config`, qui porte déjà la logique YAML/CLI.
+_as_patterns = cf.as_str_tuple
 
 
 @dataclass(frozen=True)
-class GeneFilters:
+class DegseaFilters:
     """Filtrage appliqué aux counts **bruts** juste avant DESeq2.
 
     Le DEGSEA part de la matrice brute, jamais de la matrice prétraitée du
@@ -61,6 +57,10 @@ class GeneFilters:
     l'analyse différentielle, les mêmes familles de filtres que l'étape 1 — mais
     avec leurs propres seuils, parce que le bon compromis n'est pas le même pour
     du clustering et pour un test gène par gène.
+
+    Tous portent sur les gènes, sauf le dernier — `zero_samples` — qui retire des
+    **tumeurs**, et qui doit rester en dernier : il juge chaque tumeur sur le jeu
+    de gènes finalement testé.
     """
     low_counts: bool = False
     min_count: int = 15
@@ -72,9 +72,11 @@ class GeneFilters:
     variable: bool = False
     n_top_genes: int = 5000
     variance_method: str = "mad"
+    zero_samples: bool = False
+    max_zero_frac: float = 0.8
 
     @classmethod
-    def from_args(cls, args, prefix: str = "clinical_degsea") -> GeneFilters:
+    def from_args(cls, args, prefix: str = "clinical_degsea") -> DegseaFilters:
         """Construit les réglages à partir des options `<prefix>_*` du YAML."""
         def opt(name, default=None):
             # `null` dans le YAML doit reprendre le défaut, pas propager None.
@@ -94,6 +96,8 @@ class GeneFilters:
             variable=opt("select_variable", "n") == "y",
             n_top_genes=int(opt("n_top_genes", 5000)),
             variance_method=str(opt("variance_method", "mad")),
+            zero_samples=opt("filter_zero_samples", "n") == "y",
+            max_zero_frac=float(opt("max_zero_frac", 0.8)),
         )
 
     def apply(self, counts: pd.DataFrame) -> pd.DataFrame:
@@ -101,9 +105,10 @@ class GeneFilters:
 
         L'ordre compte : on retire d'abord ce qui n'a pas à être testé (gènes
         techniques, identifiants non annotés), puis on filtre sur l'expression,
-        et seulement ensuite on sélectionne les plus variables — sur ce qui reste.
+        ensuite on sélectionne les plus variables — sur ce qui reste — et
+        **enfin** on retire les tumeurs quasi vides sur ces gènes-là.
         """
-        n0 = counts.shape[1]
+        n_samples0, n0 = counts.shape
         if self.technical:
             counts = pp.drop_genes_matching(counts, self.technical_patterns,
                                             "techniques")
@@ -122,9 +127,20 @@ class GeneFilters:
                                               self.n_top_genes,
                                               self.variance_method)
             counts = counts.loc[:, ranked.columns]
+        if self.zero_samples:
+            # EN DERNIER, volontairement : une tumeur est jugée sur les gènes
+            # réellement testés, pas sur la matrice de départ.
+            counts = pp.filter_zero_samples(counts, self.max_zero_frac)
         if counts.shape[1] != n0:
             logger.info("DEGSEA : %d / %d gènes conservés après filtrage.",
                         counts.shape[1], n0)
+        if counts.shape[0] != n_samples0:
+            logger.info("DEGSEA : %d / %d tumeurs conservées après filtrage.",
+                        counts.shape[0], n_samples0)
+        if not counts.shape[0]:
+            raise ValueError(
+                "Filtrage DEGSEA : aucune tumeur ne survit au filtre "
+                f"max_zero_frac={self.max_zero_frac} — desserre le seuil.")
         if not counts.shape[1]:
             raise ValueError(
                 "Filtrage DEGSEA : aucun gène ne survit aux filtres configurés "
@@ -309,7 +325,7 @@ def run_clinical_degsea(
     outdir: Path,
     min_group: int = 3,
     min_count: int = 10,
-    gene_filters: GeneFilters | None = None,
+    gene_filters: DegseaFilters | None = None,
     permutations: int = 1000,
     n_jobs: int = 1,
     seed: int = 0,
@@ -351,6 +367,16 @@ def run_clinical_degsea(
     dropped = int((~keep_samples).sum())
     cnt = counts.loc[keep_samples].round().astype(int)
     meta = meta.loc[keep_samples].copy()
+    # Filtres configurables, appliqués APRÈS la sélection des échantillons : les
+    # seuils d'expression portent ainsi sur la cohorte réellement testée, pas sur
+    # des tumeurs que le design exclut. Le dernier filtre peut retirer des
+    # tumeurs : on réaligne les métadonnées avant tout comptage d'effectifs.
+    if gene_filters is not None:
+        cnt = gene_filters.apply(cnt)
+        if len(cnt.index) != len(meta.index):
+            meta = meta.loc[cnt.index]
+            dropped = int(len(counts.index) - len(cnt.index))
+
     meta[contrast] = pd.Categorical(
         meta[contrast].astype(str), categories=[control, test], ordered=True,
     )
@@ -361,11 +387,6 @@ def run_clinical_degsea(
             f"Contraste {contrast}: {test} vs {control} : effectifs insuffisants "
             f"({test}={n_test}, {control}={n_control}; minimum={min_group})."
         )
-    # Filtres configurables, appliqués APRÈS la sélection des échantillons : les
-    # seuils d'expression portent ainsi sur la cohorte réellement testée, pas sur
-    # des tumeurs que le design exclut.
-    if gene_filters is not None:
-        cnt = gene_filters.apply(cnt)
     keep_genes = cnt.columns[cnt.sum(axis=0) >= int(min_count)]
     if not len(keep_genes):
         raise ValueError("Aucun gène ne passe le filtre de counts pour le contraste clinique.")
@@ -439,7 +460,7 @@ def run_degsea(
     mode: str = "both",
     min_group: int = 3,
     min_count: int = 10,
-    gene_filters: GeneFilters | None = None,
+    gene_filters: DegseaFilters | None = None,
     permutations: int = 1000,
     heatmap_pval: float = 0.05,
     subdir: str = "",
@@ -474,13 +495,16 @@ def run_degsea(
     if subdir:
         base = base / subdir      # une sous-arbo par k quand on balaie tous les k
     cnt = counts.loc[sample_names].round().astype(int)
+    lab = pd.Series(np.asarray(labels), index=list(sample_names))
     # Filtrage appliqué UNE fois, sur la partition entière, et non par contraste :
     # tous les contrastes partagent alors le même univers de gènes, sans quoi les
     # NES d'une heatmap pathways × clusters seraient calculés sur des classements
     # de tailles différentes, donc non comparables d'un cluster à l'autre.
+    # Le dernier filtre peut retirer des tumeurs : les labels suivent.
     if gene_filters is not None:
         cnt = gene_filters.apply(cnt)
-    lab = pd.Series(np.asarray(labels), index=list(sample_names))
+        if len(cnt.index) != len(lab):
+            lab = lab.loc[cnt.index]
 
     sizes = lab.value_counts()
     clusters = sorted(c for c in sizes.index if sizes[c] >= min_group)

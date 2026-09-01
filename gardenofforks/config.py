@@ -70,14 +70,28 @@ _STRUCTURED_KEYS = (
 )
 
 
-def _add_gene_filter_options(group, prefix: str, scope: str) -> None:
+def as_str_tuple(value, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Normalise une option « liste de chaînes » venue du YAML ou du terminal.
+
+    Le YAML donne une liste, la ligne de commande une chaîne séparée par des
+    virgules, et `null` doit reprendre le défaut. Sert aux motifs de filtrage
+    comme aux chemins de fichiers de correspondance.
+    """
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return tuple(part.strip() for part in value.split(",") if part.strip())
+    return tuple(str(part) for part in value)
+
+
+def _add_degsea_filter_options(group, prefix: str, scope: str) -> None:
     """Déclare le jeu d'options `<prefix>_*` de filtrage des gènes d'un DEGSEA.
 
     Les deux DEGSEA — clinique (onglet « Expression Différentielle ») et par
     cluster (onglet « Consensus-Clustering ») — partagent la même mécanique de
     filtrage mais des **seuils indépendants** : une seule définition ici, deux
     préfixes à l'appel. Côté exécution, le pendant est
-    :meth:`gardenofforks.degsea.GeneFilters.from_args`, qui relit ces mêmes
+    :meth:`gardenofforks.degsea.DegseaFilters.from_args`, qui relit ces mêmes
     options par préfixe.
 
     Rappel : un DEGSEA part des counts BRUTS (DESeq2 modélise des comptages),
@@ -114,6 +128,16 @@ def _add_gene_filter_options(group, prefix: str, scope: str) -> None:
         help="nombre de gènes conservés par le filtre de variance ci-dessus (défaut 5000).")
     add(f"--{prefix}_variance_method", choices=["mad", "var"], default="mad",
         help="mesure de variabilité pour ce filtre : mad (robuste, défaut) | var.")
+    # Dernier de la série, et le seul à porter sur les TUMEURS : il juge chaque
+    # tumeur sur le jeu de gènes finalement retenu.
+    add(f"--{prefix}_filter_zero_samples", choices=["y", "n"], default="n",
+        help="'y' : retire les tumeurs dont plus de "
+             f"--{prefix}_max_zero_frac des gènes RESTANTS sont à 0. Appliqué en "
+             "dernier. Une telle tumeur est ininterprétable et met en échec "
+             "l'estimation 'poscounts' des size factors (médiane sur un ensemble "
+             "vide -> NaN, qui contamine ensuite toutes les tumeurs).")
+    add(f"--{prefix}_max_zero_frac", type=float, default=0.8,
+        help="fraction maximale de gènes à 0 tolérée par tumeur (0.8 = 80 %%, défaut).")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -132,6 +156,27 @@ def build_parser() -> argparse.ArgumentParser:
     io.add_argument("--color-by", default=None,
                     help="colonne des métadonnées à superposer sur les embeddings")
     io.add_argument("--outdir", default="results/run", type=Path)
+
+    harm = p.add_argument_group("harmonisation des identifiants de gènes (étape 1a)")
+    harm.add_argument("--harmonize_gene_ids", choices=["y", "n"], default="n",
+                      help="'y' : ramène tous les identifiants de gènes aux symboles "
+                           "HGNC avant toute analyse. Nécessaire quand la matrice "
+                           "fusionne des lots quantifiés dans des espaces différents "
+                           "(Entrez, Ensembl, symboles) : la jointure les rend alors "
+                           "disjoints, et tout filtre de prévalence élimine l'espace "
+                           "minoritaire. Défaut 'n'.")
+    harm.add_argument("--harmonize_hgnc_file", default=None,
+                      help="jeu 'HGNC complete gene set' local (tsv de genenames.org). "
+                           "Défaut : téléchargé une fois puis mis en cache sous "
+                           "~/.cache/gardenofforks/. Renseigner un chemin fige la "
+                           "version d'annotation et rend le run hors ligne.")
+    harm.add_argument("--harmonize_map_aliases", choices=["y", "n"], default="y",
+                      help="'y' (défaut) : ramène aussi les symboles périmés et les "
+                           "alias à leur symbole approuvé (colonnes prev_symbol et "
+                           "alias_symbol). Les alias ambigus sont toujours ignorés.")
+    harm.add_argument("--harmonize_drop_unmapped", choices=["y", "n"], default="n",
+                      help="'y' : retire les identifiants inconnus du jeu HGNC. "
+                           "Défaut 'n' : ils sont conservés sous leur nom d'origine.")
 
     pre = p.add_argument_group("prétraitement")
     pre.add_argument("--already-normalized", action="store_true",
@@ -257,8 +302,8 @@ def build_parser() -> argparse.ArgumentParser:
                           "dans le rapport). Très coûteux. Défaut 'n' : uniquement "
                           "le k recommandé par le critère combiné PAC+Delta(K).")
     # Filtrage des gènes en entrée du DEGSEA par cluster : mêmes filtres que le
-    # DEGSEA clinique, seuils indépendants (cf. _add_gene_filter_options).
-    _add_gene_filter_options(deg, "degsea", "DEGSEA par cluster")
+    # DEGSEA clinique, seuils indépendants (cf. _add_degsea_filter_options).
+    _add_degsea_filter_options(deg, "degsea", "DEGSEA par cluster")
     deg.add_argument("--gsea_gene_sets",
                      default=str(Path.home() / ".cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt"),
                      help="fichier .gmt de gene sets pour le GSEA (hallmarks MSigDB par défaut).")
@@ -276,7 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
                                   "indépendamment du consensus clustering. Une entrée "
                                   "clinical_degsea dans le YAML les active aussi.")
     # Filtrage des gènes en entrée du DEGSEA clinique : mêmes filtres que le
-    # DEGSEA par cluster, seuils indépendants (cf. _add_gene_filter_options).
+    # DEGSEA par cluster, seuils indépendants (cf. _add_degsea_filter_options).
     clinical_deg.add_argument("--clinical_degsea_drop_pca_outliers",
                              choices=["y", "n"], default="n",
                              help="'y' : restreint le DEGSEA clinique aux tumeurs "
@@ -286,7 +331,7 @@ def build_parser() -> argparse.ArgumentParser:
                                   "matrice, y compris les outliers ACP. Sans objet "
                                   "pour le DEGSEA par cluster, qui part déjà de la "
                                   "partition, donc des tumeurs filtrées.")
-    _add_gene_filter_options(clinical_deg, "clinical_degsea", "DEGSEA clinique")
+    _add_degsea_filter_options(clinical_deg, "clinical_degsea", "DEGSEA clinique")
     clinical_deg.add_argument("--contrast_col_desq", default=None,
                              help="colonne des métadonnées à relire en chaînes juste "
                                   "après le chargement. Une variable de contraste "

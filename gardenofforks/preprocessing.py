@@ -138,6 +138,34 @@ def filter_low_counts(counts: pd.DataFrame, min_count: int = 15,
     return counts.loc[:, keep]
 
 
+def filter_zero_samples(counts: pd.DataFrame,
+                        max_zero_frac: float = 0.8) -> pd.DataFrame:
+    """Retire les tumeurs dont plus de `max_zero_frac` des gènes sont à 0.
+
+    À appliquer **en dernier**, sur le jeu de gènes réellement testé : une tumeur
+    doit être jugée sur les gènes de l'analyse, pas sur la matrice complète. Une
+    tumeur quasi vide sur ces gènes-là est ininterprétable, et elle casse DESeq2 :
+    l'estimation `poscounts` des size factors prend la médiane des comptes
+    positifs d'une tumeur, donc renvoie NaN si elle n'en a aucun — NaN qui
+    contamine ensuite TOUS les size factors via leur moyenne géométrique.
+    """
+    zero_frac = (counts.to_numpy() == 0).mean(axis=1)
+    keep = zero_frac <= float(max_zero_frac)
+    n_drop = int((~keep).sum())
+    if n_drop:
+        detail = ", ".join(
+            f"{name} ({100 * frac:.1f}%)"
+            for name, frac in zip(counts.index[~keep], zero_frac[~keep])
+        )
+        logger.warning("Tumeurs retirées (> %.0f%% de gènes à 0 count) : %d / %d — %s",
+                       100 * float(max_zero_frac), n_drop, counts.shape[0], detail)
+    else:
+        logger.info("Filtrage des tumeurs à gènes nuls (> %.0f%%) : aucune retirée "
+                    "(max observé %.1f%%).", 100 * float(max_zero_frac),
+                    100 * zero_frac.max() if len(zero_frac) else 0.0)
+    return counts.loc[keep]
+
+
 def log_cpm(counts: pd.DataFrame, prior_count: float = 1.0) -> pd.DataFrame:
     """log2(CPM + prior). Alternative rapide au VST de DESeq2.
 
