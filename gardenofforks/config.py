@@ -332,11 +332,17 @@ def build_parser() -> argparse.ArgumentParser:
                                   "pour le DEGSEA par cluster, qui part déjà de la "
                                   "partition, donc des tumeurs filtrées.")
     _add_degsea_filter_options(clinical_deg, "clinical_degsea", "DEGSEA clinique")
-    clinical_deg.add_argument("--contrast_col_desq", default=None,
-                             help="colonne des métadonnées à relire en chaînes juste "
-                                  "après le chargement. Une variable de contraste "
-                                  "codée en entiers (0/1) serait sinon traitée par "
-                                  "DESeq2 comme une covariable continue.")
+    clinical_deg.add_argument("--contrast_col_desq", default=None, metavar="COL[,COL…]",
+                             help="colonne(s) des métadonnées à relire en chaînes juste "
+                                  "après le chargement — liste YAML, ou noms séparés "
+                                  "par des virgules en ligne de commande. Chaque design "
+                                  "clinical_degsea y puise le contraste dont il a besoin. "
+                                  "Sans ça, une variable codée en entiers (0/1) est lue "
+                                  "par DESeq2 comme une covariable CONTINUE ; et si elle "
+                                  "porte le moindre NA, pandas la lit en float et ses "
+                                  "modalités deviennent '0.0'/'1.0', qui ne "
+                                  "correspondent plus aux control/test du YAML — le "
+                                  "contraste est alors vide, sans message clair.")
 
     sig = p.add_argument_group("projection de signatures (scoring + association clinique)")
     sig.add_argument("--compute_signatures", choices=["y", "n"], default="n",

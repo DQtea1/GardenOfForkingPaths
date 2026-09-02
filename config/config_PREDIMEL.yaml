@@ -246,6 +246,22 @@ clinical_degsea_max_zero_frac: 0.80      # retire les tumeurs à plus de 80 % de
 
 # DEGSEA clinique indépendant du consensus. Décommenter/adapter pour exécuter
 # plusieurs expériences ; chaque résultat est exporté dans tables/clinical_degsea/<nom>/.
+
+# Colonnes relues en CHAÎNES juste après le chargement des métadonnées. Chaque
+# design ci-dessous y puise le contraste dont il a besoin : toute colonne citée
+# comme `contrast` doit figurer ici.
+#
+# Pourquoi c'est indispensable, et pas seulement confortable :
+#   - une colonne 0/1 laissée en numérique est traitée par DESeq2 comme une
+#     covariable CONTINUE, pas comme deux groupes ;
+#   - pire, un seul NA suffit à faire lire la colonne en float par pandas ; ses
+#     modalités deviennent alors '0.0'/'1.0', qui ne correspondent plus aux
+#     `control` / `test` ci-dessous. Le contraste sélectionne zéro tumeur et
+#     l'erreur affichée parle d'« effectifs insuffisants », ce qui envoie
+#     chercher un problème d'effectifs là où c'est un problème de type.
+contrast_col_desq:
+  - PDSD_PRCR
+
 clinical_degsea:
   response:
     design: "~ PDSD_PRCR"

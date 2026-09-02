@@ -185,11 +185,13 @@ def _load_metadata(c: _Ctx) -> None:
     # continue : une variable de contraste codée 0/1 doit être en chaînes pour
     # être traitée comme catégorielle. `string` (et non `str`) laisse les NA
     # manquants, que le design clinique doit encore pouvoir exclure.
-    col = c.args.contrast_col_desq
-    if col:
-        if col not in metadata.columns:
-            raise ConfigError(
-                f"contrast_col_desq : colonne absente des métadonnées — {col!r}.")
+    columns = cf.as_str_tuple(c.args.contrast_col_desq)
+    missing = [col for col in columns if col not in metadata.columns]
+    if missing:
+        raise ConfigError(
+            "contrast_col_desq : colonne(s) absente(s) des métadonnées — "
+            + ", ".join(map(repr, missing)) + ".")
+    for col in columns:
         values = metadata[col]
         if pd.api.types.is_numeric_dtype(values) and not pd.api.types.is_bool_dtype(values):
             # Un seul NA suffit à faire relire une colonne d'entiers en float :

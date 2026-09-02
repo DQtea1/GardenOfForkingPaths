@@ -35,7 +35,7 @@ outdir: /mnt/d/03_SARAH_projet/01_OUTPUTS/GardenOfForks/Run_test           # dos
 # gene_id_types_by_sample.csv : quel identifiant est de quel type, quelle tumeur
 # porte ses comptes sur quel espace), puis convertit vers les symboles.
 # La trace de conversion part dans tables/gene_id_harmonization.csv.
-harmonize_gene_ids: n         # y | n — active l'harmonisation vers les symboles HGNC
+harmonize_gene_ids: y         # y | n — active l'harmonisation vers les symboles HGNC
 
 # La table de correspondance est le « HGNC complete gene set » de genenames.org
 # — exactement le jeu de données que le paquet R `hgnc` charge via
@@ -79,7 +79,7 @@ outlier_min_explained_var: 0.0  # si > 0 : inspecte les CP à variance expliqué
 # projection ICA. Nécessite : pip install stabilized-ica
 run_ica: y
 ica_n_components_min: 6       # borne basse de la fourchette MSTD
-ica_n_components_max: 9      # borne haute de la fourchette MSTD
+ica_n_components_max: 8      # borne haute de la fourchette MSTD
 ica_n_components_step: 1      # pas entre dimensions testées
 ica_n_runs: 100               # FastICA répétées par dimension (stabilité)
 ica_top_dimensions: 3         # maximum 1–4 : MSTD, ↓ voisin, ↑ voisin, ~ meilleure stabilité moyenne
@@ -96,7 +96,7 @@ ica_gsea_max_size: 500        # taille maximale d'un gene set
 
 # ================================================= 2 · Consensus clustering (+ choix de k)
 k_min: 3
-k_max: 7
+k_max: 5
 n_resamples: 2000
 prop_samples: 0.8
 prop_genes: 0.8
@@ -214,8 +214,8 @@ clinical_degsea_drop_pca_outliers: n   # y | n — y : restreint le DEGSEA clini
                                        #   clinique porte sur TOUTES les tumeurs, outliers ACP inclus.
 
 clinical_degsea_filter_low_counts: y   # y | n — filtre d'expression sur counts bruts
-clinical_degsea_min_count_per_sample: 1   # counts bruts minimum par tumeur
-clinical_degsea_min_frac_samples: 0.99     # ... atteints par >= 30 % des tumeurs testées
+clinical_degsea_min_count_per_sample: 15   # counts bruts minimum par tumeur
+clinical_degsea_min_frac_samples: 0.30     # ... atteints par >= 30 % des tumeurs testées
 
 clinical_degsea_filter_technical: y    # y | n — retire ribosomiques / mitochondriaux / hémoglobines
 clinical_degsea_technical_patterns:    # expressions régulières (commenter le bloc = défauts)
@@ -246,55 +246,263 @@ clinical_degsea_variance_method: mad   # mad (robuste) | var
 # positifs, donc renvoie NaN s'il n'y en a aucun — NaN qui se propage ensuite à
 # TOUTES les tumeurs via la moyenne géométrique des size factors.
 clinical_degsea_filter_zero_samples: n   # y | n
-clinical_degsea_max_zero_frac: 0.80      # retire les tumeurs à plus de 80 % de gènes à 0
+clinical_degsea_max_zero_frac: 1      # retire les tumeurs à plus de 80 % de gènes à 0
 # ---------------------------------------------------------------------------
 
 # DEGSEA clinique indépendant du consensus. Décommenter/adapter pour exécuter
 # plusieurs expériences ; chaque résultat est exporté dans tables/clinical_degsea/<nom>/.
-contrast_col_desq : "ITD_interet"
+
+# Colonnes relues en CHAÎNES juste après le chargement des métadonnées. Chaque
+# design ci-dessous y puise le contraste dont il a besoin : toute colonne citée
+# comme `contrast` doit figurer ici.
+#
+# Pourquoi c'est indispensable, et pas seulement confortable :
+#   - une colonne 0/1 laissée en numérique est traitée par DESeq2 comme une
+#     covariable CONTINUE, pas comme deux groupes ;
+#   - pire, un seul NA suffit à faire lire la colonne en float par pandas ; ses
+#     modalités deviennent alors '0.0'/'1.0', qui ne correspondent plus aux
+#     `control: "0"` / `test: "1"` ci-dessous. Le contraste sélectionne zéro
+#     tumeur et l'erreur affichée parle d'« effectifs insuffisants », ce qui
+#     envoie chercher un problème d'effectifs là où c'est un problème de type.
+
+group_DESeq2_by: 
+  - histo_classe
+  - histo_subclass
+  - histo_subtype
+
+contrast_col_desq:
+  - BCOR
+  - BRAF
+  - EGFR
+  - FGFR1
+  - FLT3
+  - KDR
+  - KIT
+  - NRAS
+  - PDGFRA
+  - SOX10
+
+
 clinical_degsea:
-  ITD_interet:
-    design: "~ ITD_interet"
-    contrast: "ITD_interet"          # accepte aussi la clé française : contraste
-    control: "0"
-    test: "1"
-    collections: [h]        # noms issus de gsea_collections ; omission = toutes les collections
-    min_group: 1
-  ITD_interet_age_sexe:
-    design: "~ age + sexe + ITD_interet"
-    contrast: "ITD_interet"
+  ITD_SOX10:
+    design: "~ BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "SOX10"
     control: "0"
     test: "1"
     collections: [h]
-    min_group: 1
-  ITD_interet_histo_classe:
-    design: "~ histo_classe + ITD_interet"
-    contrast: "ITD_interet"
+    min_group: 7
+  ITD_SOX10_histo_classe:
+    design: "~ histo_classe + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "SOX10"
     control: "0"
     test: "1"
     collections: [h]
-    min_group: 1
-  ITD_interet_histo_subclass:
-    design: "~ histo_subclass + ITD_interet"
-    contrast: "ITD_interet"
+    min_group: 7
+  ITD_SOX10_histo_subclass:
+    design: "~ histo_subclass + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "SOX10"
     control: "0"
     test: "1"
     collections: [h]
-    min_group: 1
-  ITD_interet_age_sexe_histo_classe:
-    design: "~ age + sexe + histo_classe + ITD_interet"
-    contrast: "ITD_interet"
+    min_group: 7
+
+  ITD_FLT3:
+    design: "~ BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "FLT3"
     control: "0"
     test: "1"
     collections: [h]
-    min_group: 1
-  ITD_interet_age_sexe_histo_subclass:
-    design: "~ age + sexe + histo_subclass + ITD_interet"
-    contrast: "ITD_interet"
+    min_group: 7
+  ITD_FLT3_histo_classe:
+    design: "~ histo_classe + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "FLT3"
     control: "0"
     test: "1"
     collections: [h]
-    min_group: 1
+    min_group: 7
+  ITD_FLT3_histo_subclass:
+    design: "~ histo_subclass + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "FLT3"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+
+  ITD_BCOR:
+    design: "~ BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "BCOR"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_BCOR_histo_classe:
+    design: "~ histo_classe + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "BCOR"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_BCOR_histo_subclass:
+    design: "~ histo_subclass + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "BCOR"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+
+  ITD_FGFR1:
+    design: "~ BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "FGFR1"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_FGFR1_histo_classe:
+    design: "~ histo_classe + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "FGFR1"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_FGFR1_histo_subclass:
+    design: "~ histo_subclass + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "FGFR1"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+
+  ITD_KIT:
+    design: "~ BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "KIT"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_KIT_histo_classe:
+    design: "~ histo_classe + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "KIT"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_KIT_histo_subclass:
+    design: "~ histo_subclass + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "KIT"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+
+  ITD_PDGFRA:
+    design: "~ BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "PDGFRA"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_PDGFRA_histo_classe:
+    design: "~ histo_classe + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "PDGFRA"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_PDGFRA_histo_subclass:
+    design: "~ histo_subclass + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "PDGFRA"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+
+  ITD_EGFR:
+    design: "~ BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "EGFR"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_EGFR_histo_classe:
+    design: "~ histo_classe + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "EGFR"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_EGFR_histo_subclass:
+    design: "~ histo_subclass + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "EGFR"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+
+  ITD_KDR:
+    design: "~ BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "KDR"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_KDR_histo_classe:
+    design: "~ histo_classe + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "KDR"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_KDR_histo_subclass:
+    design: "~ histo_subclass + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "KDR"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+
+  ITD_BRAF:
+    design: "~ BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "BRAF"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_BRAF_histo_classe:
+    design: "~ histo_classe + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "BRAF"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_BRAF_histo_subclass:
+    design: "~ histo_subclass + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "BRAF"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+
+  ITD_NRAS:
+    design: "~ BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "NRAS"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_NRAS_histo_classe:
+    design: "~ histo_classe + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "NRAS"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
+  ITD_NRAS_histo_subclass:
+    design: "~ histo_subclass + BCOR + BRAF + EGFR + FGFR1 + FLT3 + KDR + KIT + NRAS + PDGFRA + SOX10"
+    contrast: "NRAS"
+    control: "0"
+    test: "1"
+    collections: [h]
+    min_group: 7
 
 # ================================================= 7 · Projection de signatures (scoring + association clinique)
 compute_signatures: y         # y | n — score les signatures par tumeur (ssGSEA + expression moyenne) et teste l'association aux variables cliniques
