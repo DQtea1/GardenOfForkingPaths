@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from . import config as cf
 from .stats_utils import is_continuous
 
 logger = logging.getLogger(__name__)
@@ -289,8 +290,20 @@ def _clinical_degsea_detail_payload(outdir: Path,
         return {}
 
     payload: dict[str, dict] = {}
+    for group_col, by_modality in sorted(clinical_degsea.items()):
+        for modality, experiments in sorted(by_modality.items()):
+            block = _clinical_stratum_payload(root, group_col, modality, experiments)
+            if block:
+                payload.setdefault(str(group_col), {})[str(modality)] = block
+    return payload
+
+
+def _clinical_stratum_payload(root: Path, group_col: str, modality: str,
+                              clinical_degsea: dict) -> dict:
+    """Charge les sorties d'une strate (colonne × modalité) du DEGSEA clinique."""
+    payload: dict[str, dict] = {}
     for name, summary in sorted(clinical_degsea.items()):
-        directory = root / str(name)
+        directory = root / cf.slug(group_col) / cf.slug(modality) / str(name)
         de_path = directory / "deseq2.csv"
         if not de_path.exists():
             logger.warning("Rapport DEGSEA clinique : fichier absent : %s", de_path)
@@ -306,12 +319,17 @@ def _clinical_degsea_detail_payload(outdir: Path,
         lfc_col = "log2FoldChange" if "log2FoldChange" in de else None
         p_col = "pvalue" if "pvalue" in de else None
         padj_col = "padj" if "padj" in de else None
+        # Gènes à dispersion effondrée : leur |z| n'est pas interprétable. On les
+        # transporte marqués plutôt que de les supprimer, pour que le volcano
+        # puisse les montrer sans les présenter comme des découvertes.
+        flag_col = "dispersion_suspecte" if "dispersion_suspecte" in de else None
         genes = [
             {
                 "gene": str(row.get(gene_col)),
                 "log2FoldChange": _number_or_none(row.get(lfc_col)) if lfc_col else None,
                 "pvalue": _number_or_none(row.get(p_col)) if p_col else None,
                 "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
+                "suspect": bool(row.get(flag_col)) if flag_col else False,
             }
             for row in de.to_dict(orient="records")
             if not pd.isna(row.get(gene_col))
@@ -349,6 +367,7 @@ def _clinical_degsea_detail_payload(outdir: Path,
         contrast = str(summary.get("contrast", ""))
         control, test = str(summary.get("control", "")), str(summary.get("test", ""))
         details = " · ".join(part for part in (f"{test} vs {control}" if test or control else "", design) if part)
+        n_samples = summary.get("n_samples")
         payload[str(name)] = {
             "id": str(name),
             "label": f"{name} — {details}" if details else str(name),
@@ -356,7 +375,17 @@ def _clinical_degsea_detail_payload(outdir: Path,
             "contrast": contrast,
             "control": control,
             "test": test,
-            "nSamples": summary.get("n_samples"),
+            "groupCol": str(group_col),
+            "modality": str(modality),
+            # Formule RÉELLEMENT ajustée sur cette strate : elle peut différer du
+            # design demandé, un terme constant sur la strate étant écarté. Sans
+            # cette information, deux volcanos de strates différentes ne sont pas
+            # comparables et rien ne le signale.
+            "designUsed": str(summary.get("design_used", design)),
+            "droppedTerms": str(summary.get("dropped_terms", "") or ""),
+            "nSamples": n_samples,
+            "nTest": summary.get("n_test"),
+            "nControl": summary.get("n_control"),
             "genes": genes,
             "gsea": gsea,
         }

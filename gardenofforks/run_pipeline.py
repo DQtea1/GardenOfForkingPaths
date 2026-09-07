@@ -185,12 +185,19 @@ def _load_metadata(c: _Ctx) -> None:
     # continue : une variable de contraste codée 0/1 doit être en chaînes pour
     # être traitée comme catégorielle. `string` (et non `str`) laisse les NA
     # manquants, que le design clinique doit encore pouvoir exclure.
-    columns = cf.as_str_tuple(c.args.contrast_col_desq)
-    missing = [col for col in columns if col not in metadata.columns]
-    if missing:
-        raise ConfigError(
-            "contrast_col_desq : colonne(s) absente(s) des métadonnées — "
-            + ", ".join(map(repr, missing)) + ".")
+    # Colonnes déduites de la configuration, pas listées à la main : celles
+    # citées comme `contrast` par les designs cliniques, et celles servant à
+    # stratifier. Les secondes deviennent des libellés d'interface et des noms
+    # de dossier, elles doivent donc être des chaînes elles aussi.
+    contrasts = cf.contrast_columns(c.args.clinical_degsea)
+    strata = cf.grouping_columns(c.args.group_DESeq2_by)
+    columns = tuple(dict.fromkeys(contrasts + strata))
+    missing = {"contrast": [x for x in contrasts if x not in metadata.columns],
+               "group_DESeq2_by": [x for x in strata if x not in metadata.columns]}
+    if any(missing.values()):
+        raise ConfigError("colonne(s) absente(s) des métadonnées — " + " ; ".join(
+            f"{key} : {', '.join(map(repr, cols))}"
+            for key, cols in missing.items() if cols))
     for col in columns:
         values = metadata[col]
         if pd.api.types.is_numeric_dtype(values) and not pd.api.types.is_bool_dtype(values):
@@ -465,11 +472,45 @@ def _run_primary_branch(c: _Ctx) -> None:
     ).run(run_associations=True)
 
 
+def _clinical_strata(c: _Ctx, counts) -> list[tuple[str, str, pd.Index]]:
+    """Strates sur lesquelles rejouer toute la batterie de designs cliniques.
+
+    Renvoie toujours en premier la strate non filtrée (`ALL`/`ALL`), puis une
+    strate par modalité de chaque colonne de `group_DESeq2_by`. Les tumeurs sans
+    valeur pour une colonne de stratification n'appartiennent à aucune de ses
+    modalités : elles ne sont présentes que dans la strate non filtrée.
+    """
+    log, metadata = c.log, c.metadata
+    index = counts.index.intersection(metadata.index)
+    strata = [(cf.ALL_STRATA, cf.ALL_STRATA, index)]
+
+    for col in cf.grouping_columns(c.args.group_DESeq2_by):
+        values = metadata.loc[index, col]
+        modalities = sorted(map(str, values.dropna().unique()))
+        if not modalities:
+            log.warning("group_DESeq2_by : la colonne %r n'a aucune modalité "
+                        "exploitable — ignorée.", col)
+            continue
+        log.info("Stratification %r : %d modalité(s) — %s", col, len(modalities),
+                 ", ".join(modalities[:10])
+                 + ("" if len(modalities) <= 10 else f" … (+{len(modalities)-10})"))
+        for modality in modalities:
+            strata.append((col, modality,
+                           values.index[values.astype("string") == modality]))
+    return strata
+
+
 def _clinical_degsea(c: _Ctx) -> None:
     """Exécute les expériences cliniques configurées, sans consensus clustering.
 
     Cette étape ne lit ni labels ni ``AnalysisBranch`` : elle consomme seulement
     les counts bruts, les métadonnées et le dictionnaire ``clinical_degsea``.
+
+    Chaque design est rejoué sur chaque strate définie par `group_DESeq2_by`,
+    plus la cohorte entière. Les combinaisons dont les effectifs sont trop
+    faibles sont écartées **avant** tout ajustement : sur une stratification fine
+    croisée avec des contrastes rares, elles sont la majorité, et les calculer
+    pour rien coûterait des heures.
     """
     args, log = c.args, c.log
     c.clinical_degsea = {}
@@ -501,43 +542,105 @@ def _clinical_degsea(c: _Ctx) -> None:
                      n_out, len(kept))
 
     gene_filters = dg.DegseaFilters.from_args(args)
-    log.info("DEGSEA clinique : %d expérience(s), indépendante(s) du consensus clustering.",
-             len(experiments))
-    for name, spec in experiments.items():
-        gene_sets = cf.clinical_gene_sets(
-            args.gsea_collections, args.gsea_gene_sets, spec
-        )
-        result = dg.run_clinical_degsea(
-            counts, c.metadata,
-            design=str(spec["design"]),
-            contrast=str(spec["contrast"]),
-            control=str(spec["control"]),
-            test=str(spec["test"]),
-            gene_sets=gene_sets,
-            outdir=c.outdir / "tables" / "clinical_degsea" / name,
-            min_group=int(spec.get("min_group", 3)),
-            min_count=int(spec.get("min_count", 10)),
-            gene_filters=gene_filters,
-            permutations=int(spec.get("gsea_permutations", args.gsea_permutations)),
-            n_jobs=c.eff_n_jobs,
-            seed=args.seed,
-        )
-        c.clinical_degsea[name] = {
-            "design": str(spec["design"]),
-            "contrast": str(spec["contrast"]),
-            "control": str(spec["control"]),
-            "test": str(spec["test"]),
-            "n_samples": result["n_samples"],
-            "n_test": result["n_test"],
-            "n_control": result["n_control"],
-            "n_dropped": result["n_dropped"],
-            "collections": sorted(result["gsea"]),
-        }
-        log.info(
-            "DEGSEA clinique [%s] terminé : n=%d (%s=%d vs %s=%d), %d collection(s).",
-            name, result["n_samples"], spec["test"], result["n_test"],
-            spec["control"], result["n_control"], len(result["gsea"]),
-        )
+    deseq_settings = dg.DeseqSettings.from_args(args)
+    strata = _clinical_strata(c, counts)
+    n_planned = len(strata) * len(experiments)
+    log.info("DEGSEA clinique : %d strate(s) x %d design(s) = %d ajustement(s) "
+             "DESeq2 au maximum.", len(strata), len(experiments), n_planned)
+
+    plan: list[dict] = []
+    for group_col, modality, index in strata:
+        meta_stratum = c.metadata.loc[c.metadata.index.intersection(index)]
+        done = {}
+        # Les expériences partageant une formule partagent leur ajustement : le
+        # coût est dans `dds.deseq2()`, pas dans l'extraction d'un contraste.
+        by_design: dict[str, dict] = {}
+        for name, spec in experiments.items():
+            by_design.setdefault(str(spec["design"]), {})[name] = spec
+
+        for design, group in by_design.items():
+            group_specs, rows = {}, {}
+            for name, spec in group.items():
+                contrast = str(spec["contrast"])
+                control, test = str(spec["control"]), str(spec["test"])
+                min_group = int(spec.get("min_group", 3))
+                rows[name] = {"group_col": group_col, "modalite": modality,
+                              "experience": name, "design": design,
+                              "contraste": contrast}
+
+                # Pré-contrôle : écarter une combinaison inexploitable AVANT d'y
+                # consacrer un ajustement. Sur une stratification fine croisée
+                # avec des contrastes rares, c'est la majorité des cas.
+                n_ctrl, n_test, _ = dg.contrast_group_sizes(
+                    meta_stratum, design, contrast, control, test)
+                rows[name] |= {"n_control": n_ctrl, "n_test": n_test}
+                if min(n_ctrl, n_test) < min_group:
+                    plan.append(rows[name] | {
+                        "statut": "écartée", "design_utilise": "",
+                        "raison": f"effectifs {test}={n_test}, {control}={n_ctrl} "
+                                  f"< min_group={min_group}"})
+                    continue
+                group_specs[name] = {
+                    "contrast": contrast, "control": control, "test": test,
+                    "min_group": min_group,
+                    "gene_sets": cf.clinical_gene_sets(
+                        args.gsea_collections, args.gsea_gene_sets, spec),
+                    "outdir": (c.outdir / "tables" / "clinical_degsea"
+                               / cf.slug(group_col) / cf.slug(modality) / name),
+                }
+            if not group_specs:
+                continue
+
+            out = dg.run_clinical_degsea_group(
+                counts.loc[counts.index.intersection(index)], c.metadata,
+                design=design, specs=group_specs,
+                min_count=int(next(iter(group.values())).get("min_count", 10)),
+                gene_filters=gene_filters,
+                permutations=int(next(iter(group.values())).get(
+                    "gsea_permutations", args.gsea_permutations)),
+                n_jobs=c.eff_n_jobs, seed=args.seed, settings=deseq_settings,
+                min_level_count=min(int(s.get("min_group", 3))
+                                    for s in group.values()),
+            )
+            dropped_txt = " ; ".join(f"{k} ({v})"
+                                     for k, v in out["dropped_terms"].items())
+            for name, reason in out["skipped"].items():
+                log.warning("DEGSEA clinique [%s/%s/%s] écarté : %s",
+                            group_col, modality, name, reason)
+                plan.append(rows[name] | {"statut": "écartée", "raison": reason,
+                                          "design_utilise": out["design_used"],
+                                          "termes_ecartes": dropped_txt})
+            for name, result in out["results"].items():
+                spec = group[name]
+                done[name] = {
+                    "design": design, "design_used": out["design_used"],
+                    "dropped_terms": dropped_txt,
+                    "contrast": str(spec["contrast"]),
+                    "control": str(spec["control"]), "test": str(spec["test"]),
+                    "group_col": group_col, "modality": modality,
+                    "n_samples": result["n_samples"], "n_test": result["n_test"],
+                    "n_control": result["n_control"], "n_dropped": result["n_dropped"],
+                    "collections": sorted(result["gsea"]),
+                }
+                plan.append(rows[name] | {
+                    "statut": "calculée", "raison": "",
+                    "design_utilise": out["design_used"], "termes_ecartes": dropped_txt,
+                    "n_control": result["n_control"], "n_test": result["n_test"]})
+                log.info("DEGSEA clinique [%s/%s/%s] terminé : n=%d (%s=%d vs %s=%d).",
+                         group_col, modality, name, result["n_samples"],
+                         spec["test"], result["n_test"],
+                         spec["control"], result["n_control"])
+        if done:
+            c.clinical_degsea.setdefault(group_col, {})[modality] = done
+
+    table = pd.DataFrame(plan)
+    root = c.outdir / "tables" / "clinical_degsea"
+    root.mkdir(parents=True, exist_ok=True)
+    table.to_csv(root / "plan.csv", index=False)
+    n_done = int((table["statut"] == "calculée").sum()) if len(table) else 0
+    log.info("DEGSEA clinique : %d / %d combinaisons calculées, %d écartées "
+             "pour effectifs — détail dans %s.", n_done, len(table),
+             len(table) - n_done, root / "plan.csv")
 
 
 def _degsea(c: _Ctx, k: int, gene_sets: dict[str, str], *,

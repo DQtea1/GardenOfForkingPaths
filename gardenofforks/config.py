@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,38 @@ def as_str_tuple(value, default: tuple[str, ...] = ()) -> tuple[str, ...]:
     if isinstance(value, str):
         return tuple(part.strip() for part in value.split(",") if part.strip())
     return tuple(str(part) for part in value)
+
+
+def _add_deseq2_options(group, prefix: str) -> None:
+    """Garde-fous numériques de l'ajustement DESeq2, pour un préfixe donné.
+
+    Voir :class:`gardenofforks.degsea.DeseqSettings` pour le détail des deux
+    pathologies visées : valeurs aberrantes (Cook) et dispersion effondrée.
+    """
+    add = group.add_argument
+    add(f"--{prefix}_cooks_filter", choices=["y", "n"], default="y",
+        help="'y' (défaut) : met padj à NA pour un gène dont un échantillon a une "
+             "distance de Cook excessive, au lieu de le déclarer significatif. "
+             "Équivalent du cooksCutoff de DESeq2 en R. 'n' désactive ce garde-fou.")
+    add(f"--{prefix}_refit_cooks", choices=["y", "n"], default="y",
+        help="'y' (défaut) : remplace les comptages aberrants (Cook) par la moyenne "
+             "tronquée des autres échantillons, puis réajuste. Sans effet en dessous "
+             "de 7 échantillons, seuil interne de PyDESeq2.")
+    add(f"--{prefix}_independent_filter", choices=["y", "n"], default="y",
+        help="'y' (défaut) : filtrage indépendant de DESeq2 sur l'expression moyenne, "
+             "qui augmente la puissance après correction FDR.")
+    add(f"--{prefix}_min_disp", type=float, default=1e-8,
+        help="plancher de dispersion de PyDESeq2 (défaut 1e-8). Le relever (1e-3) "
+             "atténue l'effondrement des erreurs-types, sans le supprimer.")
+    add(f"--{prefix}_flag_low_dispersion", choices=["y", "n"], default="y",
+        help="'y' (défaut) : marque d'une colonne `dispersion_suspecte` les gènes "
+             "dont la dispersion ajustée est invraisemblablement basse — leur |z| "
+             "est ininterprétable. Ils restent dans les tables mais sont écartés de "
+             "l'étiquetage du volcano.")
+    add(f"--{prefix}_min_plausible_disp", type=float, default=1e-3,
+        help="seuil du marquage ci-dessus (défaut 1e-3). Une tumeur en bulk RNA-seq "
+             "a une dispersion de 0,1 à 0,5 ; en dessous de 1e-3, l'estimation est "
+             "douteuse plutôt que précise.")
 
 
 def _add_degsea_filter_options(group, prefix: str, scope: str) -> None:
@@ -304,6 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Filtrage des gènes en entrée du DEGSEA par cluster : mêmes filtres que le
     # DEGSEA clinique, seuils indépendants (cf. _add_degsea_filter_options).
     _add_degsea_filter_options(deg, "degsea", "DEGSEA par cluster")
+    _add_deseq2_options(deg, "degsea")
     deg.add_argument("--gsea_gene_sets",
                      default=str(Path.home() / ".cache/gseapy/Enrichr.MSigDB_Hallmark_2020.gmt"),
                      help="fichier .gmt de gene sets pour le GSEA (hallmarks MSigDB par défaut).")
@@ -332,17 +366,17 @@ def build_parser() -> argparse.ArgumentParser:
                                   "pour le DEGSEA par cluster, qui part déjà de la "
                                   "partition, donc des tumeurs filtrées.")
     _add_degsea_filter_options(clinical_deg, "clinical_degsea", "DEGSEA clinique")
-    clinical_deg.add_argument("--contrast_col_desq", default=None, metavar="COL[,COL…]",
-                             help="colonne(s) des métadonnées à relire en chaînes juste "
-                                  "après le chargement — liste YAML, ou noms séparés "
-                                  "par des virgules en ligne de commande. Chaque design "
-                                  "clinical_degsea y puise le contraste dont il a besoin. "
-                                  "Sans ça, une variable codée en entiers (0/1) est lue "
-                                  "par DESeq2 comme une covariable CONTINUE ; et si elle "
-                                  "porte le moindre NA, pandas la lit en float et ses "
-                                  "modalités deviennent '0.0'/'1.0', qui ne "
-                                  "correspondent plus aux control/test du YAML — le "
-                                  "contraste est alors vide, sans message clair.")
+    _add_deseq2_options(clinical_deg, "clinical_degsea")
+    clinical_deg.add_argument("--group_DESeq2_by", default=None, metavar="COL[,COL…]",
+                             help="colonne(s) des métadonnées servant à STRATIFIER le "
+                                  "DEGSEA clinique : pour chaque modalité de chaque "
+                                  "colonne, toute la batterie de designs clinical_degsea "
+                                  "est rejouée sur les seules tumeurs de cette modalité "
+                                  "(liste YAML, ou noms séparés par des virgules). "
+                                  "Les valeurs 'ALL', 'None' et 'NA' désignent l'analyse "
+                                  "NON filtrée, sur toute la cohorte ; c'est le défaut. "
+                                  "ATTENTION au coût : le nombre d'ajustements DESeq2 "
+                                  "vaut n_designs x (1 + somme des modalités).")
 
     sig = p.add_argument_group("projection de signatures (scoring + association clinique)")
     sig.add_argument("--compute_signatures", choices=["y", "n"], default="n",
@@ -769,6 +803,48 @@ def clinical_experiments(config: dict | None) -> dict[str, dict]:
     return experiments
 
 
+#: clé et libellé de la strate « toute la cohorte, sans filtre »
+ALL_STRATA = "ALL"
+
+#: valeurs de `group_DESeq2_by` qui désignent l'absence de filtre
+_NO_GROUPING = {"all", "none", "na", "null", "aucun", ""}
+
+
+def slug(value) -> str:
+    """Nom de dossier sûr pour une colonne ou une modalité clinique.
+
+    Défini **ici**, et non des deux côtés : `run_pipeline` écrit les dossiers,
+    `report` les relit. Deux implémentations qui divergeraient d'un caractère
+    donneraient un rapport vide sans le moindre message.
+    """
+    text = re.sub(r"[^0-9A-Za-z._-]+", "_", str(value)).strip("_")
+    return text or "vide"
+
+
+def grouping_columns(value) -> tuple[str, ...]:
+    """Normalise `group_DESeq2_by` -> colonnes de stratification, sans doublon.
+
+    Les sentinelles ('ALL', 'None', 'NA'…) sont retirées : la strate non filtrée
+    est **toujours** produite, elle n'a donc pas à être demandée explicitement.
+    """
+    return tuple(dict.fromkeys(
+        str(col) for col in as_str_tuple(value)
+        if str(col).strip().lower() not in _NO_GROUPING))
+
+
+def contrast_columns(config: dict | None) -> tuple[str, ...]:
+    """Colonnes citées comme `contrast` par les expériences cliniques.
+
+    Sert à relire ces colonnes en chaînes dès le chargement des métadonnées :
+    une variable 0/1 laissée en numérique serait traitée par DESeq2 comme une
+    covariable continue, et un seul NA la ferait lire en float — ses modalités
+    deviendraient '0.0'/'1.0' et ne correspondraient plus aux `control`/`test`.
+    Les dériver ici évite d'avoir à maintenir la liste en double dans le YAML.
+    """
+    return tuple(dict.fromkeys(
+        str(spec["contrast"]) for spec in clinical_experiments(config).values()))
+
+
 def clinical_gene_sets(collections, gsea_gene_sets, experiment: dict) -> dict[str, str]:
     """Résout les collections GMT demandées par une expérience clinique."""
     available = collections_or_fallback(collections, gsea_gene_sets)
@@ -876,5 +952,10 @@ __all__ = [
     "collections_or_fallback",
     "clinical_experiments",
     "clinical_gene_sets",
+    "contrast_columns",
+    "grouping_columns",
+    "as_str_tuple",
+    "slug",
+    "ALL_STRATA",
     "enabled",
 ]

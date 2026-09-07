@@ -474,12 +474,15 @@
 <div class="pane" id="pane-diff">
   <div class="subtabs">
     <button class="diff-subtab active" data-diff-sub="degsea">DEGSEA</button>
+    <button class="diff-subtab" data-diff-sub="ssgsea">ssGSEA</button>
     <button class="diff-subtab" data-diff-sub="outrider">OUTRIDER</button>
   </div>
 
   <div class="diff-sub active" id="diff-sub-degsea">
     <div class="warn" id="cdeWarn"></div>
     <div class="ctl" id="cdeCtl">
+      <label>Filtrer sur :</label><select id="cdeGroupCol"></select>
+      <label>Modalité :</label><select id="cdeGroupValue"></select>
       <label>Design :</label><select id="cdeExperiment"></select>
       <label>Significativité :</label><select id="cdeMetric"><option value="padj">padj (FDR)</option><option value="pvalue">p-value</option></select>
       <label>Seuil :</label><input type="number" id="cdePThreshold" min="0" max="1" step="0.001" value="0.05">
@@ -503,6 +506,79 @@
       <section class="deg-card" style="flex:1;min-width:300px"><h3>Gènes upregulated · NES positifs</h3><div class="tblwrap" style="max-height:610px"><table class="dt deg-table" id="cdeGseaPos"></table></div></section>
     </div>
     <div class="deg-card" id="cdeLeadingEdge" style="margin-top:12px"><span class="muted">Cliquez une voie GSEA pour afficher son leading edge.</span></div>
+  </div>
+
+  <div class="diff-sub" id="diff-sub-ssgsea">
+    <div class="warn" id="ssWarn"></div>
+    <div id="ssCtl">
+      <div class="ctl">
+        <b>Filtres globaux</b><span class="muted">— restreignent la cohorte AVANT tout le
+          reste : les conditions se construisent sur ce sous-ensemble, et centrage,
+          réduction et rangs y sont recalculés.</span>
+        <button class="addbtn" id="ssAddGlobal">+ ajouter un filtre global</button>
+      </div>
+      <div id="ssGlobals"></div>
+
+      <div class="ctl" style="margin-top:9px">
+        <b>Conditions</b><span class="muted">— une colonne de la heatmap par condition ;
+          les scores ssGSEA des tumeurs retenues y sont moyennés.</span>
+        <button class="addbtn" id="ssAddCond">+ ajouter une condition</button>
+      </div>
+      <div id="ssConds"></div>
+      <div class="warn" id="ssOverlap"></div>
+
+      <div class="ctl" style="margin-top:9px">
+        <b>Collections et pathways</b><span class="muted">— les lignes de la heatmap.</span>
+        <button class="addbtn" id="ssAddColl">+ ajouter une collection</button>
+      </div>
+      <div id="ssColls"></div>
+
+      <div class="ctl" style="margin-top:9px">
+        <label>Mode de calcul :</label><select id="ssScale"
+          title="Centrage et réduction sont appliqués PAR PATHWAY et AU NIVEAU DES ÉCHANTILLONS, avant la moyenne par condition.">
+          <option value="raw">moyenne des scores bruts</option>
+          <option value="center">moyenne des scores centrés</option>
+          <option value="scale">moyenne des scores réduits (sans centrage)</option>
+          <option value="z" selected>moyenne des z-scores (centrés puis réduits)</option>
+          <option value="rank">moyenne des rangs dans la cohorte (robuste)</option>
+          <option value="relcond">écart à la moyenne des conditions affichées</option>
+        </select>
+        <label>Clustering lignes :</label><select id="ssClustRows">
+          <option value="none">aucun (tri ci-dessous)</option>
+          <option value="hclust">hiérarchique</option>
+          <option value="seriation">sériation (1re composante)</option>
+        </select>
+        <label>Clustering colonnes :</label><select id="ssClustCols">
+          <option value="none">aucun (ordre de création)</option>
+          <option value="hclust">hiérarchique</option>
+          <option value="seriation">sériation (1re composante)</option>
+        </select>
+        <label>Distance :</label><select id="ssMetric">
+          <option value="euclidean">euclidienne</option>
+          <option value="correlation">corrélation (1 − r)</option>
+          <option value="manhattan">manhattan</option>
+        </select>
+        <label>Liaison :</label><select id="ssLink">
+          <option value="ward">ward</option>
+          <option value="complete">complete</option>
+          <option value="average">average</option>
+          <option value="single">single</option>
+        </select>
+        <label>Tri des lignes :</label><select id="ssSort">
+          <option value="var">variance entre conditions</option>
+          <option value="name">nom</option>
+          <option value="coll">collection puis nom</option>
+        </select>
+        <label>Hauteur de ligne :</label>
+        <input type="number" id="ssRowH" min="6" max="40" step="1" value="14">
+        <label>Étiquettes :</label>
+        <input type="number" id="ssMaxRows" min="10" max="400" step="10" value="120"
+               title="nombre maximum de lignes affichées">
+      </div>
+    </div>
+    <div class="muted" id="ssMsg" style="margin:6px 0"></div>
+    <div class="stack"><canvas id="ssHeat"></canvas></div>
+    <div class="legend" id="ssLegend"></div>
   </div>
 
   <div class="diff-sub" id="diff-sub-outrider">
@@ -1046,14 +1122,14 @@ function deRenderVolcano(){const cv=$("deVolcano"),c=deCurrent();if(!c){fitCanva
   const rows=(c.genes||[]).filter(r=>isFinite(r.log2FoldChange)&&isFinite(r[metric])).map(r=>({row:r,p:Math.max(+r[metric],Number.MIN_VALUE),y:-Math.log10(Math.max(+r[metric],Number.MIN_VALUE))}));
   if(!rows.length){fitCanvas(cv,540,80).fillText("Aucun gène DESeq2 avec log2FC et "+metric+" valides.",12,28);$("deVolcanoLegend").innerHTML="";DEVOL.points=[];return;}
   const maxAbs=Math.max(lfcThr,1,...rows.map(q=>Math.abs(q.row.log2FoldChange))),xLim=Math.ceil(maxAbs*1.08*2)/2;
-  const maxY=Math.max(3,-Math.log10(Math.max(pThr,Number.MIN_VALUE)),...rows.map(q=>q.y)),yLim=Math.ceil(maxY*1.06*2)/2;
+  const fiables=rows.filter(q=>!q.row.suspect&&q.p>Number.MIN_VALUE);const maxY=Math.max(3,-Math.log10(Math.max(pThr,Number.MIN_VALUE)),...(fiables.length?fiables:rows).map(q=>q.y)),yLim=Math.ceil(maxY*1.06*2)/2;
   const W=790,H=530,ML=72,MR=20,MT=26,MB=66,ctx=fitCanvas(cv,W,H),sx=v=>ML+(v+xLim)/(2*xLim)*(W-ML-MR),sy=v=>H-MB-v/yLim*(H-MT-MB);
   const xt=[];for(let i=-4;i<=4;i++)xt.push(i*xLim/4);const yt=[];for(let i=0;i<=5;i++)yt.push(i*yLim/5);deDrawAxis(ctx,ML,H-MB,W-MR,MT,xt,yt,sx,sy);
   const yThr=-Math.log10(Math.max(pThr,Number.MIN_VALUE));ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle="#66747c";ctx.lineWidth=1;
   [lfcThr,-lfcThr].forEach(v=>{ctx.beginPath();ctx.moveTo(sx(v),MT);ctx.lineTo(sx(v),H-MB);ctx.stroke();});ctx.beginPath();ctx.moveTo(ML,sy(yThr));ctx.lineTo(W-MR,sy(yThr));ctx.stroke();ctx.restore();
   const color={up:"#c73c3c",down:"#2676b8",ns:"#9aa4aa"};const projected=[];
   rows.sort((a,b)=>deClass(a.row,metric,pThr,lfcThr)==="ns"?-1:deClass(b.row,metric,pThr,lfcThr)==="ns"?1:0).forEach(q=>{const kind=deClass(q.row,metric,pThr,lfcThr),x=sx(q.row.log2FoldChange),y=sy(Math.min(yLim,q.y));projected.push({x,y,row:q.row,kind,p:q.p});ctx.globalAlpha=opacity;ctx.fillStyle=color[kind];ctx.beginPath();ctx.arc(x,y,kind==="ns"?2.1:2.8,0,7);ctx.fill();});ctx.globalAlpha=1;DEVOL.points=projected;
-  const labelled=projected.filter(q=>q.kind!=="ns").sort((a,b)=>a.p-b.p||Math.abs(b.row.log2FoldChange)-Math.abs(a.row.log2FoldChange)).slice(0,topN);ctx.font="10px ui-sans-serif";labelled.forEach(q=>{ctx.fillStyle=color[q.kind];ctx.textAlign=q.row.log2FoldChange>=0?"left":"right";ctx.fillText(q.row.gene.slice(0,22),q.x+(q.row.log2FoldChange>=0?4:-4),q.y-4);});ctx.textAlign="left";
+  const labelled=projected.filter(q=>q.kind!=="ns"&&!q.row.suspect&&q.p>Number.MIN_VALUE).sort((a,b)=>Math.abs(b.row.log2FoldChange)-Math.abs(a.row.log2FoldChange)||a.p-b.p).slice(0,topN);ctx.font="10px ui-sans-serif";labelled.forEach(q=>{ctx.fillStyle=color[q.kind];ctx.textAlign=q.row.log2FoldChange>=0?"left":"right";ctx.fillText(q.row.gene.slice(0,22),q.x+(q.row.log2FoldChange>=0?4:-4),q.y-4);});ctx.textAlign="left";
   ctx.fillStyle="#33414a";ctx.font="11px ui-sans-serif";ctx.textAlign="center";ctx.fillText("log2 fold change — "+c.label,W/2,H-16);ctx.save();ctx.translate(15,H/2);ctx.rotate(-Math.PI/2);ctx.fillText("−log10("+(metric==="padj"?"padj":"p-value")+")",0,0);ctx.restore();ctx.textAlign="left";
   $("deVolcanoLegend").innerHTML="<b>Volcano DESeq2 · "+esc(c.label)+"</b><div class='muted'>seuil "+(metric==="padj"?"padj":"p-value")+" ≤ "+dePfmt(pThr)+" · |log2FC| ≥ "+lfcThr.toFixed(2)+"</div><div><i class='sw' style='background:#2676b8'></i>downregulated</div><div><i class='sw' style='background:#c73c3c'></i>upregulated</div><div><i class='sw' style='background:#9aa4aa'></i>non significatif</div><div class='muted'>"+rows.length+" gènes · survol = gène · clic = détails</div>";
 }
@@ -1074,13 +1150,474 @@ function deRender(){const c=deCurrent();deSetWarn(c?"":"Aucun résultat DEGSEA d
   const cv=$("deVolcano");cv.onmousemove=e=>{const q=deNearest(e);if(!q){_hideTip();cv.style.cursor="crosshair";return;}cv.style.cursor="pointer";_showTip(e,"gène <b>"+esc(q.row.gene)+"</b>");};cv.onmouseleave=_hideTip;cv.onclick=e=>{const q=deNearest(e);if(q)deShowGene(q,e);};deRender();
 })();
 
+
+/* =========================================================
+   ssGSEA — heatmap dynamique : conditions x pathways
+   =========================================================
+   Aucune donnée nouvelle n'est embarquée : on réutilise
+   DATA.signatures.ssgsea ({names, sources, values}) et DATA.meta.
+   Tout est recalculé côté client à chaque changement de filtre. */
+const SSG = {globals: [], conds: [], colls: [], cells: [], seq: 0, stats: {}, statsKey: null};
+
+function ssData(){return (DATA.signatures&&DATA.signatures.ssgsea)||null;}
+function ssSources(){const d=ssData();if(!d)return {};
+  const by={};d.names.forEach((nm,i)=>{const s=d.sources[i]||"(sans source)";
+    (by[s]=by[s]||[]).push(i);});return by;}
+function ssMetaCols(){return Object.keys(DATA.meta||{}).filter(c=>DATA.metaTypes[c]==="categorical");}
+function ssLevels(col,pool){const seen=new Set(),m=DATA.meta[col]||[];
+  (pool||m.map((_,i)=>i)).forEach(i=>{const v=m[i];if(v!=null)seen.add(String(v));});
+  return [...seen].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));}
+
+/* --- filtres, combinés en ET ---------------------------------------------
+   Les filtres globaux définissent la cohorte de référence : les conditions s'y
+   construisent, et les statistiques de centrage/réduction y sont recalculées.
+   Filtrer sur « Mélanome » donne donc des z-scores AU SEIN des mélanomes, pas
+   relatifs à toute la cohorte — c'est le sens attendu d'un filtre global. */
+function ssPass(filters,i){
+  for(const f of filters){
+    if(!f.col||!f.values.length)continue;              // filtre incomplet = ignoré
+    const v=(DATA.meta[f.col]||[])[i];
+    if(v==null||!f.values.includes(String(v)))return false;}
+  return true;}
+
+function ssGlobalKey(){return JSON.stringify(SSG.globals.map(f=>[f.col,f.values]));}
+function ssGlobalIdx(){const key=ssGlobalKey();
+  if(SSG.statsKey!==key){SSG.statsKey=key;SSG.stats={};SSG._pool=null;}  // cohorte changée -> stats obsolètes
+  if(SSG._pool)return SSG._pool;
+  const out=[];for(let i=0;i<N;i++)if(ssPass(SSG.globals,i))out.push(i);
+  return SSG._pool=out;}
+
+function ssMatch(cond){return ssGlobalIdx().filter(i=>ssPass(cond.filters,i));}
+
+/* --- interface : filtres globaux ---------------------------------------- */
+function ssRenderGlobals(){const host=$("ssGlobals");host.innerHTML="";
+  const pool=ssGlobalIdx();
+  if(!SSG.globals.length){host.innerHTML="<div class='muted' style='margin:4px 0 0 4px'>"
+    +"aucun filtre global — les "+N+" tumeurs du rapport sont utilisées.</div>";return;}
+  const box=document.createElement("div");box.className="stack";box.style.margin="5px 0";
+  let h="<div class='ctl' style='margin:0'><b>cohorte retenue : "+pool.length+" / "+N
+    +" tumeur(s)</b></div>";
+  SSG.globals.forEach((f,gi)=>{
+    h+="<div class='ctl' style='margin:4px 0 0 14px'><label>et</label>"
+      +"<select data-act='gcol' data-gi='"+gi+"'><option value=''>— colonne —</option>"
+      +ssMetaCols().map(c=>"<option value='"+esc(c)+"'"+(c===f.col?" selected":"")+">"
+        +esc(c)+"</option>").join("")+"</select>";
+    if(f.col){h+="<select multiple size='4' data-act='gval' data-gi='"+gi+"'>"
+      +ssLevels(f.col).map(v=>"<option value='"+esc(v)+"'"+(f.values.includes(v)?" selected":"")
+        +">"+esc(v)+"</option>").join("")+"</select>"
+      +"<span class='muted'>"+(f.values.length||0)+" modalité(s) conservée(s)</span>";}
+    h+="<button class='mini' data-act='delg' data-gi='"+gi+"'>×</button></div>";});
+  box.innerHTML=h;host.appendChild(box);
+  if(!pool.length){host.innerHTML+="<div class='warn on'>Aucune tumeur ne passe les filtres "
+    +"globaux — la heatmap est vide.</div>";}}
+
+/* --- interface : conditions --------------------------------------------- */
+function ssRenderConds(){const host=$("ssConds");host.innerHTML="";
+  SSG.conds.forEach((cond,ci)=>{
+    const box=document.createElement("div");box.className="stack";box.style.margin="5px 0";
+    const n=ssMatch(cond).length;
+    let h="<div class='ctl' style='margin:0'><b>"+esc(cond.name)+"</b>"
+      +"<span class='muted'>"+n+" tumeur(s)</span>"
+      +"<button class='mini' data-act='addf' data-ci='"+ci+"'>+ filtrer par</button>"
+      +"<button class='mini' data-act='delc' data-ci='"+ci+"'>supprimer</button></div>";
+    cond.filters.forEach((f,fi)=>{
+      h+="<div class='ctl' style='margin:4px 0 0 14px'><label>et</label><select data-act='fcol' data-ci='"
+        +ci+"' data-fi='"+fi+"'><option value=''>— colonne —</option>"
+        +ssMetaCols().map(c=>"<option value='"+esc(c)+"'"+(c===f.col?" selected":"")+">"+esc(c)+"</option>").join("")
+        +"</select>";
+      if(f.col){h+="<select multiple size='4' data-act='fval' data-ci='"+ci+"' data-fi='"+fi+"'>"
+        +ssLevels(f.col,ssGlobalIdx()).map(v=>"<option value='"+esc(v)+"'"+(f.values.includes(v)?" selected":"")+">"+esc(v)+"</option>").join("")
+        +"</select><span class='muted'>"+(f.values.length||0)+" modalité(s)</span>";}
+      h+="<button class='mini' data-act='delf' data-ci='"+ci+"' data-fi='"+fi+"'>×</button></div>";});
+    box.innerHTML=h;host.appendChild(box);});
+  ssCheckOverlap();}
+
+/* Un même échantillon peut légitimement appartenir à plusieurs conditions
+   (filtres non exclusifs). On le signale sans jamais bloquer. */
+function ssCheckOverlap(){const cnt=new Map();
+  SSG.conds.forEach(c=>ssMatch(c).forEach(i=>cnt.set(i,(cnt.get(i)||0)+1)));
+  const dup=[...cnt.entries()].filter(([,v])=>v>1).map(([i])=>SAMPLES[i]);
+  const e=$("ssOverlap");
+  if(dup.length){e.className="warn on";
+    e.innerHTML="<b>"+dup.length+" tumeur(s) appartiennent à plusieurs conditions</b> — "
+      +"leurs scores sont comptés dans chacune. Informatif, pas bloquant. "
+      +"<span class='muted'>"+dup.slice(0,12).map(esc).join(", ")
+      +(dup.length>12?" … (+"+(dup.length-12)+")":"")+"</span>";}
+  else{e.className="warn";e.textContent="";}}
+
+/* --- interface : collections et pathways -------------------------------- */
+function ssRenderColls(){const host=$("ssColls");host.innerHTML="";const by=ssSources();
+  SSG.colls.forEach((coll,ki)=>{
+    const idx=by[coll.name]||[];const chosen=ssCollRows(coll).length;
+    const box=document.createElement("div");box.className="stack";box.style.margin="5px 0";
+    let h="<div class='ctl' style='margin:0'><select data-act='cname' data-ki='"+ki+"'>"
+      +Object.keys(by).sort().map(s=>"<option value='"+esc(s)+"'"+(s===coll.name?" selected":"")+">"
+        +esc(s)+" ("+by[s].length+")</option>").join("")+"</select>"
+      +"<label>Sélection :</label><select data-act='cmode' data-ki='"+ki+"'>"
+      +"<option value='auto'"+(coll.mode==="auto"?" selected":"")+">par score d'enrichissement</option>"
+      +"<option value='manual'"+(coll.mode==="manual"?" selected":"")+">manuelle</option></select>";
+    if(coll.mode==="auto"){
+      h+="<label>|score moyen| ≥</label><input type='number' step='0.01' min='0' "
+        +"data-act='cthr' data-ki='"+ki+"' value='"+coll.thr+"'>"
+        +"<label>max lignes :</label><input type='number' min='1' step='5' "
+        +"data-act='ctop' data-ki='"+ki+"' value='"+coll.top+"'>";}
+    h+="<span class='muted'>"+chosen+" / "+idx.length+" pathway(s)</span>"
+      +"<button class='mini' data-act='delk' data-ki='"+ki+"'>supprimer</button></div>";
+    if(coll.mode==="manual"){
+      h+="<div class='ctl' style='margin:4px 0 0 14px'><label>Rechercher :</label>"
+        +"<input type='text' data-act='csearch' data-ki='"+ki+"' value='"+esc(coll.search||"")
+        +"' placeholder='filtrer la liste…'>";
+      const rx=(coll.search||"").toLowerCase();
+      const opts=idx.filter(i=>!rx||ssData().names[i].toLowerCase().includes(rx));
+      h+="<select multiple size='8' data-act='cpick' data-ki='"+ki+"'>"
+        +opts.map(i=>"<option value='"+i+"'"+(coll.picked.includes(i)?" selected":"")+">"
+          +esc(ssData().names[i])+"</option>").join("")+"</select>"
+        +"<span class='muted'>"+opts.length+" affiché(s) · Ctrl/⇧ pour multi-sélection</span></div>";}
+    box.innerHTML=h;host.appendChild(box);});}
+
+/* Lignes retenues d'une collection : manuellement, ou par amplitude du score
+   moyen sur les conditions définies (à défaut, sur toutes les tumeurs). */
+function ssCollRows(coll){const by=ssSources();const idx=by[coll.name]||[];
+  if(coll.mode==="manual")return coll.picked.filter(i=>idx.includes(i));
+  const groups=SSG.conds.map(c=>ssMatch(c)).filter(g=>g.length);
+  const scored=idx.map(i=>{const m=groups.length
+      ? groups.map(g=>ssMean(i,g,true)).filter(v=>v!=null)
+      : [ssMean(i,ssGlobalIdx(),true)];
+    const a=m.length?Math.max(...m.map(Math.abs)):0;return {i,a};})
+    .filter(o=>o.a>=coll.thr).sort((x,y)=>y.a-x.a).slice(0,coll.top);
+  return scored.map(o=>o.i);}
+
+/* Statistiques par pathway, calculées UNE FOIS sur TOUS les échantillons et
+   mises en cache. C'est le point central de la correction : on normalise au
+   niveau des ÉCHANTILLONS puis on moyenne par condition — et non l'inverse.
+   Moyenner d'abord puis standardiser sur les colonnes est dégénéré : centrer
+   et réduire deux conditions redonne toujours exactement -1 et +1, quelle que
+   soit l'amplitude réelle (l'écart se simplifie entre numérateur et
+   dénominateur). Calculées sur toute la cohorte, ces statistiques ne dépendent
+   pas des conditions définies : ajouter ou retirer une condition ne change pas
+   la couleur des autres colonnes. */
+function ssStats(row){
+  if(SSG.stats[row])return SSG.stats[row];
+  const v=ssData().values[row], ok=[];
+  for(const i of ssGlobalIdx()){const x=v[i];if(x!=null&&isFinite(x))ok.push(x);}
+  const m=ok.length?ok.reduce((a,b)=>a+b,0)/ok.length:0;
+  const sd=ok.length>1?Math.sqrt(ok.reduce((a,b)=>a+(b-m)*(b-m),0)/ok.length):0;
+  return SSG.stats[row]={m, sd:sd||1, sorted:ok.slice().sort((a,b)=>a-b)};}
+
+/* Rang du score parmi tous les échantillons, ramené sur [-0.5, +0.5] pour que
+   0 soit la médiane de la cohorte et que l'échelle divergente reste centrée. */
+function ssRank(row,x){const s=ssStats(row).sorted;if(s.length<2)return 0;
+  let lo=0,hi=s.length;
+  while(lo<hi){const mid=(lo+hi)>>1;if(s[mid]<x)lo=mid+1;else hi=mid;}
+  return lo/(s.length-1)-0.5;}
+
+/* Les quatre combinaisons {centrer oui/non} x {réduire oui/non}, plus deux
+   variantes. Toutes s'appliquent AVANT l'agrégation, sauf `relcond` qui est
+   par nature un recentrage sur les colonnes affichées (traité dans ssMatrix). */
+function ssTransform(row,x){
+  if(x==null||!isFinite(x))return null;
+  const s=ssStats(row);
+  switch($("ssScale").value){
+    case "center": return x-s.m;              // centré, non réduit
+    case "scale":  return x/s.sd;             // réduit, non centré
+    case "z":      return (x-s.m)/s.sd;       // centré puis réduit
+    case "rank":   return ssRank(row,x);      // rang, robuste aux extrêmes
+    default:       return x;                  // "raw" et "relcond"
+  }}
+
+function ssMean(row,idxs,transform){const v=ssData().values[row];let s=0,n=0;
+  for(const i of idxs){let x=v[i];
+    if(transform)x=ssTransform(row,x);
+    if(x!=null&&isFinite(x)){s+=x;n++;}}
+  return n?s/n:null;}
+
+/* --- réordonnancement : classification hiérarchique ou sériation ----------
+   Tout se fait côté client, sur la matrice affichée. Les lignes sont déjà
+   plafonnées par `ssMaxRows` avant d'arriver ici : la CAH naïve est en O(n^3),
+   soit ~21 M d'opérations à 400 lignes — acceptable, mais c'est la raison pour
+   laquelle le plafond existe. */
+function ssVecDist(a,b,metric){
+  let n=0,s=0,sa=0,sb=0,saa=0,sbb=0,sab=0,mx=0;
+  for(let k=0;k<a.length;k++){
+    const x=a[k],y=b[k];
+    if(x==null||y==null||!isFinite(x)||!isFinite(y))continue;   // paires complètes
+    n++;const d=x-y;s+=d*d;mx+=Math.abs(d);
+    sa+=x;sb+=y;saa+=x*x;sbb+=y*y;sab+=x*y;}
+  if(!n)return 0;
+  if(metric==="manhattan")return mx/n*a.length;
+  if(metric==="correlation"){
+    const num=sab-sa*sb/n, da=Math.sqrt(Math.max(saa-sa*sa/n,0)), db=Math.sqrt(Math.max(sbb-sb*sb/n,0));
+    if(da<=0||db<=0)return 1;                                   // vecteur constant
+    return 1-num/(da*db);}
+  return Math.sqrt(s/n*a.length);}
+
+function ssDistMatrix(V,metric){const n=V.length,D=new Float64Array(n*n);
+  for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){
+    const d=ssVecDist(V[i],V[j],metric);D[i*n+j]=D[j*n+i]=d;}
+  return D;}
+
+/* Agglomération par la formule de Lance-Williams. Ward opère sur des distances
+   AU CARRÉ : c'est ce qui rend son critère équivalent à la minimisation de
+   l'inertie intra-classe. */
+function ssLinkage(D0,n,method){
+  const M=2*n-1, d=new Float64Array(M*M), size=new Int32Array(M).fill(0),
+        act=new Uint8Array(M), kids=new Array(M).fill(null);
+  const sq=method==="ward";
+  for(let i=0;i<n;i++){act[i]=1;size[i]=1;
+    for(let j=0;j<n;j++)d[i*M+j]=sq?D0[i*n+j]*D0[i*n+j]:D0[i*n+j];}
+  for(let step=0;step<n-1;step++){
+    let bi=-1,bj=-1,best=Infinity;
+    for(let i=0;i<M;i++){if(!act[i])continue;
+      for(let j=i+1;j<M;j++){if(!act[j])continue;
+        const v=d[i*M+j];if(v<best){best=v;bi=i;bj=j;}}}
+    if(bi<0)break;
+    const nk=n+step, ni=size[bi], nj=size[bj];
+    for(let k=0;k<M;k++){
+      if(!act[k]||k===bi||k===bj)continue;
+      const dik=d[bi*M+k], djk=d[bj*M+k], dij=best, nkk=size[k];
+      let v;
+      if(method==="single")        v=Math.min(dik,djk);
+      else if(method==="complete") v=Math.max(dik,djk);
+      else if(method==="average")  v=(ni*dik+nj*djk)/(ni+nj);
+      else /* ward */              v=((ni+nkk)*dik+(nj+nkk)*djk-nkk*dij)/(ni+nj+nkk);
+      d[nk*M+k]=d[k*M+nk]=v;}
+    act[bi]=act[bj]=0;act[nk]=1;size[nk]=ni+nj;kids[nk]=[bi,bj];}
+  return {kids, root:M-1};}
+
+/* Ordre des feuilles. À chaque fusion on oriente les deux sous-arbres pour que
+   les feuilles mises côte à côte soient les plus proches : c'est bien moins
+   coûteux qu'un optimal leaf ordering et suffit à rendre la heatmap lisible. */
+function ssLeafOrder(kids,root,n,D0){
+  const rec=node=>{
+    if(node<n)return [node];
+    const [a,b]=kids[node];
+    if(a==null||b==null)return [node];
+    const L=rec(a),R=rec(b);
+    const dd=(p,q)=>D0[p*n+q];
+    const opts=[[L,R],[L.slice().reverse(),R],[L,R.slice().reverse()],
+                [L.slice().reverse(),R.slice().reverse()]];
+    let best=null,bv=Infinity;
+    for(const [l,r] of opts){const v=dd(l[l.length-1],r[0]);if(v<bv){bv=v;best=[l,r];}}
+    return best[0].concat(best[1]);};
+  return rec(root);}
+
+/* Sériation : projection sur la première composante principale, obtenue par
+   itération de la puissance sur la matrice centrée. O(n x p) par itération,
+   donc utilisable là où la CAH devient lourde. */
+function ssSeriate(V){
+  const n=V.length;if(n<3)return V.map((_,i)=>i);
+  const p=V[0].length, X=V.map(r=>r.map(x=>(x==null||!isFinite(x))?0:x));
+  const mean=new Float64Array(p);
+  for(const r of X)for(let k=0;k<p;k++)mean[k]+=r[k]/n;
+  for(const r of X)for(let k=0;k<p;k++)r[k]-=mean[k];
+  let v=new Float64Array(p).fill(1/Math.sqrt(p));
+  for(let it=0;it<40;it++){
+    const proj=X.map(r=>{let s=0;for(let k=0;k<p;k++)s+=r[k]*v[k];return s;});
+    const w=new Float64Array(p);
+    X.forEach((r,i)=>{for(let k=0;k<p;k++)w[k]+=r[k]*proj[i];});
+    let nrm=0;for(let k=0;k<p;k++)nrm+=w[k]*w[k];
+    nrm=Math.sqrt(nrm);if(!isFinite(nrm)||nrm<=0)break;
+    for(let k=0;k<p;k++)v[k]=w[k]/nrm;}
+  const score=X.map(r=>{let s=0;for(let k=0;k<p;k++)s+=r[k]*v[k];return s;});
+  return score.map((s,i)=>[s,i]).sort((a,b)=>a[0]-b[0]).map(o=>o[1]);}
+
+/* Renvoie l'ordre à appliquer aux vecteurs `V` (identité si pas de clustering). */
+function ssOrderOf(V,mode){
+  const n=V.length;
+  if(mode==="none"||n<3)return V.map((_,i)=>i);
+  if(mode==="seriation")return ssSeriate(V);
+  const metric=$("ssMetric").value, method=$("ssLink").value;
+  const D0=ssDistMatrix(V,metric);
+  const {kids,root}=ssLinkage(D0,n,method);
+  return ssLeafOrder(kids,root,n,D0);}
+
+/* --- construction de la matrice affichée -------------------------------- */
+function ssMatrix(){
+  const conds=SSG.conds.map(c=>({name:c.name,idx:ssMatch(c)})).filter(c=>c.idx.length);
+  let rows=[];SSG.colls.forEach(k=>ssCollRows(k).forEach(i=>rows.push({i,coll:k.name})));
+  const seen=new Set();rows=rows.filter(r=>{const k=r.i+"|"+r.coll;
+    if(seen.has(k))return false;seen.add(k);return true;});
+  const raw=rows.map(r=>conds.map(c=>ssMean(r.i,c.idx)));
+  let vals=rows.map(r=>conds.map(c=>ssMean(r.i,c.idx,true)));
+  if($("ssScale").value==="relcond"){
+    // Seul mode recentré APRÈS agrégation : « écart à la moyenne des colonnes
+    // affichées ». Il répond à une autre question que `center` (écart à la
+    // cohorte entière) et reste lisible à deux conditions, car il conserve
+    // l'amplitude : on obtient +d/2 et -d/2, pas +1 et -1.
+    vals=vals.map(r=>{const v=r.filter(x=>x!=null);
+      if(!v.length)return r;
+      const m=v.reduce((a,b)=>a+b,0)/v.length;
+      return r.map(x=>x==null?null:x-m);});}
+  const sort=$("ssClustRows").value!=="none"?"var":$("ssSort").value;
+  const names=ssData().names;
+  const order=rows.map((r,j)=>j);
+  const variance=j=>{const v=vals[j].filter(x=>x!=null);if(v.length<2)return 0;
+    const m=v.reduce((a,b)=>a+b,0)/v.length;
+    return v.reduce((a,b)=>a+(b-m)*(b-m),0)/v.length;};
+  if(sort==="var")order.sort((a,b)=>variance(b)-variance(a));
+  else if(sort==="name")order.sort((a,b)=>names[rows[a].i].localeCompare(names[rows[b].i]));
+  else order.sort((a,b)=>rows[a].coll.localeCompare(rows[b].coll)
+    ||names[rows[a].i].localeCompare(names[rows[b].i]));
+  const cap=Math.max(1,+$("ssMaxRows").value||120);
+  const keep=order.slice(0,cap);
+  let R=keep.map(j=>rows[j]), RAW=keep.map(j=>raw[j]), V=keep.map(j=>vals[j]);
+
+  // Le clustering vient APRÈS le plafond : il ordonne ce qui sera affiché, et
+  // ne paie donc jamais le coût des lignes écartées.
+  const ro=ssOrderOf(V,$("ssClustRows").value);
+  R=ro.map(i=>R[i]);RAW=ro.map(i=>RAW[i]);V=ro.map(i=>V[i]);
+  // Colonnes : on classe la TRANSPOSÉE, chaque condition étant décrite par son
+  // profil sur les pathways affichés.
+  let C=conds;
+  const co=ssOrderOf(V.length?V[0].map((_,k)=>V.map(r=>r[k])):[], $("ssClustCols").value);
+  if(co.length===C.length&&co.some((v,i)=>v!==i)){
+    C=co.map(i=>C[i]);RAW=RAW.map(r=>co.map(i=>r[i]));V=V.map(r=>co.map(i=>r[i]));}
+  return {conds:C, rows:R, raw:RAW, vals:V, truncated:order.length-keep.length};}
+
+/* Mise à l'échelle : le z-score par ligne est le défaut, parce qu'un score
+   ssGSEA brut varie surtout d'un pathway à l'autre — sans normalisation, la
+   heatmap montre la taille des gene sets, pas le contraste entre conditions. */
+function ssColor(v,lim){if(v==null)return "#eef2f4";
+  const t=Math.max(-1,Math.min(1,v/(lim||1)));
+  const c=t>=0?[199,60,60]:[38,118,184],a=Math.abs(t);
+  return "rgb("+Math.round(255+(c[0]-255)*a)+","+Math.round(255+(c[1]-255)*a)+","
+    +Math.round(255+(c[2]-255)*a)+")";}
+
+/* --- dessin -------------------------------------------------------------- */
+function ssRender(){
+  const d=ssData();
+  if(!d){$("ssWarn").className="warn on";
+    $("ssWarn").textContent="Aucun score ssGSEA dans ce rapport. Active compute_signatures et renseigne signature_sources, puis relance le pipeline.";
+    $("ssCtl").style.display="none";return;}
+  ssRenderGlobals();ssRenderConds();ssRenderColls();
+  const M=ssMatrix(), cv=$("ssHeat"), rowH=Math.max(6,+$("ssRowH").value||14);
+  if(!M.conds.length||!M.rows.length){
+    fitCanvas(cv,760,60).fillText(
+      !M.conds.length?"Ajoute au moins une condition (colonne).":"Ajoute au moins une collection et des pathways (lignes).",12,30);
+    $("ssLegend").innerHTML="";$("ssMsg").textContent="";SSG.cells=[];return;}
+
+  const vals=M.vals;
+  const flat=vals.flat().filter(x=>x!=null&&isFinite(x));
+  const lim=flat.length?Math.max(...flat.map(Math.abs))||1:1;
+  const LMs=280, TOP=86, cw=Math.max(26,Math.min(120,(760-LMs)/M.conds.length));
+  const W=LMs+cw*M.conds.length+16, H=TOP+rowH*M.rows.length+14;
+  const ctx=fitCanvas(cv,W,H);
+  ctx.font="11px "+getComputedStyle(document.body).fontFamily;
+
+  SSG.cells=[];
+  M.rows.forEach((r,j)=>{const y=TOP+j*rowH;
+    vals[j].forEach((v,i)=>{const x=LMs+i*cw;
+      ctx.fillStyle=ssColor(v,lim);ctx.fillRect(x,y,cw-1,rowH-1);
+      SSG.cells.push({x,y,w:cw-1,h:rowH-1,row:r,ci:i,v,raw:M.raw[j][i]});});
+    if(rowH>=9){ctx.fillStyle="#33414a";ctx.textAlign="right";ctx.textBaseline="middle";
+      let nm=ssData().names[r.i];if(nm.length>44)nm=nm.slice(0,43)+"…";
+      ctx.fillText(nm,LMs-6,y+rowH/2);}});
+
+  ctx.save();ctx.textAlign="left";ctx.textBaseline="middle";ctx.fillStyle="#33414a";
+  M.conds.forEach((c,i)=>{ctx.save();ctx.translate(LMs+i*cw+cw/2+4,TOP-8);ctx.rotate(-Math.PI/3);
+    ctx.fillText(c.name+" (n="+c.idx.length+")",0,0);ctx.restore();});
+  ctx.restore();
+
+  const modeTxt={raw:"moyenne des scores bruts",
+    center:"moyenne des scores centrés sur la cohorte",
+    scale:"moyenne des scores réduits (sans centrage)",
+    z:"moyenne des z-scores (centrés puis réduits)",
+    rank:"moyenne des rangs dans la cohorte (0 = médiane)",
+    relcond:"écart à la moyenne des conditions affichées"}[$("ssScale").value];
+  $("ssLegend").innerHTML="<b>Heatmap ssGSEA</b><div class='muted'>"+modeTxt
+    +" · échelle ±"+lim.toFixed(2)+"</div>"
+    +"<div><i class='sw' style='background:"+ssColor(-lim,lim)+"'></i>bas</div>"
+    +"<div><i class='sw' style='background:#ffffff;border:1px solid #dbe3e6'></i>moyen</div>"
+    +"<div><i class='sw' style='background:"+ssColor(lim,lim)+"'></i>haut</div>"
+    +"<div class='muted'>"+M.rows.length+" pathway(s) x "+M.conds.length+" condition(s)"
+    +((()=>{const r=$("ssClustRows").value,c=$("ssClustCols").value;
+      if(r==="none"&&c==="none")return "";
+      const how=(m)=>m==="seriation"?"sériation":($("ssLink").value+" / "+$("ssMetric").value);
+      return " · clustering "+[r!=="none"?"lignes ("+how(r)+")":"",
+        c!=="none"?"colonnes ("+how(c)+")":""].filter(Boolean).join(", ");})())
+    +(M.truncated>0?" · "+M.truncated+" ligne(s) masquée(s) par le plafond d'affichage":"")+"</div>";
+  $("ssMsg").textContent="";
+  cv.onmousemove=e=>{const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+    const c=SSG.cells.find(q=>mx>=q.x&&mx<=q.x+q.w&&my>=q.y&&my<=q.y+q.h);
+    if(!c){_hideTip();cv.style.cursor="default";return;}
+    cv.style.cursor="pointer";
+    _showTip(e,"<b>"+esc(ssData().names[c.row.i])+"</b><div class='muted'>"+esc(c.row.coll)+"</div>"
+      +"<div class='row'><span>"+esc(M.conds[c.ci].name)+"</span><b>"
+      +(c.raw==null?"—":(+c.raw).toFixed(3))+"</b></div>"
+      +"<div class='row'><span>"+esc(modeTxt)+"</span><b>"
+      +(c.v==null?"—":(+c.v).toFixed(3))+"</b></div>",260);};
+  cv.onmouseleave=_hideTip;}
+
+/* --- câblage ------------------------------------------------------------- */
+(function initSsgsea(){
+  const d=ssData();
+  if(!d){ssRender();return;}
+  const sources=Object.keys(ssSources()).sort();
+  $("ssAddGlobal").onclick=()=>{SSG.globals.push({col:"",values:[]});SSG._pool=null;ssRender();};
+  $("ssGlobals").addEventListener("change",e=>{const t=e.target,gi=+t.dataset.gi;
+    if(t.dataset.act==="gcol"){SSG.globals[gi].col=t.value;SSG.globals[gi].values=[];}
+    else if(t.dataset.act==="gval"){SSG.globals[gi].values=[...t.selectedOptions].map(o=>o.value);}
+    else return;
+    SSG._pool=null;ssRender();});
+  $("ssGlobals").addEventListener("click",e=>{if(e.target.dataset.act==="delg"){
+    SSG.globals.splice(+e.target.dataset.gi,1);SSG._pool=null;ssRender();}});
+  $("ssAddCond").onclick=()=>{SSG.conds.push({name:"Condition "+(++SSG.seq),filters:[]});ssRender();};
+  $("ssAddColl").onclick=()=>{if(!sources.length)return;
+    SSG.colls.push({name:sources[0],mode:"auto",thr:0,top:25,picked:[],search:""});ssRender();};
+  ["ssScale","ssSort","ssRowH","ssMaxRows","ssClustRows","ssClustCols",
+   "ssMetric","ssLink"].forEach(id=>{
+    $(id).onchange=ssRender;$(id).oninput=ssRender;});
+
+  // délégation : le contenu des deux panneaux est reconstruit à chaque rendu
+  $("ssConds").addEventListener("change",e=>{const t=e.target,ci=+t.dataset.ci,fi=+t.dataset.fi;
+    if(t.dataset.act==="fcol"){SSG.conds[ci].filters[fi].col=t.value;
+      SSG.conds[ci].filters[fi].values=[];ssRender();}
+    else if(t.dataset.act==="fval"){SSG.conds[ci].filters[fi].values=[...t.selectedOptions].map(o=>o.value);ssRender();}});
+  $("ssConds").addEventListener("click",e=>{const t=e.target,ci=+t.dataset.ci,fi=+t.dataset.fi;
+    if(t.dataset.act==="addf"){SSG.conds[ci].filters.push({col:"",values:[]});ssRender();}
+    else if(t.dataset.act==="delf"){SSG.conds[ci].filters.splice(fi,1);ssRender();}
+    else if(t.dataset.act==="delc"){SSG.conds.splice(ci,1);ssRender();}});
+
+  $("ssColls").addEventListener("change",e=>{const t=e.target,ki=+t.dataset.ki,a=t.dataset.act;
+    if(a==="cname"){SSG.colls[ki].name=t.value;SSG.colls[ki].picked=[];ssRender();}
+    else if(a==="cmode"){SSG.colls[ki].mode=t.value;ssRender();}
+    else if(a==="cthr"){SSG.colls[ki].thr=+t.value||0;ssRender();}
+    else if(a==="ctop"){SSG.colls[ki].top=Math.max(1,+t.value||25);ssRender();}
+    else if(a==="cpick"){SSG.colls[ki].picked=[...t.selectedOptions].map(o=>+o.value);ssRender();}});
+  $("ssColls").addEventListener("input",e=>{const t=e.target;
+    if(t.dataset.act==="csearch"){SSG.colls[+t.dataset.ki].search=t.value;
+      const at=document.activeElement===t;ssRender();
+      if(at){const nx=$("ssColls").querySelector("[data-act='csearch'][data-ki='"+t.dataset.ki+"']");
+        if(nx){nx.focus();nx.setSelectionRange(nx.value.length,nx.value.length);}}}});
+  $("ssColls").addEventListener("click",e=>{const t=e.target;
+    if(t.dataset.act==="delk"){SSG.colls.splice(+t.dataset.ki,1);ssRender();}});
+
+  // un état de départ utilisable : une condition vide et la première collection
+  SSG.conds.push({name:"Condition "+(++SSG.seq),filters:[]});
+  if(sources.length)SSG.colls.push({name:sources[0],mode:"auto",thr:0,top:25,picked:[],search:""});
+  ssRender();
+})();
+
 /* =========================================================
    DEGSEA clinique — même interface volcano / GSEA, par design
    ========================================================= */
 const CDEVOL={points:[]};
 function cdeDetails(){return DATA.clinicalDegseaDetail||{};}
 function cdeSetWarn(msg){const e=$("cdeWarn");e.className=msg?"warn on":"warn";e.textContent=msg||"";}
-function cdeCurrent(){return cdeDetails()[$("cdeExperiment").value]||null;}
+/* Trois niveaux : colonne de filtrage -> modalité -> design. La strate non
+   filtrée porte la clé "ALL" et reste toujours en tête des deux premiers menus. */
+function cdeStrata(){return cdeDetails()[$("cdeGroupCol").value]||{};}
+function cdeExperiments(){return cdeStrata()[$("cdeGroupValue").value]||{};}
+function cdeCurrent(){return cdeExperiments()[$("cdeExperiment").value]||null;}
+function cdeSortKeys(obj){return Object.keys(obj||{}).sort((a,b)=>
+  a==="ALL"?-1:b==="ALL"?1:a.localeCompare(b,undefined,{numeric:true}));}
+function cdeFill(sel,keys,labelOf){const old=sel.value;sel.innerHTML="";
+  keys.forEach(k=>{const o=document.createElement("option");o.value=k;
+    o.textContent=labelOf?labelOf(k):(k==="ALL"?"toute la cohorte":k);sel.appendChild(o);});
+  if(old&&keys.includes(old))sel.value=old;sel.disabled=keys.length<2;}
+function cdeFillGroupValues(){cdeFill($("cdeGroupValue"),cdeSortKeys(cdeStrata()));cdeFillExperiments();}
+function cdeFillExperiments(){const d=cdeExperiments();
+  cdeFill($("cdeExperiment"),cdeSortKeys(d),k=>(d[k]&&d[k].label)||k);cdeFillCollections();}
 function cdeFillCollections(){const sel=$("cdeCollection"),old=sel.value,c=cdeCurrent();sel.innerHTML="";
   Object.keys((c&&c.gsea)||{}).sort((a,b)=>a.localeCompare(b)).forEach(name=>{const o=document.createElement("option");o.value=name;o.textContent=name;sel.appendChild(o);});
   if(old&&[...sel.options].some(o=>o.value===old))sel.value=old;sel.disabled=!sel.options.length;}
@@ -1089,16 +1626,22 @@ function cdeRenderVolcano(){const cv=$("cdeVolcano"),c=cdeCurrent();if(!c){fitCa
   const rows=(c.genes||[]).filter(r=>isFinite(r.log2FoldChange)&&isFinite(r[metric])).map(r=>({row:r,p:Math.max(+r[metric],Number.MIN_VALUE),y:-Math.log10(Math.max(+r[metric],Number.MIN_VALUE))}));
   if(!rows.length){fitCanvas(cv,540,80).fillText("Aucun gène DESeq2 avec log2FC et "+metric+" valides.",12,28);$("cdeVolcanoLegend").innerHTML="";CDEVOL.points=[];return;}
   const maxAbs=Math.max(lfcThr,1,...rows.map(q=>Math.abs(q.row.log2FoldChange))),xLim=Math.ceil(maxAbs*1.08*2)/2;
-  const maxY=Math.max(3,-Math.log10(Math.max(pThr,Number.MIN_VALUE)),...rows.map(q=>q.y)),yLim=Math.ceil(maxY*1.06*2)/2;
+  const fiables=rows.filter(q=>!q.row.suspect&&q.p>Number.MIN_VALUE);const maxY=Math.max(3,-Math.log10(Math.max(pThr,Number.MIN_VALUE)),...(fiables.length?fiables:rows).map(q=>q.y)),yLim=Math.ceil(maxY*1.06*2)/2;
   const W=790,H=530,ML=72,MR=20,MT=26,MB=66,ctx=fitCanvas(cv,W,H),sx=v=>ML+(v+xLim)/(2*xLim)*(W-ML-MR),sy=v=>H-MB-v/yLim*(H-MT-MB);
   const xt=[];for(let i=-4;i<=4;i++)xt.push(i*xLim/4);const yt=[];for(let i=0;i<=5;i++)yt.push(i*yLim/5);deDrawAxis(ctx,ML,H-MB,W-MR,MT,xt,yt,sx,sy);
   const yThr=-Math.log10(Math.max(pThr,Number.MIN_VALUE));ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle="#66747c";ctx.lineWidth=1;
   [lfcThr,-lfcThr].forEach(v=>{ctx.beginPath();ctx.moveTo(sx(v),MT);ctx.lineTo(sx(v),H-MB);ctx.stroke();});ctx.beginPath();ctx.moveTo(ML,sy(yThr));ctx.lineTo(W-MR,sy(yThr));ctx.stroke();ctx.restore();
   const color={up:"#c73c3c",down:"#2676b8",ns:"#9aa4aa"},projected=[];
   rows.sort((a,b)=>deClass(a.row,metric,pThr,lfcThr)==="ns"?-1:deClass(b.row,metric,pThr,lfcThr)==="ns"?1:0).forEach(q=>{const kind=deClass(q.row,metric,pThr,lfcThr),x=sx(q.row.log2FoldChange),y=sy(Math.min(yLim,q.y));projected.push({x,y,row:q.row,kind,p:q.p});ctx.globalAlpha=opacity;ctx.fillStyle=color[kind];ctx.beginPath();ctx.arc(x,y,kind==="ns"?2.1:2.8,0,7);ctx.fill();});ctx.globalAlpha=1;CDEVOL.points=projected;
-  const labelled=projected.filter(q=>q.kind!=="ns").sort((a,b)=>a.p-b.p||Math.abs(b.row.log2FoldChange)-Math.abs(a.row.log2FoldChange)).slice(0,topN);ctx.font="10px ui-sans-serif";labelled.forEach(q=>{ctx.fillStyle=color[q.kind];ctx.textAlign=q.row.log2FoldChange>=0?"left":"right";ctx.fillText(q.row.gene.slice(0,22),q.x+(q.row.log2FoldChange>=0?4:-4),q.y-4);});ctx.textAlign="left";
+  const labelled=projected.filter(q=>q.kind!=="ns"&&!q.row.suspect&&q.p>Number.MIN_VALUE).sort((a,b)=>Math.abs(b.row.log2FoldChange)-Math.abs(a.row.log2FoldChange)||a.p-b.p).slice(0,topN);ctx.font="10px ui-sans-serif";labelled.forEach(q=>{ctx.fillStyle=color[q.kind];ctx.textAlign=q.row.log2FoldChange>=0?"left":"right";ctx.fillText(q.row.gene.slice(0,22),q.x+(q.row.log2FoldChange>=0?4:-4),q.y-4);});ctx.textAlign="left";
   ctx.fillStyle="#33414a";ctx.font="11px ui-sans-serif";ctx.textAlign="center";ctx.fillText("log2 fold change — "+c.label,W/2,H-16);ctx.save();ctx.translate(15,H/2);ctx.rotate(-Math.PI/2);ctx.fillText("−log10("+(metric==="padj"?"padj":"p-value")+")",0,0);ctx.restore();ctx.textAlign="left";
-  $("cdeVolcanoLegend").innerHTML="<b>Volcano DESeq2 · "+esc(c.label)+"</b><div class='muted'>seuil "+(metric==="padj"?"padj":"p-value")+" ≤ "+dePfmt(pThr)+" · |log2FC| ≥ "+lfcThr.toFixed(2)+"</div><div><i class='sw' style='background:#2676b8'></i>downregulated</div><div><i class='sw' style='background:#c73c3c'></i>upregulated</div><div><i class='sw' style='background:#9aa4aa'></i>non significatif</div><div class='muted'>"+rows.length+" gènes · survol = gène · clic = détails</div>";
+  const cdeStrate=(c.groupCol&&c.groupCol!=="ALL")?esc(c.groupCol)+" = "+esc(c.modality):"toute la cohorte";
+  const cdeEff=c.nSamples==null?"":" · n = "+c.nSamples+((c.nTest!=null&&c.nControl!=null)?" ("+c.nTest+" vs "+c.nControl+")":"");
+  // La formule ajustée peut être réduite sur cette strate : le signaler, sinon
+  // deux volcanos non comparables se ressemblent.
+  const cdeForm=c.designUsed?"<div class='muted'>ajusté sur <code>"+esc(c.designUsed)+"</code>"
+    +(c.droppedTerms?" · <b>termes écartés ici :</b> "+esc(c.droppedTerms):"")+"</div>":"";
+  $("cdeVolcanoLegend").innerHTML="<b>Volcano DESeq2 · "+esc(c.label)+"</b><div class='muted'>"+cdeStrate+cdeEff+"</div>"+cdeForm+"<div class='muted'>seuil "+(metric==="padj"?"padj":"p-value")+" ≤ "+dePfmt(pThr)+" · |log2FC| ≥ "+lfcThr.toFixed(2)+"</div><div><i class='sw' style='background:#2676b8'></i>downregulated</div><div><i class='sw' style='background:#c73c3c'></i>upregulated</div><div><i class='sw' style='background:#9aa4aa'></i>non significatif</div><div class='muted'>"+rows.length+" gènes · survol = gène · clic = détails</div>";
 }
 function cdeNearest(e){const r=$("cdeVolcano").getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;let best=null,d2=81;CDEVOL.points.forEach(q=>{const d=(q.x-mx)*(q.x-mx)+(q.y-my)*(q.y-my);if(d<d2){best=q;d2=d;}});return best;}
 function cdeShowGene(q,e){if(e)e.stopPropagation();const row=q.row,b=_el("clinicalDegseaGeneBubble","bubble");b.innerHTML="<button class='cls'>×</button><h4>"+esc(row.gene)+"</h4><div class='row'><span>log2 fold change</span><b>"+dePfmt(row.log2FoldChange)+"</b></div><div class='row'><span>p-value</span><b>"+dePfmt(row.pvalue)+"</b></div><div class='row'><span>padj (FDR)</span><b>"+dePfmt(row.padj)+"</b></div>";const link=document.createElement("button");link.className="mini";link.textContent="Voir GeneCards";link.onclick=ev=>{ev.stopPropagation();window.open("https://www.genecards.org/card/"+encodeURIComponent(row.gene),"_blank","noopener");};b.appendChild(link);b.style.display="block";b.style.left=Math.min(e.clientX+13,window.innerWidth-330)+"px";b.style.top=Math.min(e.clientY+15,window.innerHeight-Math.min(230,b.scrollHeight+20))+"px";b.querySelector(".cls").onclick=ev=>{ev.stopPropagation();b.style.display="none";};}
@@ -1109,8 +1652,13 @@ function cdeRenderGsea(){const c=cdeCurrent(),sel=$("cdeCollection"),collection=
   rows.sort((a,b)=>sort==="padj"?((a.padj==null?Infinity:a.padj)-(b.padj==null?Infinity:b.padj)||Math.abs(b.NES)-Math.abs(a.NES)):Math.abs(b.NES)-Math.abs(a.NES)||(a.padj==null?Infinity:a.padj)-(b.padj==null?Infinity:b.padj));
   cdeGseaTable("cdeGseaNeg",rows.filter(r=>r.NES<0));cdeGseaTable("cdeGseaPos",rows.filter(r=>r.NES>0));}
 function cdeRender(){const c=cdeCurrent();cdeSetWarn(c?"":"Aucun résultat DEGSEA clinique disponible. Configurez clinical_degsea puis régénérez le rapport.");cdeRenderVolcano();cdeRenderGsea();}
-(function initClinicalDegsea(){const details=cdeDetails(),names=Object.keys(details).sort((a,b)=>a.localeCompare(b)),sel=$("cdeExperiment");if(!names.length){cdeSetWarn("Aucun résultat DEGSEA clinique détaillé dans ce rapport. Configurez clinical_degsea puis relancez le pipeline.");$("cdeCtl").style.display="none";return;}
-  names.forEach(name=>{const o=document.createElement("option");o.value=name;o.textContent=details[name].label||name;sel.appendChild(o);});cdeFillCollections();
+(function initClinicalDegsea(){const details=cdeDetails(),cols=cdeSortKeys(details);
+  if(!cols.length){cdeSetWarn("Aucun résultat DEGSEA clinique détaillé dans ce rapport. Configurez clinical_degsea puis relancez le pipeline.");$("cdeCtl").style.display="none";return;}
+  cdeFill($("cdeGroupCol"),cols,k=>k==="ALL"?"aucun filtre":k);
+  cdeFillGroupValues();
+  $("cdeGroupCol").onchange=()=>{cdeFillGroupValues();cdeRender();};
+  $("cdeGroupValue").onchange=()=>{cdeFillExperiments();cdeRender();};
+  const sel=$("cdeExperiment");
   sel.onchange=()=>{cdeFillCollections();cdeRender();};$("cdeCollection").onchange=cdeRenderGsea;
   ["cdeMetric","cdePThreshold","cdeLfcThreshold","cdeTopN"].forEach(id=>$(id).oninput=cdeRender);$("cdeMetric").onchange=cdeRender;$("cdeOpacity").oninput=()=>{$("cdeOpacityV").textContent=(+$("cdeOpacity").value).toFixed(2);cdeRenderVolcano();};
   ["cdeGseaMetric","cdeGseaThreshold","cdeGseaSort"].forEach(id=>$(id).oninput=cdeRenderGsea);$("cdeGseaMetric").onchange=cdeRenderGsea;$("cdeGseaSort").onchange=cdeRenderGsea;

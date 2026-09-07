@@ -148,6 +148,77 @@ class DegseaFilters:
         return counts
 
 
+@dataclass(frozen=True)
+class DeseqSettings:
+    """Garde-fous numériques de l'ajustement DESeq2.
+
+    Deux familles de protections, contre deux pathologies distinctes.
+
+    **Cook / valeurs aberrantes.** La distance de Cook mesure l'influence d'un
+    échantillon sur le coefficient d'un gène. Un seul comptage extrême — une
+    tumeur contaminée, un artefact de mapping — suffit à créer un « gène
+    différentiel » qui n'existe que par lui.
+      - `refit_cooks` (côté ajustement) remplace ces comptages par la moyenne
+        tronquée des autres, puis réajuste. N'agit qu'à partir de
+        `min_replicates` = 7 échantillons ;
+      - `cooks_filter` (côté test) met `padj` à NA pour tout gène dont un
+        échantillon dépasse le seuil de Cook, plutôt que de le déclarer
+        significatif. C'est l'équivalent du `cooksCutoff` de DESeq2 en R.
+
+    **Dispersion effondrée.** La statistique de Wald vaut `log2FC / lfcSE`, et
+    `lfcSE` croît comme la racine de la dispersion. Si l'estimation de dispersion
+    échoue et tombe de plusieurs ordres de grandeur, l'erreur-type s'effondre et
+    |z| explose sans que l'effet ait bougé — c'est la « barre » de gènes
+    infiniment significatifs en haut d'un volcano. Observé en vrai : PMEL passant
+    d'une dispersion de 4,5 à 2,5e-05 par le simple ajout d'une covariable.
+      - `min_disp` relève le plancher que PyDESeq2 s'autorise ; c'est une
+        atténuation, pas un remède ;
+      - `flag_low_dispersion` marque les gènes dont la dispersion ajustée est
+        sous `min_plausible_disp`. Une tumeur en bulk RNA-seq a typiquement une
+        dispersion de 0,1 à 0,5 : en dessous de 1e-3, l'estimation est douteuse,
+        pas précise. Ces gènes sont signalés dans la table et écartés de
+        l'étiquetage du volcano — mais **jamais supprimés en silence**.
+    """
+    cooks_filter: bool = True
+    refit_cooks: bool = True
+    independent_filter: bool = True
+    min_disp: float = 1e-8
+    flag_low_dispersion: bool = True
+    min_plausible_disp: float = 1e-3
+
+    @classmethod
+    def from_args(cls, args, prefix: str = "clinical_degsea") -> DeseqSettings:
+        def opt(name, default):
+            value = getattr(args, f"{prefix}_{name}", default)
+            return default if value is None else value
+
+        return cls(
+            cooks_filter=opt("cooks_filter", "y") == "y",
+            refit_cooks=opt("refit_cooks", "y") == "y",
+            independent_filter=opt("independent_filter", "y") == "y",
+            min_disp=float(opt("min_disp", 1e-8)),
+            flag_low_dispersion=opt("flag_low_dispersion", "y") == "y",
+            min_plausible_disp=float(opt("min_plausible_disp", 1e-3)),
+        )
+
+    def annotate(self, table: pd.DataFrame, dds) -> pd.DataFrame:
+        """Ajoute la dispersion ajustée et le drapeau de dispersion douteuse."""
+        table = table.copy()
+        disp = pd.Series(dds.var["dispersions"], index=dds.var_names)
+        table["dispersion"] = disp.reindex(table.index).to_numpy()
+        suspect = table["dispersion"] < self.min_plausible_disp
+        table["dispersion_suspecte"] = suspect.fillna(False) if self.flag_low_dispersion \
+            else False
+        n = int(table["dispersion_suspecte"].sum())
+        if n:
+            logger.warning(
+                "DESeq2 : %d gène(s) à dispersion < %.0e — erreur-type effondrée, "
+                "|z| non interprétable. Marqués `dispersion_suspecte` et exclus de "
+                "l'étiquetage du volcano. Ex. : %s", n, self.min_plausible_disp,
+                ", ".join(map(str, table.index[table["dispersion_suspecte"]][:8])))
+        return table
+
+
 # --------------------------------------------------------------------------
 # Briques : DESeq2 et GSEA sur un contraste
 # --------------------------------------------------------------------------
@@ -202,10 +273,58 @@ def deseq2_model(counts: pd.DataFrame, metadata: pd.DataFrame, design: str,
                            size_factors_fit_type=size_factors_fit_type,
                            quiet=True, inference=inference)
         dds.deseq2()
-        st = DeseqStats(dds, contrast=[variable, test, control],
+    return contrast_from_fit(dds, variable, test, control, n_cpus=n_cpus)
+
+
+def contrast_from_fit(dds, variable: str, test: str, control: str,
+                      n_cpus: int | None = None,
+                      settings: DeseqSettings | None = None) -> pd.DataFrame:
+    """Tire un contraste d'un modèle **déjà ajusté**.
+
+    L'ajustement (`dds.deseq2()`) domine largement le coût ; extraire un
+    contraste supplémentaire du même modèle est presque gratuit. Plusieurs
+    contrastes partageant une formule doivent donc partager leur ajustement.
+    """
+    from pydeseq2.default_inference import DefaultInference
+    from pydeseq2.ds import DeseqStats
+
+    settings = settings or DeseqSettings()
+    inference = DefaultInference(n_cpus=n_cpus)
+    with contextlib.redirect_stdout(io.StringIO()):
+        st = DeseqStats(dds, contrast=[str(variable), str(test), str(control)],
+                        cooks_filter=settings.cooks_filter,
+                        independent_filter=settings.independent_filter,
                         quiet=True, inference=inference)
         st.summary()
-    return st.results_df.sort_values("stat", ascending=False)
+    table = st.results_df.sort_values("stat", ascending=False)
+    return settings.annotate(table, dds)
+
+
+def fit_deseq2(counts: pd.DataFrame, metadata: pd.DataFrame, design: str,
+               n_cpus: int | None = None,
+               settings: DeseqSettings | None = None):
+    """Ajuste un `DeseqDataSet` sans extraire de contraste."""
+    settings = settings or DeseqSettings()
+    from pydeseq2.dds import DeseqDataSet
+    from pydeseq2.default_inference import DefaultInference
+
+    int_counts = counts.round().astype(int)
+    size_factors_fit_type = "ratio"
+    if (int_counts.to_numpy() == 0).any(axis=0).all():
+        size_factors_fit_type = "poscounts"
+        logger.info(
+            "DESeq2 : aucun gène non nul sur les %d échantillons — size factors "
+            "estimés par 'poscounts' (médiane des ratios inapplicable).",
+            int_counts.shape[0],
+        )
+    with contextlib.redirect_stdout(io.StringIO()):
+        dds = DeseqDataSet(counts=int_counts, metadata=metadata, design=design,
+                           size_factors_fit_type=size_factors_fit_type,
+                           min_disp=settings.min_disp,
+                           refit_cooks=settings.refit_cooks,
+                           quiet=True, inference=DefaultInference(n_cpus=n_cpus))
+        dds.deseq2()
+    return dds
 
 
 def deseq2_contrast(counts: pd.DataFrame, groups: pd.Series,
@@ -301,6 +420,34 @@ def resolve_gene_sets(gene_sets) -> dict[str, str]:
 _resolve_gene_sets = resolve_gene_sets
 
 
+class InsufficientGroups(ValueError):
+    """Effectifs trop faibles pour ajuster le contraste demandé.
+
+    Type dédié — et non un `ValueError` nu — pour que l'orchestrateur puisse
+    écarter une combinaison strate × design sans risquer d'avaler une vraie
+    erreur de calcul.
+    """
+
+
+def contrast_group_sizes(metadata: pd.DataFrame, design: str, contrast: str,
+                         control: str, test: str) -> tuple[int, int, int]:
+    """Effectifs (control, test, exclus) d'un contraste, SANS ajuster DESeq2.
+
+    Rejoue la sélection d'échantillons de :func:`run_clinical_degsea` — modalités
+    du contraste, puis complétude des variables du design — pour permettre
+    d'écarter une combinaison inexploitable avant d'y consacrer du calcul. Le
+    filtrage des gènes pouvant encore retirer des tumeurs, ces effectifs sont une
+    borne supérieure ; la vérification définitive reste dans l'ajustement.
+    """
+    design_vars = _design_variables(design, metadata.columns)
+    values = metadata[contrast].astype("string")
+    keep = values.isin([str(control), str(test)]) & \
+        metadata[design_vars].notna().all(axis=1)
+    kept = values[keep]
+    return (int((kept == str(control)).sum()), int((kept == str(test)).sum()),
+            int((~keep).sum()))
+
+
 def _design_variables(design: str, metadata_columns) -> list[str]:
     """Variables de métadonnées explicitement citées dans une formule simple.
 
@@ -311,6 +458,204 @@ def _design_variables(design: str, metadata_columns) -> list[str]:
     """
     return [str(column) for column in metadata_columns
             if re.search(rf"(?<![A-Za-z0-9_]){re.escape(str(column))}(?![A-Za-z0-9_])", design)]
+
+
+def reduce_design(design: str, metadata: pd.DataFrame,
+                  min_level_count: int = 1) -> tuple[str, list[str], dict[str, str]]:
+    """Retire de la formule les termes inexploitables **sur ce sous-ensemble**.
+
+    Une formule figée ne survit pas à la stratification : si une mutation n'a
+    aucun porteur dans un tissu, sa colonne y est constante, la matrice de design
+    perd son rang et DESeq2 s'arrête sur « the model matrix is not full rank ».
+    On construit donc la formule à partir de ce qui est réellement présent.
+
+    Règles, par terme du design :
+      - covariable **numérique** à plus de deux valeurs -> continue, conservée ;
+      - variable **catégorielle** -> conservée si au moins deux modalités sont
+        présentes, chacune portée par >= `min_level_count` tumeurs ;
+      - sinon écartée, avec le motif.
+
+    Renvoie la formule réduite, les termes conservés et ``{terme: motif}``.
+    """
+    kept, dropped = [], {}
+    for term in _design_variables(design, metadata.columns):
+        values = metadata[term].dropna()
+        if values.empty:
+            dropped[term] = "aucune valeur renseignée"
+            continue
+        if pd.api.types.is_numeric_dtype(values) and values.nunique() > 2:
+            kept.append(term)                      # covariable continue
+            continue
+        sizes = values.astype(str).value_counts()
+        if len(sizes) < 2:
+            dropped[term] = f"constante ({sizes.index[0]!r})"
+        elif int(sizes.min()) < min_level_count:
+            dropped[term] = (f"modalité {sizes.idxmin()!r} à {int(sizes.min())} "
+                             f"tumeur(s) < {min_level_count}")
+        else:
+            kept.append(term)
+    return ("~ " + " + ".join(kept)) if kept else "~ 1", kept, dropped
+
+
+def _as_model_dtypes(meta: pd.DataFrame, terms, levels: dict) -> pd.DataFrame:
+    """Prépare les colonnes du design pour PyDESeq2.
+
+    `_load_metadata` produit des colonnes en ``StringDtype`` — indispensable pour
+    préserver les ``<NA>`` lors de la sélection des échantillons, mais PyDESeq2
+    ne reconnaît comme catégorielles que ``object`` et ``category``. Une colonne
+    laissée en ``string`` traverse jusqu'à la matrice de design, qui finit en
+    ``dtype('O')``, et le contrôle de rang échoue sur un obscur
+    « Cannot cast ufunc 'svd' input from dtype('O') ».
+    """
+    meta = meta.copy()
+    for term in terms:
+        if term in levels:                          # variable de contraste
+            control, test = levels[term]
+            meta[term] = pd.Categorical(meta[term].astype(str),
+                                        categories=[control, test], ordered=True)
+        elif not pd.api.types.is_numeric_dtype(meta[term]):
+            meta[term] = meta[term].astype(str)     # object, pas StringDtype
+    return meta
+
+
+def run_clinical_degsea_group(
+    counts: pd.DataFrame,
+    metadata: pd.DataFrame,
+    *,
+    design: str,
+    specs: dict[str, dict],
+    min_count: int = 10,
+    gene_filters: DegseaFilters | None = None,
+    permutations: int = 1000,
+    n_jobs: int = 1,
+    seed: int = 0,
+    min_level_count: int = 1,
+    settings: DeseqSettings | None = None,
+) -> dict:
+    """Ajuste **une seule fois** le modèle d'une strate, puis en tire chaque contraste.
+
+    Plusieurs expériences cliniques partagent souvent la même formule et ne
+    diffèrent que par la variable contrastée. Les ajuster séparément refait le
+    même calcul autant de fois : l'ajustement domine le coût, l'extraction d'un
+    contraste supplémentaire est presque gratuite. Les résultats sont identiques,
+    pas seulement équivalents.
+
+    La formule est d'abord **réduite** aux termes exploitables sur cette strate
+    (cf. :func:`reduce_design`) : sans ça, une mutation absente du tissu rendrait
+    la matrice de design singulière.
+
+    `specs` : ``{nom: {contrast, control, test, gene_sets, outdir, min_group}}``.
+    Renvoie ``{design_used, kept_terms, dropped_terms, n_samples, results, skipped}``.
+    """
+    if not isinstance(metadata, pd.DataFrame):
+        raise TypeError("metadata doit être un DataFrame indexé par échantillon.")
+    if not isinstance(design, str) or not design.strip().startswith("~"):
+        raise ValueError("design clinique invalide : attendu, par exemple, '~ age + response'.")
+
+    counts = counts.copy()
+    counts.index = counts.index.astype(str)
+    metadata = metadata.copy()
+    metadata.index = metadata.index.astype(str)
+    if counts.index.has_duplicates or metadata.index.has_duplicates:
+        raise ValueError("Les identifiants échantillons counts/métadonnées doivent être uniques.")
+    meta = metadata.reindex(counts.index)
+
+    for name, spec in specs.items():
+        if str(spec["control"]) == str(spec["test"]):
+            raise ValueError(f"{name} : control et test doivent différer.")
+        if str(spec["contrast"]) not in meta.columns:
+            raise ValueError(f"{name} : contraste absent des métadonnées — "
+                             f"{spec['contrast']!r}.")
+
+    reduced, kept, dropped_terms = reduce_design(design, meta, min_level_count)
+    if dropped_terms:
+        logger.info("Design réduit sur cette strate : %s  (écartés : %s)", reduced,
+                    " ; ".join(f"{k} — {v}" for k, v in dropped_terms.items()))
+
+    skipped = {name: f"terme écarté du design : {dropped_terms.get(str(spec['contrast']), 'absent')}"
+               for name, spec in specs.items() if str(spec["contrast"]) not in kept}
+    usable = {name: spec for name, spec in specs.items() if name not in skipped}
+    empty = {"design_used": reduced, "kept_terms": kept, "dropped_terms": dropped_terms,
+             "n_samples": 0, "results": {}, "skipped": skipped}
+    if not usable:
+        return empty
+
+    # Un contraste doit être binaire : on restreint aux tumeurs portant l'une des
+    # deux modalités de CHAQUE contraste tiré de ce modèle, puis à celles dont
+    # toutes les variables du design réduit sont renseignées.
+    levels = {str(spec["contrast"]): (str(spec["control"]), str(spec["test"]))
+              for spec in usable.values()}
+    selected = pd.Series(True, index=meta.index)
+    for column, (control, test) in levels.items():
+        selected &= meta[column].astype("string").isin([control, test])
+    keep_samples = selected & meta[kept].notna().all(axis=1)
+    dropped_samples = int((~keep_samples).sum())
+
+    cnt = counts.loc[keep_samples].round().astype(int)
+    meta = meta.loc[keep_samples]
+    # Filtres appliqués APRÈS la sélection : les seuils d'expression portent sur
+    # la cohorte réellement testée. Le dernier peut retirer des tumeurs.
+    if gene_filters is not None:
+        cnt = gene_filters.apply(cnt)
+        if len(cnt.index) != len(meta.index):
+            meta = meta.loc[cnt.index]
+            dropped_samples = int(len(counts.index) - len(cnt.index))
+
+    meta = _as_model_dtypes(meta, kept, levels)
+    keep_genes = cnt.columns[cnt.sum(axis=0) >= int(min_count)]
+    if not len(keep_genes):
+        raise ValueError("Aucun gène ne passe le filtre de counts pour le contraste clinique.")
+
+    threads = ((os.cpu_count() or 1) if n_jobs in (-1, 0, None)
+               else max(1, int(n_jobs)))
+    logger.info("DESeq2 clinique : ajustement unique sur %d tumeurs, %d gènes, "
+                "design=%s ; %d contraste(s) à en tirer.",
+                len(meta), len(keep_genes), reduced, len(usable))
+    settings = settings or DeseqSettings()
+    dds = fit_deseq2(cnt.loc[:, keep_genes], meta[kept], reduced, n_cpus=threads,
+                     settings=settings)
+
+    results: dict[str, dict] = {}
+    for name, spec in usable.items():
+        contrast = str(spec["contrast"])
+        control, test = str(spec["control"]), str(spec["test"])
+        sizes = meta[contrast].value_counts()
+        n_control, n_test = int(sizes.get(control, 0)), int(sizes.get(test, 0))
+        min_group = int(spec.get("min_group", 3))
+        if n_control < min_group or n_test < min_group:
+            skipped[name] = (f"Contraste {contrast}: {test} vs {control} : effectifs "
+                             f"insuffisants ({test}={n_test}, {control}={n_control}; "
+                             f"minimum={min_group}).")
+            continue
+
+        table = contrast_from_fit(dds, contrast, test, control, n_cpus=threads,
+                                  settings=settings)
+        outdir = Path(spec["outdir"])
+        outdir.mkdir(parents=True, exist_ok=True)
+        table.to_csv(outdir / "deseq2.csv", index_label="gene")
+        meta.loc[:, kept].assign(**{contrast: meta[contrast].astype(str)}).to_csv(
+            outdir / "samples_used.csv", index_label="sample")
+
+        gsea = {}
+        for collection, path in _resolve_gene_sets(spec.get("gene_sets")).items():
+            found = gsea_prerank(table, path, permutations=permutations,
+                                 threads=threads, seed=seed)
+            if found is not None:
+                found.to_csv(outdir / f"gsea_{collection}.csv", index=False)
+            gsea[collection] = found
+
+        results[name] = {
+            "results": table, "gsea": gsea,
+            "n_samples": int(len(meta)), "n_test": n_test, "n_control": n_control,
+            "n_dropped": dropped_samples,
+            "design_variables": kept, "design_used": reduced,
+            "dropped_terms": dropped_terms,
+        }
+        logger.info("DESeq2 clinique : contraste %s (%d %s vs %d %s) extrait.",
+                    contrast, n_test, test, n_control, control)
+
+    return {"design_used": reduced, "kept_terms": kept, "dropped_terms": dropped_terms,
+            "n_samples": int(len(meta)), "results": results, "skipped": skipped}
 
 
 def run_clinical_degsea(
@@ -330,101 +675,23 @@ def run_clinical_degsea(
     n_jobs: int = 1,
     seed: int = 0,
 ) -> dict:
-    """DESeq2 + GSEA clinique, indépendant du consensus clustering.
+    """DESeq2 + GSEA clinique pour **un** contraste.
 
-    Les deux groupes du contraste sont sélectionnés, les échantillons avec une
-    valeur manquante dans une variable utilisée par le design sont exclus, puis
-    le modèle est ajusté une seule fois. Son classement de Wald est réutilisé
-    pour toutes les collections GSEA. Les sorties sont écrites dans ``outdir``.
+    Enveloppe à un seul contraste de :func:`run_clinical_degsea_group`, pour
+    n'avoir qu'une implémentation de la sélection d'échantillons, de la réduction
+    de formule et du filtrage.
     """
-    if not isinstance(metadata, pd.DataFrame):
-        raise TypeError("metadata doit être un DataFrame indexé par échantillon.")
-    if not isinstance(design, str) or not design.strip().startswith("~"):
-        raise ValueError("design clinique invalide : attendu, par exemple, '~ age + response'.")
-    contrast = str(contrast)
-    control, test = str(control), str(test)
-    if contrast not in metadata.columns:
-        raise ValueError(f"Contraste clinique absent des métadonnées : {contrast!r}.")
-    if control == test:
-        raise ValueError("control et test doivent désigner deux modalités distinctes.")
-
-    counts = counts.copy()
-    counts.index = counts.index.astype(str)
-    metadata = metadata.copy()
-    metadata.index = metadata.index.astype(str)
-    if counts.index.has_duplicates or metadata.index.has_duplicates:
-        raise ValueError("Les identifiants échantillons counts/métadonnées doivent être uniques.")
-    meta = metadata.reindex(counts.index)
-    design_vars = _design_variables(design, meta.columns)
-    if contrast not in design_vars:
-        raise ValueError(
-            f"La variable de contraste {contrast!r} doit apparaître dans le design {design!r}."
-        )
-    values = meta[contrast].astype("string")
-    selected_groups = values.isin([control, test])
-    complete_design = meta[design_vars].notna().all(axis=1)
-    keep_samples = selected_groups & complete_design
-    dropped = int((~keep_samples).sum())
-    cnt = counts.loc[keep_samples].round().astype(int)
-    meta = meta.loc[keep_samples].copy()
-    # Filtres configurables, appliqués APRÈS la sélection des échantillons : les
-    # seuils d'expression portent ainsi sur la cohorte réellement testée, pas sur
-    # des tumeurs que le design exclut. Le dernier filtre peut retirer des
-    # tumeurs : on réaligne les métadonnées avant tout comptage d'effectifs.
-    if gene_filters is not None:
-        cnt = gene_filters.apply(cnt)
-        if len(cnt.index) != len(meta.index):
-            meta = meta.loc[cnt.index]
-            dropped = int(len(counts.index) - len(cnt.index))
-
-    meta[contrast] = pd.Categorical(
-        meta[contrast].astype(str), categories=[control, test], ordered=True,
+    out = run_clinical_degsea_group(
+        counts, metadata, design=design,
+        specs={"_": {"contrast": contrast, "control": control, "test": test,
+                     "gene_sets": gene_sets, "outdir": outdir,
+                     "min_group": min_group}},
+        min_count=min_count, gene_filters=gene_filters,
+        permutations=permutations, n_jobs=n_jobs, seed=seed,
     )
-    sizes = meta[contrast].value_counts()
-    n_control, n_test = int(sizes.get(control, 0)), int(sizes.get(test, 0))
-    if n_control < min_group or n_test < min_group:
-        raise ValueError(
-            f"Contraste {contrast}: {test} vs {control} : effectifs insuffisants "
-            f"({test}={n_test}, {control}={n_control}; minimum={min_group})."
-        )
-    keep_genes = cnt.columns[cnt.sum(axis=0) >= int(min_count)]
-    if not len(keep_genes):
-        raise ValueError("Aucun gène ne passe le filtre de counts pour le contraste clinique.")
-
-    outdir = Path(outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-    threads = ((os.cpu_count() or 1) if n_jobs in (-1, 0, None)
-               else max(1, int(n_jobs)))
-    logger.info(
-        "DEGSEA clinique : %s (%d %s vs %d %s), design=%s ; %d échantillon(s) exclus.",
-        contrast, n_test, test, n_control, control, design, dropped,
-    )
-    results = deseq2_model(
-        cnt.loc[:, keep_genes], meta, design=design,
-        contrast=(contrast, test, control), n_cpus=threads,
-    )
-    results.to_csv(outdir / "deseq2.csv", index_label="gene")
-    meta.loc[:, design_vars].assign(**{contrast: meta[contrast].astype(str)}).to_csv(
-        outdir / "samples_used.csv", index_label="sample"
-    )
-
-    resolved_sets = _resolve_gene_sets(gene_sets)
-    gsea = {}
-    for name, path in resolved_sets.items():
-        table = gsea_prerank(results, path, permutations=permutations,
-                             threads=threads, seed=seed)
-        if table is not None:
-            table.to_csv(outdir / f"gsea_{name}.csv", index=False)
-        gsea[name] = table
-    return {
-        "results": results,
-        "gsea": gsea,
-        "n_samples": int(len(meta)),
-        "n_test": n_test,
-        "n_control": n_control,
-        "n_dropped": dropped,
-        "design_variables": design_vars,
-    }
+    if "_" in out["skipped"]:
+        raise InsufficientGroups(out["skipped"]["_"])
+    return out["results"]["_"]
 
 
 # --------------------------------------------------------------------------

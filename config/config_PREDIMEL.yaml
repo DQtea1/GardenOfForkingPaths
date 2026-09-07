@@ -159,6 +159,22 @@ degsea_variance_method: mad            # mad (robuste) | var
 degsea_filter_zero_samples: y          # y | n
 degsea_max_zero_frac: 0.80             # retire les tumeurs à plus de 80 % de gènes à 0
 
+# --- Garde-fous numériques de l'ajustement DESeq2 ---------------------------
+# 1) VALEURS ABERRANTES (Cook) : refit_cooks remplace les comptages extrêmes par
+#    la moyenne tronquée puis réajuste ; cooks_filter met padj à NA pour ces
+#    gènes plutôt que de les déclarer significatifs (cooksCutoff de DESeq2 en R).
+# 2) DISPERSION EFFONDRÉE : z = log2FC / lfcSE, et lfcSE croît comme la racine de
+#    la dispersion. Une estimation de dispersion en échec fait exploser |z| sans
+#    que l'effet ait bougé — la « barre » de gènes au plafond d'un volcano.
+#    flag_low_dispersion marque ces gènes (colonne `dispersion_suspecte`) et les
+#    exclut de l'étiquetage, sans rien supprimer.
+degsea_cooks_filter: y
+degsea_refit_cooks: y
+degsea_independent_filter: y      # filtrage indépendant de DESeq2 (puissance FDR)
+degsea_min_disp: 1e-8             # plancher de dispersion PyDESeq2
+degsea_flag_low_dispersion: y     # marque les dispersions invraisemblables
+degsea_min_plausible_disp: 1e-3   # seuil du marquage (tumeur réelle : 0,1 - 0,5)
+
 # ================================================= 4b · Stabilité des branches (Jaccard bootstrap)
 compute_jaccard: y            # y | n
 
@@ -247,20 +263,35 @@ clinical_degsea_max_zero_frac: 0.80      # retire les tumeurs à plus de 80 % de
 # DEGSEA clinique indépendant du consensus. Décommenter/adapter pour exécuter
 # plusieurs expériences ; chaque résultat est exporté dans tables/clinical_degsea/<nom>/.
 
-# Colonnes relues en CHAÎNES juste après le chargement des métadonnées. Chaque
-# design ci-dessous y puise le contraste dont il a besoin : toute colonne citée
-# comme `contrast` doit figurer ici.
+# --- Garde-fous numériques de l'ajustement DESeq2 (DEGSEA clinique) ---------
+# Mêmes deux protections que la section 2b, seuils INDÉPENDANTS.
+clinical_degsea_cooks_filter: y
+clinical_degsea_refit_cooks: y
+clinical_degsea_independent_filter: y      # filtrage indépendant de DESeq2
+clinical_degsea_min_disp: 1e-8             # plancher de dispersion PyDESeq2
+clinical_degsea_flag_low_dispersion: y     # marque les dispersions invraisemblables
+clinical_degsea_min_plausible_disp: 1e-3   # seuil du marquage (tumeur réelle : 0,1 - 0,5)
+
+# STRATIFICATION du DEGSEA clinique. Pour chaque modalité de chacune de ces
+# colonnes, TOUTE la batterie de designs `clinical_degsea` ci-dessous est
+# rejouée sur les seules tumeurs de cette modalité. Dans le rapport, onglet
+# « Résultats Expression Différentielle » > « DEGSEA », cela donne trois menus
+# en cascade : colonne de filtrage -> modalité -> design.
 #
-# Pourquoi c'est indispensable, et pas seulement confortable :
-#   - une colonne 0/1 laissée en numérique est traitée par DESeq2 comme une
-#     covariable CONTINUE, pas comme deux groupes ;
-#   - pire, un seul NA suffit à faire lire la colonne en float par pandas ; ses
-#     modalités deviennent alors '0.0'/'1.0', qui ne correspondent plus aux
-#     `control` / `test` ci-dessous. Le contraste sélectionne zéro tumeur et
-#     l'erreur affichée parle d'« effectifs insuffisants », ce qui envoie
-#     chercher un problème d'effectifs là où c'est un problème de type.
-contrast_col_desq:
-  - PDSD_PRCR
+# 'None' / 'NA' / 'ALL' désignent l'analyse non filtrée. Elle est de toute façon
+# TOUJOURS produite (clé « ALL »), la mentionner ici est donc facultatif.
+#
+# COÛT : le nombre d'ajustements DESeq2 vaut n_designs x (1 + somme des
+# modalités de chaque colonne). Les combinaisons dont les effectifs sont sous
+# `min_group` sont écartées AVANT calcul ; le détail complet, calculées comme
+# écartées, part dans tables/clinical_degsea/plan.csv.
+group_DESeq2_by: []           # ex. [histo_classe] ; vide = analyse non filtrée seule
+
+# Les colonnes à relire en CHAÎNES sont DÉDUITES automatiquement : celles citées
+# comme `contrast` par les designs ci-dessous, plus celles de `group_DESeq2_by`.
+# Sans ce cast, une colonne 0/1 serait traitée par DESeq2 comme une covariable
+# CONTINUE ; et un seul NA la ferait lire en float, ses modalités devenant
+# '0.0'/'1.0' — le contraste sélectionnerait alors zéro tumeur.
 
 clinical_degsea:
   response:
