@@ -100,21 +100,6 @@ class ICAResult:
     params: dict[str, Any]
     output_paths: dict[str, Path] = field(default_factory=dict)
 
-    @property
-    def mstd_decomposition(self) -> ICADecomposition:
-        """Décomposition MSTD utilisée par les diagnostics de qualité."""
-        return self.mstd_diagnostic
-
-    @property
-    def top_stable_dimensions(self) -> tuple[int, ...]:
-        """Alias de compatibilité pour les consommateurs antérieurs.
-
-        Les dimensions persistées ne sont plus un classement de stabilité
-        moyenne : utiliser ``selected_dimensions`` et ``dimension_roles`` dans
-        tout nouveau code.
-        """
-        return self.selected_dimensions
-
 
 def _require_stabilized_ica():
     """Import différé : le reste du pipeline reste utilisable sans ICA."""
@@ -1469,15 +1454,9 @@ def run_ica(
     )
 
 
-# Nom explicite pratique pour les appels de pipeline, tout en conservant
-# ``run_ica`` court pour les usages directs/notebooks.
-run_ica_mstd = run_ica
-
-
 __all__ = [
     "ICADecomposition",
     "ICAResult",
     "MSTDSelection",
     "run_ica",
-    "run_ica_mstd",
 ]

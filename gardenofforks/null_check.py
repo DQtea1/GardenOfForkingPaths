@@ -41,6 +41,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 
+from . import config as cf
 from . import consensus as cc
 from . import metrics as mt
 from . import preprocessing as pp
@@ -80,30 +81,31 @@ def _run_labeled(X, k_values, args, seed, n_jobs, model, rep) -> pd.DataFrame:
     return run(X, k_values, args, seed, n_jobs).assign(model=model, rep=rep)
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Le parser du pipeline, plus l'option propre au contrôle nul.
+
+    Les options sont **celles de `gof-run`** — mêmes noms, mêmes types, mêmes
+    valeurs autorisées : un `--metric` accepté par le pipeline l'est ici aussi,
+    et une faute de frappe est refusée des deux côtés. Auparavant ce module
+    redéclarait une quinzaine d'options à la main, avec ses propres défauts et
+    sans les `choices` : `--base kmedoid` y passait sans broncher.
+
+    Seuls les défauts de cadrage restent locaux, le contrôle nul étant plus
+    léger qu'un run complet (moins de rééchantillonnages, plage de k plus large).
+    """
+    p = cf.build_parser()
+    p.description = __doc__
+    p.add_argument("--n-null", type=int, default=3,
+                   help="réplicats par modèle nul (défaut 3).")
+    p.set_defaults(outdir=Path("results/null"), k_min=2, k_max=8, n_resamples=200)
+    return p
+
+
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--counts", required=True)
-    p.add_argument("--samples-in-rows", action="store_true")
-    p.add_argument("--already-normalized", action="store_true")
-    p.add_argument("--n-top-genes", type=int, default=5000)
-    p.add_argument("--outdir", type=Path, default=Path("results/null"))
-    p.add_argument("--k-min", type=int, default=2)
-    p.add_argument("--k-max", type=int, default=8)
-    p.add_argument("--n-resamples", type=int, default=200)
-    p.add_argument("--n-null", type=int, default=3, help="réplicats par modèle nul")
-    p.add_argument("--prop-samples", type=float, default=0.8)
-    p.add_argument("--prop-genes", type=float, default=0.8)
-    p.add_argument("--sample-mode", default="subsample")
-    p.add_argument("--gene-mode", default="subsample")
-    p.add_argument("--base", default="hierarchical")
-    p.add_argument("--metric", default="pearson")
-    p.add_argument("--parallel", choices=["y", "n"], default="y",
-                   help="'y' (défaut) : lance les réplicats (observé + nuls) en "
-                        "parallèle sur --n-jobs cœurs. 'n' : séquentiel (n_jobs=1).")
-    p.add_argument("--n-jobs", type=int, default=-1)
-    p.add_argument("--seed", type=int, default=0)
+    p = build_parser()
     args = p.parse_args(argv)
+    if not args.counts:
+        p.error("--counts est obligatoire.")
 
     logging.basicConfig(level=logging.WARNING)
     outdir = Path(args.outdir); (outdir / "figures").mkdir(parents=True, exist_ok=True)

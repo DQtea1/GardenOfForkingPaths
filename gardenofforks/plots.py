@@ -10,11 +10,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.patches import Patch
-from scipy.cluster.hierarchy import dendrogram, linkage
-from scipy.spatial.distance import squareform
+from scipy.cluster.hierarchy import dendrogram
 
-from .config import slug
 from .consensus import ConsensusResult
 from .metrics import consensus_cdf, delta_k, pac
 from .stability import BranchStability
@@ -49,8 +46,7 @@ def plot_consensus_heatmap(result: ConsensusResult, k: int, outdir: Path,
     avec barre de clusters. La lecture visuelle est le premier critère :
     on veut des blocs nets, pas un dégradé continu."""
     C = result.consensus[k]
-    D = result.distance(k)
-    Z = linkage(squareform(D, checks=False), method=linkage_method)
+    Z = result.linkage_tree(k, linkage_method)   # mémoïsé côté ConsensusResult
     order = result.order(k, linkage_method)
     labels = result.labels(k, linkage_method)[order]
 
@@ -181,89 +177,10 @@ def plot_deconvolution(frac: pd.DataFrame, labels, sample_names, method: str,
     return _save(fig, outdir, f"deconv_{method}.png")
 
 
-def plot_signature_boxplots(scores: pd.DataFrame, var: pd.Series,
-                            signatures: list[str], var_name: str, method: str,
-                            assoc: pd.DataFrame, outdir: Path) -> Path:
-    """Grille de boxplots : pour une variable clinique catégorielle, la
-    distribution du score (méthode `method`) de chaque top signature par
-    modalité. Un fichier par (variable, méthode)."""
-    var = var.reindex(scores.columns)
-    levels = [m for m in pd.Series(var.dropna().unique())]
-    palette = {m: CLUSTER_COLORS[i % len(CLUSTER_COLORS)] for i, m in enumerate(levels)}
-
-    n = len(signatures)
-    ncol = min(4, n); nrow = int(np.ceil(n / ncol))
-    fig, axes = plt.subplots(nrow, ncol, figsize=(3.3 * ncol, 3.0 * nrow),
-                             squeeze=False)
-    for ax in axes.flat:
-        ax.set_visible(False)
-    for idx, sig in enumerate(signatures):
-        ax = axes.flat[idx]; ax.set_visible(True)
-        data, labs, colors = [], [], []
-        for m in levels:
-            vals = scores.loc[sig, var.index[var == m]].dropna().values
-            if len(vals):
-                data.append(vals); labs.append(f"{m}\n(n={len(vals)})"); colors.append(palette[m])
-        bp = ax.boxplot(data, patch_artist=True, showfliers=False,
-                        tick_labels=labs, widths=0.6)
-        for patch, c in zip(bp["boxes"], colors):
-            patch.set_facecolor(c); patch.set_alpha(0.75)
-        for med in bp["medians"]:
-            med.set_color("black")
-        rng = np.random.default_rng(0)
-        for i, d in enumerate(data, start=1):
-            ax.scatter(rng.normal(i, 0.06, len(d)), d, s=9, alpha=0.5, color="#333", zorder=3)
-        best = assoc[(assoc["variable"] == var_name) & (assoc["signature"] == sig)]
-        p = best["pvalue"].min() if len(best) else np.nan
-        q = best["padj"].min() if len(best) else np.nan
-        ax.set_title(f"{sig[:32]}\np={p:.1e}  q={q:.1e}", fontsize=8)
-        ax.tick_params(axis="x", labelsize=7)
-        ax.set_ylabel(f"score ({method})", fontsize=8)
-        ax.spines[["top", "right"]].set_visible(False)
-
-    fig.suptitle(f"Signatures ~ {var_name}  ·  {method}  (top {n})", fontsize=12)
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
-    return _save(fig, outdir, f"sig_boxplots_{method}_{slug(var_name)}.png")
-
-
-def plot_signature_heatmap(scores: pd.DataFrame, var: pd.Series,
-                           signatures: list[str], var_name: str, method: str,
-                           outdir: Path) -> Path:
-    """Heatmap top signatures × tumeurs (colonnes ordonnées et annotées par la
-    variable clinique). Scores z-normalisés par signature. Un fichier par
-    (variable, méthode)."""
-    var = var.reindex(scores.columns)
-    keep = var.dropna().index
-    levels = list(pd.Series(var[keep].unique()))
-    order = [s for m in levels for s in keep[var[keep] == m]]     # groupé par modalité
-    palette = {m: CLUSTER_COLORS[i % len(CLUSTER_COLORS)] for i, m in enumerate(levels)}
-
-    M = scores.loc[signatures, order]
-    Z = M.sub(M.mean(axis=1), axis=0).div(M.std(axis=1).replace(0, 1), axis=0)  # z par ligne
-
-    fig = plt.figure(figsize=(max(7, 0.045 * len(order) + 3), 0.4 * len(signatures) + 2.2))
-    gs = fig.add_gridspec(2, 2, height_ratios=[0.4, 10], width_ratios=[40, 1],
-                          hspace=0.02, wspace=0.03)
-    # bandeau de modalités
-    ax_a = fig.add_subplot(gs[0, 0])
-    ann = np.array([matplotlib.colors.to_rgb(palette[var[s]]) for s in order])[None]
-    ax_a.imshow(ann, aspect="auto"); ax_a.set_xticks([]); ax_a.set_yticks([])
-    ax_a.set_title(f"Activation des signatures par tumeur — {var_name} · {method}",
-                   fontsize=11)
-    # heatmap
-    ax = fig.add_subplot(gs[1, 0])
-    vmax = float(np.nanmax(np.abs(Z.values))) or 1.0
-    im = ax.imshow(Z.values, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax,
-                   interpolation="nearest")
-    ax.set_yticks(range(len(signatures)))
-    ax.set_yticklabels([s[:40] for s in signatures], fontsize=8)
-    ax.set_xticks([]); ax.set_xlabel(f"{len(order)} tumeurs (groupées par {var_name})")
-    fig.colorbar(im, cax=fig.add_subplot(gs[1, 1]), label="score (z par signature)")
-    # légende modalités
-    ax_a.legend(handles=[Patch(color=palette[m], label=str(m)) for m in levels],
-                loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8,
-                frameon=False, title=var_name)
-    return _save(fig, outdir, f"sig_heatmap_{method}_{slug(var_name)}.png")
+# SUPPRIMÉ — plot_signature_boxplots / plot_signature_heatmap : figures
+# statiques par variable clinique, dont les appels étaient commentés dans
+# sigproj (« Added unnecessary computing time »). Le rapport HTML rend la même
+# chose en interactif, onglet « Boxplots ». Code dans l'historique git.
 
 
 def plot_gsea_ova_heatmap(nes: pd.DataFrame, outdir: Path,

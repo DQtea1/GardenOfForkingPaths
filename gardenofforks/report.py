@@ -475,7 +475,7 @@ def _consensus_payload(result, k_final: int, linkage_method: str,
         labels = [int(x) for x in result.labels(k, linkage_method)]
         item = mt.item_consensus(result, k)
         imap = dict(zip(item["sample"].astype(str), item["item_consensus"]))
-        Z = linkage(squareform(result.distance(k), checks=False), method=linkage_method)
+        Z = result.linkage_tree(k, linkage_method)   # mémoïsé côté ConsensusResult
         dend = dendrogram(Z, no_plot=True)
         payload["perK"][str(k)] = {
             "order": order, "labels": labels,

@@ -409,21 +409,12 @@ def resolve_gene_sets(gene_sets) -> dict[str, str]:
 _resolve_gene_sets = resolve_gene_sets
 
 
-class InsufficientGroups(ValueError):
-    """Effectifs trop faibles pour ajuster le contraste demandé.
-
-    Type dédié — et non un `ValueError` nu — pour que l'orchestrateur puisse
-    écarter une combinaison strate × design sans risquer d'avaler une vraie
-    erreur de calcul.
-    """
-
-
 def contrast_group_sizes(metadata: pd.DataFrame, design: str, contrast: str,
                          control: str, test: str) -> tuple[int, int, int]:
     """Effectifs (control, test, exclus) d'un contraste, SANS ajuster DESeq2.
 
-    Rejoue la sélection d'échantillons de :func:`run_clinical_degsea` — modalités
-    du contraste, puis complétude des variables du design — pour permettre
+    Rejoue la sélection d'échantillons de :func:`run_clinical_degsea_group` —
+    modalités du contraste, puis complétude des variables du design — pour permettre
     d'écarter une combinaison inexploitable avant d'y consacrer du calcul. Le
     filtrage des gènes pouvant encore retirer des tumeurs, ces effectifs sont une
     borne supérieure ; la vérification définitive reste dans l'ajustement.
@@ -647,40 +638,11 @@ def run_clinical_degsea_group(
             "n_samples": int(len(meta)), "results": results, "skipped": skipped}
 
 
-def run_clinical_degsea(
-    counts: pd.DataFrame,
-    metadata: pd.DataFrame,
-    *,
-    design: str,
-    contrast: str,
-    control: str,
-    test: str,
-    gene_sets,
-    outdir: Path,
-    min_group: int = 3,
-    min_count: int = 10,
-    gene_filters: DegseaFilters | None = None,
-    permutations: int = 1000,
-    n_jobs: int = 1,
-    seed: int = 0,
-) -> dict:
-    """DESeq2 + GSEA clinique pour **un** contraste.
-
-    Enveloppe à un seul contraste de :func:`run_clinical_degsea_group`, pour
-    n'avoir qu'une implémentation de la sélection d'échantillons, de la réduction
-    de formule et du filtrage.
-    """
-    out = run_clinical_degsea_group(
-        counts, metadata, design=design,
-        specs={"_": {"contrast": contrast, "control": control, "test": test,
-                     "gene_sets": gene_sets, "outdir": outdir,
-                     "min_group": min_group}},
-        min_count=min_count, gene_filters=gene_filters,
-        permutations=permutations, n_jobs=n_jobs, seed=seed,
-    )
-    if "_" in out["skipped"]:
-        raise InsufficientGroups(out["skipped"]["_"])
-    return out["results"]["_"]
+# SUPPRIMÉ — run_clinical_degsea (enveloppe à un seul contraste) et son
+# exception InsufficientGroups : plus aucun appelant depuis que l'orchestrateur
+# groupe les contrastes par formule pour partager l'ajustement. Un contraste
+# unique s'obtient en passant un `specs` d'une seule entrée à
+# run_clinical_degsea_group. Code dans l'historique git.
 
 
 # --------------------------------------------------------------------------

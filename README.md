@@ -346,8 +346,10 @@ clinical_degsea:
 
 Les noms sous `collections` doivent être définis dans `gsea_collections`; si la
 clé est omise, toutes les collections sont utilisées. Chaque expérience est
-automatiquement exécutée lorsqu'elle figure dans le YAML (l'option
-`--run_clinical_degsea y` sert à signaler une configuration absente). Elle
+automatiquement exécutée lorsqu'elle figure dans le YAML ; `run_clinical_degsea`
+laissé vide garde ce comportement, `n` coupe l'étape même si des designs sont
+configurés, `y` la demande explicitement et prévient si le YAML n'en contient
+aucun. Elle
 utilise seulement la matrice de **counts bruts** et les métadonnées, sans lire
 les clusters ni l'ICA. Les résultats sont dans
 `tables/clinical_degsea/<nom>/` : `deseq2.csv`, `samples_used.csv` et un
@@ -489,7 +491,6 @@ results/run01/
 ├── run_params.json
 ├── consensus_matrix_k4.npy
 ├── figures/
-│   ├── cluster_overview_k*.png      # FIGURE DE SYNTHÈSE (voir ci-dessous)
 │   ├── consensus_heatmap_k*.png     # matrices consensus réordonnées
 │   ├── cdf_pac_deltak.png           # choix de k
 │   ├── tracking_plot.png            # suivi des affectations quand k augmente
@@ -503,22 +504,13 @@ results/run01/
     └── embeddings_k4.csv
 ```
 
-## Figure de synthèse (`cluster_overview_k*.png`)
+## Figure de synthèse — retirée
 
-Générée en fin de pipeline, elle combine sur un **axe commun (l'ordre du
-dendrogramme)** tout ce qui caractérise la partition :
-
-- **haut** : l'arbre consensus, branches colorées par leur **stabilité Jaccard** ;
-- **centre** : la **heatmap consensus** réordonnée + barre de clusters ;
-- **gauche** : la **proportion de chaque modalité de `--color-by`** par cluster ;
-- **droite** : l'**enrichissement GSEA** (NES one-vs-all) des voies les plus
-  significativement différentielles de chaque cluster ;
-- **bas** : le **boxplot d'item consensus** (stabilité des tumeurs) par cluster.
-
-Les panneaux latéraux et le boxplot sont alignés sur les blocs de clusters. Les
-panneaux se dégradent proprement selon ce qui est disponible : sans
-`--compute_jaccard y` l'arbre est en gris, sans `--color-by` le panneau de gauche
-disparaît, sans `--run_degsea y` le panneau de droite indique « GSEA non calculé ».
+La figure `cluster_overview_k*.png`, qui combinait arbre, heatmap consensus,
+proportions cliniques, enrichissement GSEA et item consensus sur un axe commun,
+n'est plus produite : son code était désactivé depuis longtemps et le rapport
+HTML montre les mêmes panneaux, alignés sur le même ordre d'échantillons, en
+interactif. Elle reste disponible dans l'historique git.
 
 ## Suites naturelles
 

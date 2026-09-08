@@ -110,7 +110,20 @@ def cluster_consensus(result: ConsensusResult, k: int) -> pd.DataFrame:
 def summary(result: ConsensusResult, pac_bounds: tuple[float, float] = (0.1, 0.9)
             ) -> pd.DataFrame:
     """Tableau récapitulatif par k : PAC, aire CDF, delta-K, silhouette,
-    taille du plus petit cluster."""
+    taille du plus petit cluster.
+
+    **Mémoïsé** sur le résultat consensus (immuable une fois construit) : ce
+    tableau est demandé par la sélection de k, par `suggest_k` — qui le
+    recalculait pour son propre compte —, par les diagnostics de branche et par
+    le rapport, soit une dizaine de fois par run alors qu'il contient une
+    silhouette par k sur une matrice de distance n×n. Une copie est renvoyée à
+    chaque appel : l'appelant reste libre de la trier ou de la filtrer.
+    """
+    cache = getattr(result, "_cache", None)
+    key = ("summary", tuple(float(b) for b in pac_bounds))
+    if cache is not None and key in cache:
+        return cache[key].copy()
+
     dk = delta_k(result).set_index("k")
     rows = []
     for k in sorted(result.consensus):
@@ -135,7 +148,10 @@ def summary(result: ConsensusResult, pac_bounds: tuple[float, float] = (0.1, 0.9
                 ),
             }
         )
-    return pd.DataFrame(rows)
+    tab = pd.DataFrame(rows)
+    if cache is not None:
+        cache[key] = tab.copy()
+    return tab
 
 
 def silhouette_per_sample(result: ConsensusResult, k: int) -> pd.DataFrame:

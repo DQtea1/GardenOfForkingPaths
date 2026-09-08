@@ -16,11 +16,11 @@
      chaque modalité de chaque stratification affichée dans le rapport — le
      **cluster** (pour **chaque k**) et chaque **variable clinique catégorielle**.
      Sert aux **étoiles de significativité** au-dessus des boxplots de l'onglet
-     « Signatures détaillé » (`stratified_signature_tests`).
+     « Boxplots » du rapport (`stratified_signature_tests`).
 
-14.3  Figures, par variable clinique catégorielle et pour chaque méthode :
-       - **boxplots** des top signatures qui séparent le mieux les modalités ;
-       - **heatmap** de l'activation des signatures par échantillon.
+Les figures statiques par variable (boxplots, heatmap d'activation) ont été
+retirées : le rapport HTML rend la même chose en interactif, et leur calcul
+pesait lourd pour rien. Elles restent dans l'historique git.
 
 Comme dans DEGSEA, les gènes doivent être des **symboles HGNC**. Le scoring se
 fait sur une matrice d'expression **normalisée, tous gènes** (logCPM), pour que
@@ -399,20 +399,8 @@ def stratified_signature_tests(scores: dict, cluster_labels_by_k: dict,
     return tests, pd.DataFrame(tidy)
 
 
-def top_signatures(assoc: pd.DataFrame, variable: str, top_n: int,
-                   padj_max: float) -> list[str]:
-    """Signatures les plus significativement associées à `variable` (min padj),
-    limitées à celles sous le seuil, jusqu'à `top_n`."""
-    sub = assoc[assoc["variable"] == variable]
-    if sub.empty:
-        return []
-    best = sub.groupby("signature")["padj"].min().sort_values()
-    sig = best[best <= padj_max]
-    return list((sig if len(sig) else best).index[:top_n])
-
-
 # --------------------------------------------------------------------------
-# Orchestration 14.1 -> 14.3
+# Orchestration 14.1 -> 14.2
 # --------------------------------------------------------------------------
 def run_signature_projection(
     expr: pd.DataFrame,
@@ -428,13 +416,10 @@ def run_signature_projection(
     seed: int = 0,
 ) -> dict:
     """`expr` : tumeurs × gènes normalisé (tous gènes). `metadata` : tumeurs ×
-    variables cliniques (ou None -> seul le scoring 7.1 est fait). Renvoie
+    variables cliniques (ou None -> seul le scoring 14.1 est fait). Renvoie
     `{"ssgsea": df, "mean": df}` (signatures × tumeurs)."""
-    from . import plots as pl
-
     sig_dir = Path(outdir) / "tables" / "signatures"
     sig_dir.mkdir(parents=True, exist_ok=True)
-    figs = Path(outdir) / "figures"
     threads = os.cpu_count() if n_jobs in (-1, 0, None) else max(1, int(n_jobs))
 
     if len(signatures) > 500:
@@ -454,11 +439,13 @@ def run_signature_projection(
                 scores["ssgsea"].shape[0])
 
     if metadata is None or metadata.shape[1] == 0:
-        logger.info("Projection : pas de métadonnées -> association (14.2) et "
-                    "figures (14.3) sautées.")
+        logger.info("Projection : pas de métadonnées -> association (14.2) sautée.")
         return scores
 
-    # 14.2  association + 14.3  figures, pour chaque méthode
+    # 14.2  association aux variables cliniques, pour chaque méthode de score.
+    # Les figures statiques par variable (boxplots + heatmap) ont été retirées :
+    # elles coûtaient un temps de calcul important pour un rendu que le rapport
+    # HTML fait mieux, et de façon interactive (onglet « Boxplots »).
     for method, mat in scores.items():
         assoc = associate(mat, metadata, corr_method=corr_method, min_group=min_group,
                           max_text_levels=max_text_levels)
@@ -466,16 +453,4 @@ def run_signature_projection(
         n_sig = int((assoc["padj"] <= sig_pval).sum()) if len(assoc) else 0
         logger.info("Projection 14.2 [%s] : %d tests, %d significatifs (FDR <= %.3g).",
                     method, len(assoc), n_sig, sig_pval)
-        
-        # Added unnecessary computing time
-        # cat_vars = (assoc.loc[assoc["var_type"] == "categorical", "variable"].unique()
-        #             if len(assoc) else [])
-        # for var in cat_vars:
-        #     top = top_signatures(assoc, var, top_n, sig_pval)
-        #     if not top:
-        #         continue
-        #     pl.plot_signature_boxplots(mat, metadata[var], top, var, method,
-        #                                assoc, figs)
-        #     pl.plot_signature_heatmap(mat, metadata[var], top, var, method, figs)
-        # logger.info("Projection 7.3 [%s] : figures par variable -> %s", method, figs)
     return scores

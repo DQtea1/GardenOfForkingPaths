@@ -35,7 +35,7 @@ from . import purity as pur
 from . import report as rp
 from . import sigproj as sp
 from .analysis_branch import AnalysisBranch, BranchPaths, BranchSettings
-from .config import ConfigError, build_parser, load_config
+from .config import ConfigError, load_config
 from .results import PipelineResults
 
 

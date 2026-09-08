@@ -147,6 +147,10 @@ class ConsensusResult:
     indicator: np.ndarray                     # n x n, nb de co-tirages
     sample_names: np.ndarray
     params: dict = field(default_factory=dict)
+    #: mémoïsation interne (arbres, diagnostics). Un résultat est immuable une
+    #: fois construit : rien n'invalide ce cache. Exclu de la comparaison et de
+    #: la représentation, il ne fait pas partie du contenu de l'objet.
+    _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     def distance(self, k: int) -> np.ndarray:
         """Distance consensus D = 1 - C (diagonale nulle, symétrique)."""
@@ -155,17 +159,31 @@ class ConsensusResult:
         np.fill_diagonal(D, 0.0)
         return np.clip(D, 0.0, 1.0)
 
+    def linkage_tree(self, k: int, linkage_method: str = "average") -> np.ndarray:
+        """CAH sur la distance consensus, **mémoïsée** par (k, linkage).
+
+        `labels`, `order`, les dendrogrammes du rapport, la stabilité des
+        branches et les diagnostics repassent tous par cet arbre : sur une
+        cohorte de plusieurs centaines de tumeurs, le recalculer à chaque appel
+        coûtait un `squareform` + un `linkage` O(n²) des dizaines de fois par
+        run, pour un résultat rigoureusement identique.
+        """
+        key = (int(k), str(linkage_method))
+        if key not in self._cache:
+            self._cache[key] = linkage(
+                squareform(self.distance(k), checks=False), method=linkage_method)
+        return self._cache[key]
+
     def labels(self, k: int, linkage_method: str = "average") -> np.ndarray:
         """Partition finale : CAH sur la distance consensus, coupée à k."""
-        Z = linkage(squareform(self.distance(k), checks=False), method=linkage_method)
-        return fcluster(Z, t=k, criterion="maxclust")
+        return fcluster(self.linkage_tree(k, linkage_method), t=k,
+                        criterion="maxclust")
 
     def order(self, k: int, linkage_method: str = "average") -> np.ndarray:
         """Ordre des échantillons issu du dendrogramme (pour les heatmaps)."""
         from scipy.cluster.hierarchy import leaves_list
 
-        Z = linkage(squareform(self.distance(k), checks=False), method=linkage_method)
-        return leaves_list(Z)
+        return leaves_list(self.linkage_tree(k, linkage_method))
 
 
 def consensus_clustering(
