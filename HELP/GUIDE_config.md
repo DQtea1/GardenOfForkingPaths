@@ -174,12 +174,14 @@ hierarchical` + `metric: euclidean` + `linkage: ward` + `scale_genes: true`**.
 
 ## 5 · Embeddings (t-SNE / UMAP)
 
-Rappel : c'est une **visualisation**, pas une validation (calculée sur la même
-distance consensus). Les positions *entre* nuages n'ont pas de sens.
+Rappel : sur la distance consensus, c'est une **visualisation**, pas une
+validation (calculée sur la même distance que le clustering). Les positions
+*entre* nuages n'y ont pas de sens.
 
 | Paramètre | Recommandation |
 |---|---|
 | `tsne_dim` | `2` = PNG statiques. `3` = HTML interactif (rotation, survol = ID tumeur ; nécessite `plotly`). |
+| `embedding_distances` | Espaces de distance sur lesquels t-SNE / UMAP sont appris ; le menu **Distance** du rapport (onglets Consensus et ICA) bascule de l'un à l'autre. `consensus` = D_K = 1 − C_K, recalculé pour chaque k (défaut historique). `euclidean`, `correlation`, `manhattan` sont calculées **directement sur la matrice d'entrée de la branche** (scores des composantes côté ICA, expression sélectionnée côté consensus) : elles ne dépendent pas de k, qui n'y pilote plus que la coloration par cluster. Une structure visible sur la seule distance consensus est une structure produite par le clustering, pas par les données — d'où l'intérêt de comparer. |
 | `perplexity` | t-SNE. `30` par défaut. Grossièrement entre `n/100` et `50`. Petite cohorte → baisse (`10`–`20`). |
 | `n_neighbors` | UMAP. `15` par défaut. Plus haut (`30`–`50`) = structure plus globale ; plus bas = structure locale. |
 | `min_dist` | UMAP. `0.1` par défaut. Plus bas = nuages plus compacts. |

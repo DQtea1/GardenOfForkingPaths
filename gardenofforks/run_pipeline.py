@@ -211,7 +211,57 @@ def _load_metadata(c: _Ctx) -> None:
         c.log.info("Contraste DESeq2 %r relu en chaînes : %s", col,
                    ", ".join(map(str, pd.unique(metadata[col].dropna()))))
 
-    c.metadata = metadata
+    c.metadata = _restrict_metadata(c, metadata)
+
+
+def _restrict_metadata(c: _Ctx, metadata: pd.DataFrame) -> pd.DataFrame:
+    """Restreint les métadonnées aux colonnes de `filter_columns`.
+
+    La coupe est faite **ici**, au plus tôt : tout le reste du pipeline — khi²,
+    corrélations, associations, DEGSEA clinique, projection de signatures,
+    rapport — consomme `c.metadata` directement ou via
+    `AnalysisBranch.aligned_metadata()`. Une colonne retirée à cet endroit ne
+    peut donc réapparaître nulle part, ni dans un calcul ni dans un menu.
+
+    Les colonnes dont une ÉTAPE dépend sont vérifiées d'abord : variables des
+    designs `clinical_degsea`, contrastes, colonnes de stratification et
+    `color_by`. En retirer une ne provoquerait pas d'erreur — `_design_variables`
+    ne trouverait simplement plus le terme — mais changerait silencieusement le
+    modèle ajusté. On préfère refuser la configuration.
+    """
+    args, log = c.args, c.log
+    allowed = cf.as_str_tuple(args.filter_columns)
+    if not allowed:
+        return metadata
+
+    required: dict[str, set[str]] = {
+        "contrast": set(cf.contrast_columns(args.clinical_degsea)),
+        "group_DESeq2_by": set(cf.grouping_columns(args.group_DESeq2_by)),
+        "color_by": {str(args.color_by)} if args.color_by else set(),
+    }
+    designs = set()
+    for spec in cf.clinical_experiments(args.clinical_degsea).values():
+        designs |= set(dg._design_variables(str(spec["design"]), metadata.columns))
+    required["design clinical_degsea"] = designs
+
+    blocking = {key: sorted(cols - set(allowed)) for key, cols in required.items()}
+    if any(blocking.values()):
+        raise ConfigError(
+            "filter_columns exclut des colonnes dont une étape dépend — ajoute-les "
+            "à la liste, ou retire l'étape qui les utilise : " + " ; ".join(
+                f"{key} : {', '.join(map(repr, cols))}"
+                for key, cols in blocking.items() if cols))
+
+    unknown = [col for col in allowed if col not in metadata.columns]
+    if unknown:
+        log.warning("filter_columns : %d colonne(s) demandée(s) mais absente(s) de "
+                    "la table clinique — %s", len(unknown), ", ".join(unknown))
+
+    keep = [col for col in metadata.columns if col in set(allowed)]
+    log.info("filter_columns : %d / %d colonnes cliniques conservées ; %d écartée(s) "
+             "pour tout le run.", len(keep), metadata.shape[1],
+             metadata.shape[1] - len(keep))
+    return metadata.loc[:, keep]
 
 
 def _purity_filter(c: _Ctx) -> None:
@@ -366,6 +416,7 @@ def _run_ica_branches(c: _Ctx) -> None:
             "items": branch.items,
             "coords": branch.coords,
             "coords_by_k": branch.coords_by_k,
+            "coords_by_distance": branch.coords_by_distance,
             "meta": branch.aligned_metadata(),
             "color_var": branch.color_var,
             "assoc": branch.assoc,
@@ -842,6 +893,7 @@ def _report(c: _Ctx) -> None:
             result=branch.result, k_final=branch.k_final, linkage_method=args.linkage,
             min_cluster_size=args.min_cluster_size, k_criterion=args.k_criterion,
             coords=branch.coords, coords_by_k=branch.coords_by_k,
+            coords_by_distance=branch.coords_by_distance,
             meta=branch.aligned_metadata(), sig_scores=c.sig_scores,
             sig_provenance=c.sig_provenance,
             sig_tests=c.sig_tests, deconv=(c.deconv or None),
@@ -851,7 +903,8 @@ def _report(c: _Ctx) -> None:
             assoc=(branch.assoc or None), corr=(branch.corr or None),
             ica={"result": c.ica_result, "branches": c.ica_branches,
                  "enabled": args.run_ica == "y",
-                 "gseaEnabled": args.run_ica_gsea == "y"})
+                 "gseaEnabled": args.run_ica_gsea == "y"},
+            filter_columns=cf.as_str_tuple(args.filter_columns))
         rp.build_report(results, outdir)
         log.info("Rapport d'analyse : %s", outdir / "report.html")
 

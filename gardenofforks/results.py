@@ -31,6 +31,7 @@ class PipelineResults:
 
     coords: Any = None                           # embeddings t-SNE / UMAP (DataFrame)
     coords_by_k: dict | None = None              # {k: embeddings t-SNE / UMAP (DataFrame)}
+    coords_by_distance: dict | None = None       # {distance directe: embeddings (DataFrame)}
     meta: Any = None                             # métadonnées cliniques (DataFrame)
     sig_scores: dict | None = None               # {"ssgsea": df, "mean": df}
     sig_provenance: Any = None                    # DataFrame signature -> source (collection d'origine)
@@ -42,3 +43,4 @@ class PipelineResults:
     assoc: dict | None = None                    # khi² (9a) prêt pour le rapport
     corr: dict | None = None                     # corrélations (9b) prêtes pour le rapport
     ica: dict | None = None                      # branche ICA indépendante, prête pour le rapport
+    filter_columns: tuple[str, ...] = ()         # colonnes proposées comme filtres (ssGSEA)

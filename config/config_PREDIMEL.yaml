@@ -180,6 +180,12 @@ compute_jaccard: y            # y | n
 
 # ================================================= 5 · Embeddings (t-SNE / UMAP)
 tsne_dim: 3                   # 2 (PNG) | 3 (HTML interactif, nécessite plotly)
+# Espaces de distance sur lesquels t-SNE / UMAP sont appris. Un menu "Distance"
+# du rapport (onglets Consensus et ICA) permet de passer de l'un à l'autre.
+#   consensus   -> D_K = 1 - C_K, recalculé pour chaque k (comportement historique)
+#   euclidean | correlation | manhattan -> calculées directement sur la matrice
+#   d'entrée de la branche (scores des composantes côté ICA) ; indépendantes de k
+embedding_distances: [consensus, euclidean, correlation, manhattan]
 perplexity: 30.0
 n_neighbors: 15
 min_dist: 0.1
@@ -212,8 +218,8 @@ gsea_permutations: 1000       # permutations du GSEA pré-classé
 gsea_heatmap_pval: 0.05       # heatmap : garde tous les pathways à p-valeur nominale < ce seuil dans >= 1 cluster
 
 # ---------------------------------------------------------------------------
-# Filtrage des gènes en entrée du DEGSEA clinique  (onglet « Résultats
-# Expression Différentielle » du rapport).
+# Filtrage des gènes en entrée du DEGSEA clinique  (onglet « Expression
+# Analysis » du rapport).
 #
 # ATTENTION : le DEGSEA part des counts BRUTS — DESeq2 modélise des comptages,
 # pas une matrice normalisée. Les filtres de la section 1 (min_cpm,
@@ -275,7 +281,7 @@ clinical_degsea_min_plausible_disp: 1e-3   # seuil du marquage (tumeur réelle :
 # STRATIFICATION du DEGSEA clinique. Pour chaque modalité de chacune de ces
 # colonnes, TOUTE la batterie de designs `clinical_degsea` ci-dessous est
 # rejouée sur les seules tumeurs de cette modalité. Dans le rapport, onglet
-# « Résultats Expression Différentielle » > « DEGSEA », cela donne trois menus
+# « Expression Analysis » > « DEGSEA », cela donne trois menus
 # en cascade : colonne de filtrage -> modalité -> design.
 #
 # 'None' / 'NA' / 'ALL' désignent l'analyse non filtrée. Elle est de toute façon

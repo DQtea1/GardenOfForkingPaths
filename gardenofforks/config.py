@@ -120,7 +120,7 @@ def _add_deseq2_options(group, prefix: str) -> None:
 def _add_degsea_filter_options(group, prefix: str, scope: str) -> None:
     """Déclare le jeu d'options `<prefix>_*` de filtrage des gènes d'un DEGSEA.
 
-    Les deux DEGSEA — clinique (onglet « Expression Différentielle ») et par
+    Les deux DEGSEA — clinique (onglet « Expression Analysis ») et par
     cluster (onglet « Consensus-Clustering ») — partagent la même mécanique de
     filtrage mais des **seuils indépendants** : une seule définition ici, deux
     préfixes à l'appel. Côté exécution, le pendant est
@@ -189,6 +189,16 @@ def build_parser() -> argparse.ArgumentParser:
     io.add_argument("--color-by", default=None,
                     help="colonne des métadonnées à superposer sur les embeddings")
     io.add_argument("--outdir", default="results/run", type=Path)
+    io.add_argument("--filter_columns", default=None, metavar="COL[,COL…]",
+                    help="RESTREINT les métadonnées cliniques à ces colonnes, pour "
+                         "TOUT le run (liste YAML, ou noms séparés par des virgules). "
+                         "La coupe a lieu dès le chargement : khi², corrélations, "
+                         "associations, DEGSEA clinique, projection de signatures et "
+                         "toutes les vues du rapport ne verront jamais les autres "
+                         "colonnes. Vide = aucune restriction. Une colonne dont une "
+                         "étape dépend (contraste, variable de design, group_DESeq2_by, "
+                         "color_by) ne peut pas être exclue : le run s'arrête avec un "
+                         "message plutôt que de changer un modèle en silence.")
 
     harm = p.add_argument_group("harmonisation des identifiants de gènes (étape 1a)")
     harm.add_argument("--harmonize_gene_ids", choices=["y", "n"], default="n",
@@ -448,6 +458,14 @@ def build_parser() -> argparse.ArgumentParser:
                       help="dimensions des embeddings t-SNE / UMAP : 2 (PNG "
                            "statiques, défaut) ou 3 (HTML interactif rotatable, "
                            "survol = ID de la tumeur ; nécessite plotly)")
+    embg.add_argument("--embedding_distances", default="consensus",
+                      help="espaces de distance sur lesquels calculer t-SNE / UMAP, "
+                           "séparés par des virgules (liste en YAML). 'consensus' "
+                           "(défaut) = D_K = 1 - C_K, recalculé pour chaque k ; "
+                           "'euclidean', 'correlation' et 'manhattan' sont calculées "
+                           "directement sur la matrice d'entrée de la branche (scores "
+                           "des composantes pour l'ICA) et ne dépendent pas de k. Le "
+                           "rapport propose un menu pour passer de l'une à l'autre.")
     embg.add_argument("--perplexity", type=float, default=30.0)
     embg.add_argument("--n-neighbors", type=int, default=15)
     embg.add_argument("--min-dist", type=float, default=0.1)
@@ -708,6 +726,17 @@ def _check_inputs(cfg: dict, errors: list[str]) -> None:
 
 def _check_steps(cfg: dict, errors: list[str]) -> None:
     """Combinaisons d'étapes impossibles, détectées avant le premier calcul."""
+    from .embedding import DISTANCE_CHOICES
+
+    unknown = [
+        name for name in as_str_tuple(cfg.get("embedding_distances"))
+        if name.strip().lower() not in DISTANCE_CHOICES
+    ]
+    if unknown:
+        errors.append(
+            "embedding_distances : valeur(s) inconnue(s) "
+            f"{', '.join(unknown)} — attendu {', '.join(DISTANCE_CHOICES)}."
+        )
     if cfg.get("already_normalized") and clinical_experiments(cfg.get("clinical_degsea")):
         errors.append(
             "clinical_degsea requiert des counts BRUTS : incompatible avec "

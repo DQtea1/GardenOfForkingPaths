@@ -634,6 +634,12 @@ def _ica_payload(ica, outdir: Path, *, linkage_method: str,
             str(int(branch["k_final"])),
             _embedding_payload(branch.get("coords"), projection.index),
         )
+        # Espaces de distance alternatifs (euclidien, corrélation, Manhattan)
+        # calculés sur les scores de composantes : indépendants de K.
+        embed_by_distance = {
+            str(name): _embedding_payload(coords_m, projection.index)
+            for name, coords_m in (branch.get("coords_by_distance") or {}).items()
+        }
 
         meta, meta_types = fallback_meta, fallback_meta_types
         branch_meta = branch.get("meta")
@@ -673,6 +679,7 @@ def _ica_payload(ica, outdir: Path, *, linkage_method: str,
                 min_cluster_size, k_criterion,
                 branch.get("branch_stability_by_k")),
             "embed": embed, "embedByK": embed_by_k,
+            "embedByDistance": embed_by_distance,
             "assoc": branch.get("assoc") or {},
             "corr": _corr_payload(branch.get("corr")),
         }
@@ -832,6 +839,23 @@ def _gather(res, outdir):
                 data["meta"][var] = [None if pd.isna(v) else str(v) for v in col]
                 data["metaTypes"][var] = "categorical"
 
+    # `filter_columns` a déjà restreint les métadonnées en amont (cf.
+    # run_pipeline._restrict_metadata) : data["meta"] ne contient donc plus que
+    # les colonnes autorisées, et aucune vue du rapport ne peut en afficher
+    # d'autres. Ce champ ne sert plus qu'à fixer l'ORDRE des menus de filtrage
+    # sur celui du YAML, plus parlant qu'un ordre alphabétique quand les colonnes
+    # ont une hiérarchie (histo_classe, subclass, subtype).
+    wanted = [str(c) for c in (getattr(res, "filter_columns", ()) or ())]
+    if wanted:
+        data["filterColumns"] = [c for c in wanted if c in data["meta"]]
+        missing = [c for c in wanted if c not in data["meta"]]
+        if missing:
+            logger.warning("filter_columns : %d colonne(s) ignorée(s), absentes des "
+                           "métadonnées exploitables du rapport — %s",
+                           len(missing), ", ".join(missing))
+    else:
+        data["filterColumns"] = None          # null = aucune restriction
+
     # Embeddings propres à chaque K, calculés sur D_K = 1 - C_K. ``embed``
     # reste volontairement un alias du K final pour les rapports existants.
     data["embedByK"] = {
@@ -841,6 +865,10 @@ def _gather(res, outdir):
     data["embed"] = data["embedByK"].get(
         str(int(k_final)), _embedding_payload(coords, samples)
     )
+    data["embedByDistance"] = {
+        str(name): _embedding_payload(coords_m, samples)
+        for name, coords_m in (res.coords_by_distance or {}).items()
+    }
 
     # tables (toutes les .csv sous outdir/tables)
     data["tables"] = {}

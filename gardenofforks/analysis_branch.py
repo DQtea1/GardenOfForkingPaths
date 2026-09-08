@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from . import catassoc as ca
+from . import config as cf
 from . import consensus as cc
 from . import correlate as co
 from . import embedding as emb
@@ -48,6 +49,7 @@ class BranchSettings:
     k_criterion: str
     tsne_dim: int
     run_umap: bool
+    embedding_distances: tuple[str, ...]
     perplexity: float
     n_neighbors: int
     min_dist: float
@@ -78,6 +80,10 @@ class BranchSettings:
             k_criterion=str(args.k_criterion),
             tsne_dim=int(args.tsne_dim),
             run_umap=not bool(args.no_umap),
+            embedding_distances=cf.as_str_tuple(
+                getattr(args, "embedding_distances", None),
+                (emb.CONSENSUS_DISTANCE,),
+            ),
             perplexity=float(args.perplexity),
             n_neighbors=int(args.n_neighbors),
             min_dist=float(args.min_dist),
@@ -137,6 +143,10 @@ class AnalysisBranch:
     # Une table d'embeddings par K. Chaque table est calculée sur D_K = 1 - C_K,
     # et non sur la seule distance du K retenu.
     coords_by_k: dict[int, pd.DataFrame] = field(default_factory=dict)
+    # Une table d'embeddings par espace de distance *alternatif* (euclidien,
+    # corrélation, Manhattan) calculé directement sur ``matrix``. Ces
+    # coordonnées ne dépendent pas de K : seule la coloration en dépend.
+    coords_by_distance: dict[str, pd.DataFrame] = field(default_factory=dict)
     color_var: np.ndarray | None = None
     assoc: dict | None = None
     corr: dict | None = None
@@ -358,6 +368,7 @@ class AnalysisBranch:
         # Compatibilité avec les consommateurs qui représentent la partition
         # finale (figures statiques, synthèse) : ``coords`` reste le K retenu.
         self.coords = self.coords_by_k[int(self.k_final)]
+        self._run_direct_embeddings()
 
         plot_emb = pl.plot_embeddings_3d if s.tsne_dim == 3 else pl.plot_embeddings
         plot_emb(self.coords, self.paths.figure_dir, self.k_final)
@@ -399,6 +410,62 @@ class AnalysisBranch:
             s.color_by,
             crosstab.to_string(),
         )
+
+    def _run_direct_embeddings(self) -> None:
+        """Embeddings sur des distances calculées directement sur ``matrix``.
+
+        Le consensus n'est pas le seul espace lisible : euclidien, corrélation
+        et Manhattan donnent la géométrie brute des scores de composantes, sans
+        l'effet « aimant » de D = 1 - C (qui écrase toutes les paires de
+        clusters distincts à 1). Ces coordonnées ne dépendent pas de K ; seules
+        les étiquettes servant à colorer viennent de la partition retenue.
+        """
+        s = self.settings
+        self.coords_by_distance = {}
+        metrics = [
+            m for m in dict.fromkeys(str(x).strip().lower() for x in s.embedding_distances)
+            if m != emb.CONSENSUS_DISTANCE
+        ]
+        if not metrics:
+            return
+
+        names = self.result.sample_names
+        features = self.matrix.reindex(names)
+        items_final = mt.item_consensus(self.result, self.k_final)
+        for metric in metrics:
+            if metric not in emb.DIRECT_DISTANCES:
+                self.logger.warning(
+                    "%s — distance d'embedding '%s' inconnue : ignorée "
+                    "(valeurs acceptées : %s).",
+                    self.name, metric, ", ".join(emb.DISTANCE_CHOICES),
+                )
+                continue
+            try:
+                D = emb.distance_from_features(features, metric)
+                coords = emb.embeddings_table(
+                    D, names, self.labels,
+                    run_umap=s.run_umap,
+                    n_components=s.tsne_dim,
+                    perplexity=s.perplexity,
+                    n_neighbors=s.n_neighbors,
+                    min_dist=s.min_dist,
+                    random_state=s.random_state,
+                    n_jobs=s.n_jobs,
+                ).merge(items_final[["sample", "item_consensus"]], on="sample")
+            except Exception as exc:  # une distance ratée ne doit rien casser
+                self.logger.warning(
+                    "%s — embedding sur distance %s abandonné : %s",
+                    self.name, metric, exc,
+                )
+                continue
+            self.coords_by_distance[metric] = coords
+            coords.to_csv(
+                self.paths.table_dir / f"embeddings_{metric}.csv", index=False,
+            )
+            self.logger.info(
+                "%s — embedding calculé sur %s (indépendant de K).",
+                self.name, emb.DISTANCE_LABELS.get(metric, metric),
+            )
 
     def run_associations(self) -> dict | None:
         """Exécute les associations catégorielles pour la branche si demandées."""

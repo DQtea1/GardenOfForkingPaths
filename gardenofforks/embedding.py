@@ -22,9 +22,31 @@ import logging
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+from scipy.spatial.distance import pdist, squareform
 from sklearn.manifold import TSNE
 
 logger = logging.getLogger(__name__)
+
+# Espace de distance « consensus » : D = 1 - C, le comportement historique.
+CONSENSUS_DISTANCE = "consensus"
+
+# Distances calculées **directement sur la matrice d'entrée de la branche**
+# (scores des composantes pour ICA, expression pour la branche historique),
+# sans passer par le rééchantillonnage. Nom exposé -> métrique scipy.
+DIRECT_DISTANCES = {
+    "euclidean": "euclidean",
+    "correlation": "correlation",
+    "manhattan": "cityblock",
+}
+
+DISTANCE_CHOICES = (CONSENSUS_DISTANCE, *DIRECT_DISTANCES)
+
+DISTANCE_LABELS = {
+    CONSENSUS_DISTANCE: "distance consensus (1 − C_K)",
+    "euclidean": "distance euclidienne sur la matrice d'entrée",
+    "correlation": "distance de corrélation sur la matrice d'entrée",
+    "manhattan": "distance de Manhattan sur la matrice d'entrée",
+}
 
 
 def _check_distance(D: np.ndarray) -> np.ndarray:
@@ -32,6 +54,41 @@ def _check_distance(D: np.ndarray) -> np.ndarray:
     D = (D + D.T) / 2.0
     np.fill_diagonal(D, 0.0)
     return np.clip(D, 0.0, None)
+
+
+def distance_from_features(matrix, metric: str) -> np.ndarray:
+    """Distance échantillon × échantillon calculée sur les variables d'entrée.
+
+    Contrairement à D = 1 - C, cette distance ne dépend ni de K ni du
+    rééchantillonnage : c'est la géométrie brute de l'espace des composantes
+    (ou des gènes). Elle sert de contrepoint visuel au consensus — un nuage qui
+    ne se structure que sur D = 1 - C signale une structure portée par le
+    clustering plus que par les données.
+    """
+    key = str(metric).strip().lower()
+    if key not in DIRECT_DISTANCES:
+        raise ValueError(
+            f"distance '{metric}' inconnue : attendu "
+            f"{', '.join(DIRECT_DISTANCES)}."
+        )
+    values = np.asarray(getattr(matrix, "values", matrix), dtype=np.float64)
+    if values.ndim != 2 or values.shape[0] < 2:
+        raise ValueError("au moins deux échantillons sont nécessaires.")
+    if not np.isfinite(values).all():
+        values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
+        logger.warning("valeurs non finies remplacées par 0 avant la distance.")
+
+    D = squareform(pdist(values, metric=DIRECT_DISTANCES[key]))
+    if not np.isfinite(D).all():
+        # Corrélation indéfinie pour un échantillon de variance nulle : on le
+        # place à distance « décorrélée » (1) plutôt que de propager des NaN.
+        n_bad = int((~np.isfinite(D)).sum())
+        logger.warning(
+            "%s : %d distance(s) indéfinie(s) (variance nulle ?) fixée(s) à 1.",
+            key, n_bad,
+        )
+        D = np.nan_to_num(D, nan=1.0, posinf=1.0, neginf=1.0)
+    return _check_distance(D)
 
 
 def tsne_from_distance(
