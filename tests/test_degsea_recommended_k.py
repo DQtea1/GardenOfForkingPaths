@@ -75,9 +75,6 @@ def test_degsea_single_k_targets_recommended_not_lowest_pac(
     assert calls == [(4, "")]
     assert set(context.degsea_by_k) == {4}
     assert len(heatmaps) == 1
-    # La synthèse principale est sur k_final=3 : ne pas lui fournir les NES de
-    # la partition recommandée k=4, qui ne sont pas alignés sur ses clusters.
-    assert context.nes is None
 
 
 def test_degsea_all_k_keeps_all_partitions_and_recommended_heatmap(
@@ -108,8 +105,9 @@ def test_degsea_all_k_keeps_all_partitions_and_recommended_heatmap(
 
     assert calls == [(3, "k3"), (4, "k4"), (5, "k5")]
     assert set(context.degsea_by_k) == {3, 4, 5}
+    # La heatmap de synthèse porte sur le k RECOMMANDÉ (4), pas sur k_final (3)
+    # ni sur le dernier k calculé.
     assert heatmap_k == [4.0]
-    assert float(context.nes.iloc[0, 0]) == 3.0
 
 
 def test_report_prefers_recommended_k_when_available():

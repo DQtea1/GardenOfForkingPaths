@@ -42,6 +42,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+# Sauvegarde des figures : celle de `plots`, pour que tout le paquet écrive ET
+# referme ses figures de la même façon (sans quoi matplotlib fuit sur un run qui
+# en produit des centaines).
+from .plots import save_figure as _save_figure
+
 logger = logging.getLogger(__name__)
 
 
@@ -916,11 +921,6 @@ def _materialize_decomposition(
     )
 
 
-def _save_figure(fig: plt.Figure, path: Path) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    return path
 
 
 def _plot_index_stability_distribution(

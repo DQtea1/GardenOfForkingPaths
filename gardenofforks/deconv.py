@@ -1,4 +1,4 @@
-"""Section 8 — Déconvolution : batterie de méthodes via omnideconv / immunedeconv.
+"""Étape 15 — Déconvolution : batterie de méthodes via omnideconv / immunedeconv.
 
 Estime la composition cellulaire de chaque tumeur avec plusieurs algorithmes :
 
@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from .config import enabled as _enabled
+
 logger = logging.getLogger(__name__)
 
 R_SCRIPT = Path(__file__).with_name("deconvolve.R")
@@ -42,21 +44,17 @@ DEFAULT_METHODS: dict = {
     "bayesprism": {"enabled": True},
 }
 
-_TRUTHY = {True, 1, "y", "yes", "true", "1", "on"}
-
-
-def _enabled(value) -> bool:
-    if isinstance(value, str):
-        return value.strip().lower() in _TRUTHY
-    return value in _TRUTHY
-
-
 def _normalize_methods(methods: dict) -> dict:
-    """Uniformise `enabled` (y/true/1 -> bool) en gardant les autres paramètres."""
+    """Uniformise `enabled` (y/true/1 -> bool) en gardant les autres paramètres.
+
+    La lecture du booléen vient de :func:`gardenofforks.config.enabled` : c'est
+    la même que pour les collections GSEA et les expériences cliniques, ce qui
+    évite qu'un `enabled: yes` soit compris ici et pas ailleurs.
+    """
     out = {}
     for name, spec in methods.items():
         spec = dict(spec or {})
-        spec["enabled"] = _enabled(spec.get("enabled", True))
+        spec["enabled"] = _enabled(spec.get("enabled"), True)
         out[name] = spec
     return out
 

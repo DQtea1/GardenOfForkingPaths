@@ -1,4 +1,4 @@
-"""Étape 9a — Association entre variables catégorielles (khi², Fisher, résidus).
+"""Étape 16 — Association entre variables catégorielles (khi², Fisher, résidus).
 
 Pour chaque paire de variables catégorielles — la **partition en clusters** (pour
 chaque k) croisée avec chaque variable clinique, et les variables cliniques entre
@@ -132,6 +132,9 @@ def association_test(a: pd.Series, b: pd.Series, min_expected: int = 5,
     obs = tab.values.astype(float)
     n = obs.sum()
     chi2stat, p_chi2, dof, expected = chi2_contingency(obs, correction=False)
+    # `chi2stat` sera écrasé par le M² du test de tendance le cas échéant : on
+    # garde ici le khi² de Pearson, qui reste la base du V de Cramér.
+    pearson_chi2 = float(chi2stat)
     frac_low = float((expected < min_expected).mean())
     min_exp = float(expected.min())
     conditions = (min_exp >= 1.0) and (frac_low <= max_lowexp_frac)
@@ -162,7 +165,6 @@ def association_test(a: pd.Series, b: pd.Series, min_expected: int = 5,
 
     # V de Cramér (toujours à partir du khi² de Pearson, comme taille d'effet)
     k = min(r - 1, c - 1)
-    pearson_chi2 = chi2_contingency(obs, correction=False)[0]
     cramers_v = float(np.sqrt(pearson_chi2 / (n * k))) if (n > 0 and k > 0) else np.nan
 
     # résidus standardisés ajustés (Haberman) ~ N(0,1) sous indépendance
@@ -277,7 +279,7 @@ def run_categorical_association(
         if 2 <= nlev <= max_levels:
             cat_vars.append(str(v))
     if not cat_vars:
-        logger.info("9a. Khi² : aucune variable clinique catégorielle exploitable "
+        logger.info("16. Khi² : aucune variable clinique catégorielle exploitable "
                     "(2..%d modalités) — étape sautée.", max_levels)
         return {}
 
@@ -297,12 +299,12 @@ def run_categorical_association(
     else:
         detail_dir = root / "tables" / "chi2"
         figs = root / "figures"
-    logger.info("9a. Khi² d'indépendance : %d variable(s) catégorielle(s) (%s) × "
+    logger.info("16. Khi² d'indépendance : %d variable(s) catégorielle(s) (%s) × "
                 "clusters (k=%s) + paires cliniques%s",
                 len(cat_vars), ", ".join(cat_vars), list(sorted(cluster_labels_by_k)),
                 (" ; ordinales (test de tendance) : " + ", ".join(ord_declared))
                 if ord_declared else "")
-    logger.warning("9a. Khi² — %s", DUP_WARNING)
+    logger.warning("16. Khi² — %s", DUP_WARNING)
 
     rows, records = [], []      # records : (bucket, kkey, vkey, res), même ordre que rows
     for k in sorted(cluster_labels_by_k):
@@ -347,7 +349,7 @@ def run_categorical_association(
     tidy = tidy.assign(padj=padj).sort_values("pvalue").reset_index(drop=True)
     tidy.to_csv(detail_dir / "chi2_summary.csv", index=False)
     n_sig = int((tidy["padj"] <= 0.05).sum())
-    logger.info("9a. Khi² : %d paires testées, %d significatives (FDR <= 0.05) -> %s",
+    logger.info("16. Khi² : %d paires testées, %d significatives (FDR <= 0.05) -> %s",
                 len(tidy), n_sig, detail_dir / "chi2_summary.csv")
     top = tidy.loc[tidy["padj"] <= 0.05,
                    ["var1", "var2", "k", "test", "pvalue", "cramers_v"]].head(8)

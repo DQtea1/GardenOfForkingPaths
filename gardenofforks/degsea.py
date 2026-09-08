@@ -1,4 +1,8 @@
-"""Étape 6 — DEGSEA : expression différentielle (DESeq2) + GSEA par cluster.
+"""Étapes 7 et 13 — DEGSEA : expression différentielle (DESeq2) + GSEA.
+
+Deux consommateurs, un seul moteur : le DEGSEA **clinique** (étape 7,
+`run_clinical_degsea_group`) et le DEGSEA **par cluster** (étape 13,
+`run_degsea`). Ce qui suit décrit le second.
 
 Pour chaque cluster de la partition finale, on identifie les gènes
 différentiellement exprimés avec **DESeq2** (via PyDESeq2), puis on fait un
@@ -54,7 +58,7 @@ class DegseaFilters:
 
     Le DEGSEA part de la matrice brute, jamais de la matrice prétraitée du
     clustering (DESeq2 modélise des comptages). Ces filtres rejouent donc, pour
-    l'analyse différentielle, les mêmes familles de filtres que l'étape 1 — mais
+    l'analyse différentielle, les mêmes familles de filtres que l'étape 2 — mais
     avec leurs propres seuils, parce que le bon compromis n'est pas le même pour
     du clustering et pour un test gène par gène.
 
@@ -224,18 +228,19 @@ class DeseqSettings:
 # --------------------------------------------------------------------------
 def deseq2_model(counts: pd.DataFrame, metadata: pd.DataFrame, design: str,
                  contrast: tuple[str, str, str],
-                 n_cpus: int | None = None) -> pd.DataFrame:
+                 n_cpus: int | None = None,
+                 settings: DeseqSettings | None = None) -> pd.DataFrame:
     """Ajuste un modèle DESeq2 général et renvoie un contraste catégoriel.
 
     ``design`` est une formule PyDESeq2, par exemple ``"~ age + response"``.
     ``contrast`` suit le format ``(variable, test, control)`` : le log2FC est
     donc ``test / control``. Les counts et métadonnées doivent être strictement
     alignés et sans valeur manquante pour les variables du design.
-    """
-    from pydeseq2.dds import DeseqDataSet
-    from pydeseq2.ds import DeseqStats
-    from pydeseq2.default_inference import DefaultInference
 
+    L'ajustement et l'extraction sont délégués à :func:`fit_deseq2` et
+    :func:`contrast_from_fit` : les garde-fous de ``settings`` (Cook, plancher de
+    dispersion, marquage) s'appliquent donc ici comme au DEGSEA clinique.
+    """
     if not isinstance(design, str) or not design.strip().startswith("~"):
         raise ValueError("design DESeq2 invalide : une formule du type '~ age + response' est attendue.")
     if len(contrast) != 3 or not contrast[0]:
@@ -252,28 +257,10 @@ def deseq2_model(counts: pd.DataFrame, metadata: pd.DataFrame, design: str,
     if variable not in metadata.columns:
         raise ValueError(f"Variable de contraste absente des métadonnées : {variable!r}.")
 
-    # Sur une cohorte large, aucun gène n'est non nul dans TOUS les échantillons :
-    # la médiane des ratios devient impossible et PyDESeq2 bascule de lui-même en
-    # mode `iterative` — 10 fits de dispersions complets, chacun suivi d'un Powell
-    # sur autant de paramètres qu'il y a d'échantillons. Des heures. `poscounts`
-    # est la méthode prévue par DESeq2 pour ce cas, et elle est vectorisée.
-    int_counts = counts.round().astype(int)
-    size_factors_fit_type = "ratio"
-    if (int_counts.to_numpy() == 0).any(axis=0).all():
-        size_factors_fit_type = "poscounts"
-        logger.info(
-            "DESeq2 : aucun gène non nul sur les %d échantillons — size factors "
-            "estimés par 'poscounts' (médiane des ratios inapplicable).",
-            int_counts.shape[0],
-        )
-
-    inference = DefaultInference(n_cpus=n_cpus)
-    with contextlib.redirect_stdout(io.StringIO()):
-        dds = DeseqDataSet(counts=int_counts, metadata=metadata, design=design,
-                           size_factors_fit_type=size_factors_fit_type,
-                           quiet=True, inference=inference)
-        dds.deseq2()
-    return contrast_from_fit(dds, variable, test, control, n_cpus=n_cpus)
+    settings = settings or DeseqSettings()
+    dds = fit_deseq2(counts, metadata, design, n_cpus=n_cpus, settings=settings)
+    return contrast_from_fit(dds, variable, test, control, n_cpus=n_cpus,
+                             settings=settings)
 
 
 def contrast_from_fit(dds, variable: str, test: str, control: str,
@@ -328,16 +315,18 @@ def fit_deseq2(counts: pd.DataFrame, metadata: pd.DataFrame, design: str,
 
 
 def deseq2_contrast(counts: pd.DataFrame, groups: pd.Series,
-                    target: str, ref: str, n_cpus: int | None = None) -> pd.DataFrame:
-    """Compatibilité : contraste DESeq2 simple ``~ group``.
+                    target: str, ref: str, n_cpus: int | None = None,
+                    settings: DeseqSettings | None = None) -> pd.DataFrame:
+    """Contraste DESeq2 simple ``~ group`` (un cluster contre une référence).
 
-    La version générique :func:`deseq2_model` porte désormais les covariables
-    cliniques et les formules arbitraires.
+    La version générique :func:`deseq2_model` porte les covariables cliniques et
+    les formules arbitraires.
     """
     metadata = pd.DataFrame({"group": groups.astype(str).to_numpy()}, index=counts.index)
     return deseq2_model(
         counts, metadata, design="~ group",
         contrast=("group", str(target), str(ref)), n_cpus=n_cpus,
+        settings=settings,
     )
 
 
@@ -699,13 +688,14 @@ def run_clinical_degsea(
 # --------------------------------------------------------------------------
 def _run_one(cnt: pd.DataFrame, groups: pd.Series, target: str, ref: str,
              tag: str, scheme: str, de_dir: Path, gs_dir: Path, gene_sets: dict,
-             permutations, min_count: int, threads: int,
-             seed: int) -> tuple[str, str, dict]:
+             permutations, min_count: int, threads: int, seed: int,
+             settings: DeseqSettings | None = None) -> tuple[str, str, dict]:
     """Un contraste : DESeq2 **une fois**, puis GSEA **pour chaque collection**
     de `gene_sets` ({nom: chemin .gmt}). Renvoie (tag, scheme, {nom: res2d|None}).
     Pensé pour un worker joblib indépendant ; `threads` borne PyDESeq2 et GSEA."""
     keep = cnt.columns[cnt.sum(axis=0) >= min_count]
-    res = deseq2_contrast(cnt[keep], groups, target, ref, n_cpus=threads)
+    res = deseq2_contrast(cnt[keep], groups, target, ref, n_cpus=threads,
+                          settings=settings)
     res.to_csv(de_dir / f"deseq2_{tag}.csv", index_label="gene")
 
     gseas = {}
@@ -733,6 +723,7 @@ def run_degsea(
     subdir: str = "",
     n_jobs: int = -1,
     seed: int = 0,
+    settings: DeseqSettings | None = None,
 ) -> dict:
     """Lance DESeq2 + GSEA sur tous les contrastes demandés.
 
@@ -749,6 +740,8 @@ def run_degsea(
         que les pathways significatifs (p < seuil) dans au moins un cluster.
     n_jobs : contrastes exécutés en parallèle (joblib, un contraste = une tâche).
         `1` = séquentiel ; chaque contraste reçoit alors plus de threads internes.
+    settings : garde-fous numériques DESeq2 (Cook, plancher de dispersion,
+        marquage des dispersions invraisemblables). Voir :class:`DeseqSettings`.
 
     Renvoie `{collection: matrice NES (pathways × clusters)}` (one-vs-all), pour
     les heatmaps de synthèse — dict vide si aucun résultat GSEA.
@@ -828,7 +821,8 @@ def run_degsea(
     results = Parallel(n_jobs=n_jobs if parallel_contrasts else 1)(
         delayed(_run_one)(t["cnt"], t["groups"], t["target"], t["ref"], t["tag"],
                           t["scheme"], t["de_dir"], t["gs_dir"], gene_sets,
-                          permutations, min_count, inner_threads, seed)
+                          permutations, min_count, inner_threads, seed,
+                          settings or DeseqSettings())
         for t in tasks
     )
 

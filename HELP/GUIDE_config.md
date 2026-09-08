@@ -37,7 +37,16 @@ les partitions avec un indice de Rand ajusté, et surtout lance `null_check.py`.
 
 ---
 
-## 1 · Entrées / sorties
+## 1 · Entrées / sorties — `_setup()` + `_load_metadata()`
+
+> **Numérotation.** Les numéros de ce guide, ceux des sections du YAML et ceux
+> des messages du journal désignent tous la même chose : le **rang d'exécution
+> réel** de l'étape dans `main()` (`run_pipeline.py`). Le YAML suit cet ordre du
+> début à la fin ; ce guide, lui, garde un regroupement thématique, donc ses
+> sections ne se suivent pas toujours (16 · khi² est décrite entre 15 et 17,
+> mais avec le DEGSEA). Les étapes 3 (harmonisation), 6 (collections de
+> gene sets), 7 (DEGSEA clinique), 8 (ICA) et 9 (GSEA des métagènes ICA) n'ont
+> pas encore de section ici : voir les commentaires du YAML.
 
 | Paramètre | Comment le régler |
 |---|---|
@@ -49,7 +58,7 @@ les partitions avec un indice de Rand ajusté, et surtout lance `null_check.py`.
 
 ---
 
-## 1 · Prétraitement (normalisation, gènes variables)
+## 2 · Prétraitement (normalisation, gènes variables) — `_load_data()`
 
 ### Normalisation
 
@@ -75,7 +84,7 @@ gène tout-zéro.
 
 ---
 
-## 1a · Pureté tumorale (PUREE) — optionnel
+## 4 · Pureté tumorale (PUREE) — optionnel — `_purity_filter()`
 
 | Paramètre | Recommandation |
 |---|---|
@@ -86,7 +95,7 @@ gène tout-zéro.
 
 ---
 
-## 1b · Filtrage d'outliers (ACP) — optionnel
+## 5 · Filtrage d'outliers (ACP) — optionnel — `_outlier_filter()`
 
 | Paramètre | Recommandation |
 |---|---|
@@ -96,7 +105,7 @@ gène tout-zéro.
 
 ---
 
-## 2 · Consensus clustering — le cœur
+## 10 · Consensus clustering — le cœur — `AnalysisBranch._run_consensus()`
 
 ### Combien de clusters (`k`)
 
@@ -164,7 +173,7 @@ hierarchical` + `metric: euclidean` + `linkage: ward` + `scale_genes: true`**.
 
 ---
 
-## 4b · Stabilité des branches (Jaccard)
+## 11 · Stabilité des branches (Jaccard) — `_run_branch_stability()`
 
 | Paramètre | Recommandation |
 |---|---|
@@ -172,7 +181,7 @@ hierarchical` + `metric: euclidean` + `linkage: ward` + `scale_genes: true`**.
 
 ---
 
-## 5 · Embeddings (t-SNE / UMAP)
+## 12 · Embeddings (t-SNE / UMAP) — `_run_embeddings()`
 
 Rappel : sur la distance consensus, c'est une **visualisation**, pas une
 validation (calculée sur la même distance que le clustering). Les positions
@@ -189,7 +198,7 @@ validation (calculée sur la même distance que le clustering). Les positions
 
 ---
 
-## 6 · DEGSEA (DESeq2 + GSEA par cluster)
+## 13 · DEGSEA par cluster (DESeq2 + GSEA) — `_degsea_all_k()`
 
 Caractérise chaque cluster après le clustering. **Étape longue**, désactivée par défaut.
 
@@ -205,7 +214,7 @@ Caractérise chaque cluster après le clustering. **Étape longue**, désactivé
 
 ⚠️ Double-dipping : p-valeurs anticonservatives (mêmes données pour définir les clusters et les tester). Lecture descriptive, pas inférentielle.
 
-## 7 · Projection de signatures (scoring + association clinique)
+## 14 · Projection de signatures (scoring + association clinique) — `_signatures()`
 
 Indépendant du clustering ; score des signatures par tumeur puis test d'association aux variables cliniques. Désactivé par défaut.
 
@@ -220,7 +229,7 @@ Indépendant du clustering ; score des signatures par tumeur puis test d'associa
 
 Sorties : `tables/signatures/{scores,association}_{ssgsea,mean}.csv` et `figures/sig_{boxplots,heatmap}_{méthode}_{variable}.png`.
 
-## 8 · Déconvolution (omnideconv / immunedeconv)
+## 15 · Déconvolution (omnideconv / immunedeconv) — `_deconvolution()`
 
 Composition cellulaire par tumeur, batterie de méthodes (calcul en R). **Longue**, désactivée par défaut.
 
@@ -234,7 +243,7 @@ Composition cellulaire par tumeur, batterie de méthodes (calcul en R). **Longue
 
 ---
 
-## 9a · Khi² d'indépendance (variables catégorielles)
+## 16 · Khi² d'indépendance (variables catégorielles) — `_clinical_analyses()`
 
 Croise la **partition en clusters** (pour chaque k) avec chaque **variable clinique catégorielle**, et les variables cliniques entre elles — pour savoir *quelles* variables distinguent les groupes et *quelles modalités* y sont sur/sous-représentées. **Léger**, activé par défaut (sauté sans métadonnées catégorielles).
 
@@ -248,7 +257,7 @@ Sorties (`tables/chi2/`) : `chi2_summary.csv` (toutes paires, tous k, test utili
 
 ---
 
-## 9b · Corrélations (variables continues par patient)
+## 17 · Corrélations (variables continues par patient) — `_clinical_analyses()`
 
 Corrèle deux à deux les variables **continues** à l'échelle du patient. **Léger**, activé par défaut.
 
@@ -262,7 +271,7 @@ Sorties : `tables/correlations/correlations.csv` (table longue : var1/bloc, var2
 
 ---
 
-## 10 · Rapport d'analyse (HTML interactif)
+## 18 · Rapport d'analyse (HTML interactif) — `_report()`
 
 | Paramètre | Recommandation |
 |---|---|
@@ -272,7 +281,7 @@ Le fichier embarque toutes les données en JSON → il peut peser plusieurs Mo (
 
 ---
 
-## Divers (transversal : parallélisation, graine)
+## 19 · Divers (transversal : parallélisation, graine)
 
 | Paramètre | Recommandation |
 |---|---|

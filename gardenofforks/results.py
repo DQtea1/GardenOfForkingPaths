@@ -40,7 +40,7 @@ class PipelineResults:
     degsea_by_k: dict | None = None              # {k: {collection: matrice NES}}
     clinical_degsea: dict | None = None          # {expérience: résumé DEGSEA clinique ajusté}
     branch_stability_by_k: dict | None = None    # {k: stability.BranchStability}
-    assoc: dict | None = None                    # khi² (9a) prêt pour le rapport
-    corr: dict | None = None                     # corrélations (9b) prêtes pour le rapport
+    assoc: dict | None = None                    # khi² (16) prêt pour le rapport
+    corr: dict | None = None                     # corrélations (17) prêtes pour le rapport
     ica: dict | None = None                      # branche ICA indépendante, prête pour le rapport
     filter_columns: tuple[str, ...] = ()         # colonnes proposées comme filtres (ssGSEA)

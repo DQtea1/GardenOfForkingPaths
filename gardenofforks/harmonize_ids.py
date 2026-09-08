@@ -1,4 +1,4 @@
-"""Étape 1a — harmonisation des identifiants de gènes vers les symboles HGNC.
+"""Étape 3 — harmonisation des identifiants de gènes vers les symboles HGNC.
 
 Une matrice issue de la fusion de plusieurs lots peut mélanger plusieurs espaces
 d'identifiants : Entrez NCBI (``7157``), Ensembl (``ENSG00000141510``), RefSeq

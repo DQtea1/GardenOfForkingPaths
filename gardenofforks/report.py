@@ -1,4 +1,4 @@
-"""Étape 10 — Rapport d'analyse HTML interactif (autonome).
+"""Étape 18 — Rapport d'analyse HTML interactif (autonome).
 
 Rassemble tous les résultats du run (matrices de consensus par k, labels, item
 consensus, arbres, scores de signatures, déconvolution, DEGSEA, métadonnées
@@ -83,6 +83,37 @@ def _embedding_payload(coords: pd.DataFrame | None, samples) -> dict:
     return embed
 
 
+def _meta_payload(metadata: pd.DataFrame | None, samples,
+                  max_levels: int = 40) -> tuple[dict, dict]:
+    """Métadonnées cliniques sérialisées : ``({var: valeurs}, {var: type})``.
+
+    Deux colonnes sont écartées : celles entièrement vides, et les catégorielles
+    à plus de `max_levels` modalités — un identifiant déguisé (numéro de bloc,
+    date) n'apporte rien à une couleur ni à un filtre, et ferait exploser les
+    menus. Le même sérialiseur sert à la branche historique et aux branches ICA :
+    les deux vues du rapport montrent donc exactement les mêmes variables.
+    """
+    meta: dict[str, list] = {}
+    meta_types: dict[str, str] = {}
+    if not isinstance(metadata, pd.DataFrame) or not metadata.shape[1]:
+        return meta, meta_types
+
+    frame = metadata.copy()
+    frame.index = frame.index.astype(str)
+    frame = frame.reindex([str(s) for s in samples])
+    for variable in map(str, frame.columns):
+        col = frame[variable]
+        if col.dropna().empty or (not _is_continuous(col) and col.nunique() > max_levels):
+            continue
+        if _is_continuous(col):
+            meta[variable] = [_clean(v) for v in pd.to_numeric(col, errors="coerce")]
+            meta_types[variable] = "continuous"
+        else:
+            meta[variable] = [None if pd.isna(v) else str(v) for v in col]
+            meta_types[variable] = "categorical"
+    return meta, meta_types
+
+
 def _degsea_contrast_label(tag: str) -> tuple[str, str, str]:
     """Retourne libellé, schéma et cible d'un nom de contraste DEGSEA."""
     import re
@@ -144,6 +175,65 @@ def _gsea_rows_payload(table: pd.DataFrame | None) -> list[dict]:
             ),
         })
     return rows
+
+
+def _gsea_files_payload(directory: Path, pattern: str, strip: tuple[str, str]) -> dict:
+    """Sérialise les `gsea_*.csv` d'un dossier -> ``{collection: lignes}``.
+
+    `strip` donne le préfixe et le suffixe à retirer du nom de fichier pour
+    retrouver le nom de la collection : ``("gsea_", "")`` côté clinique,
+    ``("gsea_", "_<contraste>")`` côté clusters, où le contraste est collé au
+    nom du fichier.
+    """
+    prefix, suffix = strip
+    out: dict[str, list] = {}
+    for path in sorted(directory.glob(pattern)):
+        stem = path.stem
+        if not stem.startswith(prefix) or (suffix and not stem.endswith(suffix)):
+            continue
+        collection = stem[len(prefix):len(stem) - len(suffix)] if suffix \
+            else stem[len(prefix):]
+        try:
+            table = pd.read_csv(path)
+        except Exception as exc:
+            logger.warning("Rapport GSEA : lecture impossible de %s : %s", path, exc)
+            continue
+        out[collection] = _gsea_rows_payload(table)
+    return out
+
+
+def _deseq2_genes_payload(de: pd.DataFrame) -> list[dict]:
+    """Sérialise une table DESeq2 déjà lue -> une entrée par gène.
+
+    Le drapeau `dispersion_suspecte` n'est transporté que pour les gènes qui le
+    portent : le volcano les montre sans les étiqueter (il teste
+    `!row.suspect`, donc l'absence vaut faux), et une table de 12 000 gènes ne
+    gagne pas 12 000 booléens à `false`.
+    """
+    gene_col = ("gene" if "gene" in de.columns
+                else de.columns[0] if len(de.columns) else None)
+    if gene_col is None:
+        return []
+    lfc_col = "log2FoldChange" if "log2FoldChange" in de else None
+    p_col = "pvalue" if "pvalue" in de else None
+    padj_col = "padj" if "padj" in de else None
+    flag_col = "dispersion_suspecte" if "dispersion_suspecte" in de else None
+
+    genes = []
+    for row in de.to_dict(orient="records"):
+        gene = row.get(gene_col)
+        if pd.isna(gene):
+            continue
+        entry = {
+            "gene": str(gene),
+            "log2FoldChange": _number_or_none(row.get(lfc_col)) if lfc_col else None,
+            "pvalue": _number_or_none(row.get(p_col)) if p_col else None,
+            "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
+        }
+        if flag_col and bool(row.get(flag_col)):
+            entry["suspect"] = True
+        genes.append(entry)
+    return genes
 
 
 def _ica_metagene_gsea_payload(results: dict | None) -> dict:
@@ -217,54 +307,11 @@ def _degsea_detail_payload(outdir: Path, default_k: int,
                 except Exception as exc:
                     logger.warning("Rapport DEGSEA : lecture impossible de %s : %s", de_path, exc)
                     continue
-                gene_col = "gene" if "gene" in de.columns else de.columns[0] if len(de.columns) else None
-                if gene_col is None:
+                genes = _deseq2_genes_payload(de)
+                if not genes and not len(de.columns):
                     continue
-                lfc_col = "log2FoldChange" if "log2FoldChange" in de else None
-                p_col = "pvalue" if "pvalue" in de else None
-                padj_col = "padj" if "padj" in de else None
-                genes = []
-                for row in de.to_dict(orient="records"):
-                    gene = row.get(gene_col)
-                    if pd.isna(gene):
-                        continue
-                    genes.append({
-                        "gene": str(gene),
-                        "log2FoldChange": _number_or_none(row.get(lfc_col)) if lfc_col else None,
-                        "pvalue": _number_or_none(row.get(p_col)) if p_col else None,
-                        "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
-                    })
-
-                gsea = {}
-                suffix = f"_{tag}"
-                for gsea_path in sorted(directory.glob(f"gsea_*_{tag}.csv")):
-                    stem = gsea_path.stem
-                    if not stem.startswith("gsea_") or not stem.endswith(suffix):
-                        continue
-                    collection = stem[len("gsea_"):-len(suffix)]
-                    try:
-                        tab = pd.read_csv(gsea_path)
-                    except Exception as exc:
-                        logger.warning("Rapport DEGSEA : lecture impossible de %s : %s", gsea_path, exc)
-                        continue
-                    term_col = "Term" if "Term" in tab else None
-                    if term_col is None:
-                        continue
-                    nes_col = "NES" if "NES" in tab else None
-                    pval_col = "NOM p-val" if "NOM p-val" in tab else "pvalue" if "pvalue" in tab else None
-                    padj_col = "FDR q-val" if "FDR q-val" in tab else "padj" if "padj" in tab else None
-                    lead_col = "Lead_genes" if "Lead_genes" in tab else "leading_edge" if "leading_edge" in tab else None
-                    gsea[collection] = [
-                        {
-                            "term": str(row.get(term_col)),
-                            "NES": _number_or_none(row.get(nes_col)) if nes_col else None,
-                            "pvalue": _number_or_none(row.get(pval_col)) if pval_col else None,
-                            "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
-                            "leadingEdge": None if lead_col is None or pd.isna(row.get(lead_col)) else str(row.get(lead_col)),
-                        }
-                        for row in tab.to_dict(orient="records")
-                        if not pd.isna(row.get(term_col))
-                    ]
+                gsea = _gsea_files_payload(directory, f"gsea_*_{tag}.csv",
+                                           ("gsea_", f"_{tag}"))
                 label, scheme, target = _degsea_contrast_label(tag)
                 contrasts.append({
                     "id": tag, "label": label,
@@ -313,54 +360,11 @@ def _clinical_stratum_payload(root: Path, group_col: str, modality: str,
         except Exception as exc:
             logger.warning("Rapport DEGSEA clinique : lecture impossible de %s : %s", de_path, exc)
             continue
-        gene_col = "gene" if "gene" in de.columns else de.columns[0] if len(de.columns) else None
-        if gene_col is None:
-            continue
-        lfc_col = "log2FoldChange" if "log2FoldChange" in de else None
-        p_col = "pvalue" if "pvalue" in de else None
-        padj_col = "padj" if "padj" in de else None
-        # Gènes à dispersion effondrée : leur |z| n'est pas interprétable. On les
-        # transporte marqués plutôt que de les supprimer, pour que le volcano
-        # puisse les montrer sans les présenter comme des découvertes.
-        flag_col = "dispersion_suspecte" if "dispersion_suspecte" in de else None
-        genes = [
-            {
-                "gene": str(row.get(gene_col)),
-                "log2FoldChange": _number_or_none(row.get(lfc_col)) if lfc_col else None,
-                "pvalue": _number_or_none(row.get(p_col)) if p_col else None,
-                "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
-                "suspect": bool(row.get(flag_col)) if flag_col else False,
-            }
-            for row in de.to_dict(orient="records")
-            if not pd.isna(row.get(gene_col))
-        ]
-
-        gsea = {}
-        for gsea_path in sorted(directory.glob("gsea_*.csv")):
-            collection = gsea_path.stem.removeprefix("gsea_")
-            try:
-                tab = pd.read_csv(gsea_path)
-            except Exception as exc:
-                logger.warning("Rapport DEGSEA clinique : lecture impossible de %s : %s", gsea_path, exc)
-                continue
-            term_col = "Term" if "Term" in tab else None
-            if term_col is None:
-                continue
-            nes_col = "NES" if "NES" in tab else None
-            pval_col = "NOM p-val" if "NOM p-val" in tab else "pvalue" if "pvalue" in tab else None
-            padj_col = "FDR q-val" if "FDR q-val" in tab else "padj" if "padj" in tab else None
-            lead_col = "Lead_genes" if "Lead_genes" in tab else "leading_edge" if "leading_edge" in tab else None
-            gsea[collection] = [
-                {
-                    "term": str(row.get(term_col)),
-                    "NES": _number_or_none(row.get(nes_col)) if nes_col else None,
-                    "pvalue": _number_or_none(row.get(pval_col)) if pval_col else None,
-                    "padj": _number_or_none(row.get(padj_col)) if padj_col else None,
-                    "leadingEdge": None if lead_col is None or pd.isna(row.get(lead_col)) else str(row.get(lead_col)),
-                }
-                for row in tab.to_dict(orient="records")
-                if not pd.isna(row.get(term_col))
-            ]
+        # Les gènes à dispersion effondrée arrivent marqués (`suspect`) plutôt
+        # que supprimés : le volcano peut les montrer sans les présenter comme
+        # des découvertes.
+        genes = _deseq2_genes_payload(de)
+        gsea = _gsea_files_payload(directory, "gsea_*.csv", ("gsea_", ""))
 
         summary = summary or {}
         design = str(summary.get("design", ""))
@@ -644,19 +648,7 @@ def _ica_payload(ica, outdir: Path, *, linkage_method: str,
         meta, meta_types = fallback_meta, fallback_meta_types
         branch_meta = branch.get("meta")
         if isinstance(branch_meta, pd.DataFrame):
-            meta, meta_types = {}, {}
-            m = branch_meta.copy(); m.index = m.index.astype(str)
-            m = m.reindex(projection.index)
-            for variable in map(str, m.columns):
-                col = m[variable]
-                if col.dropna().empty or (not _is_continuous(col) and col.nunique() > 40):
-                    continue
-                if _is_continuous(col):
-                    meta[variable] = [_clean(v) for v in pd.to_numeric(col, errors="coerce")]
-                    meta_types[variable] = "continuous"
-                else:
-                    meta[variable] = [None if pd.isna(v) else str(v) for v in col]
-                    meta_types[variable] = "categorical"
+            meta, meta_types = _meta_payload(branch_meta, projection.index)
 
         branch_samples = list(projection.index)
         payload["branches"][str(dim)] = {
@@ -687,70 +679,23 @@ def _ica_payload(ica, outdir: Path, *, linkage_method: str,
 
 
 def _gather(res, outdir):
-    from scipy.cluster.hierarchy import dendrogram, linkage
-    from scipy.spatial.distance import squareform
-
-    from . import metrics as mt
-
     # déballage du conteneur (cf. results.PipelineResults)
     result, k_final = res.result, res.k_final
     coords, coords_by_k, meta = res.coords, (res.coords_by_k or {}), res.meta
     sig_scores, sig_tests, deconv = res.sig_scores, res.sig_tests, res.deconv
     sig_provenance = res.sig_provenance
     degsea_by_k, clinical_degsea = res.degsea_by_k, res.clinical_degsea
-    branch_stability_by_k = res.branch_stability_by_k
     linkage_method, min_cluster_size, k_criterion = (
         res.linkage_method, res.min_cluster_size, res.k_criterion)
 
-    # stabilité Jaccard par k : {k: {id de nœud -> score}} (pour l'arbre de chaque k)
-    stab_by_id_per_k = {}
-    for k, bs in (branch_stability_by_k or {}).items():
-        stab_by_id_per_k[int(k)] = {int(i): float(s)
-                                    for i, s in zip(bs.node_ids, bs.stability)}
-
     outdir = Path(outdir)
-    samples = [str(s) for s in result.sample_names]
-    n = len(samples)
-    kvals = sorted(result.consensus)
-    summ = mt.summary(result)
-    pac_by_k = {int(r.k): float(r.PAC) for r in summ.itertuples()}
-    minclust_by_k = {int(r.k): int(r.min_cluster_size) for r in summ.itertuples()}
-    ks_by_pac = sorted(kvals, key=lambda k: pac_by_k.get(k, 9.0))
-
-    # k "recommandé" au sens PAC+Δ(K) (critère 'both'), à surligner en bleu
-    try:
-        best_both = int(mt.suggest_k(result, min_cluster_size, method="both"))
-    except Exception:
-        best_both = int(k_final)
-
-    data = {
-        "samples": samples, "n": n, "kFinal": int(k_final),
-        "minClusterSize": int(min_cluster_size), "bestBoth": best_both,
-        "kCriterion": str(k_criterion),
-        "ks": [{"k": int(k), "pac": round(pac_by_k.get(k, float("nan")), 4),
-                "minClust": minclust_by_k.get(k, 0)}
-               for k in ks_by_pac],
-        "perK": {}, "consensus": {},
-    }
-
-    for k in kvals:
-        order = [int(i) for i in result.order(k, linkage_method)]
-        labels = [int(x) for x in result.labels(k, linkage_method)]
-        item = mt.item_consensus(result, k)
-        imap = dict(zip(item["sample"].astype(str), item["item_consensus"]))
-        Z = linkage(squareform(result.distance(k), checks=False), method=linkage_method)
-        dend = dendrogram(Z, no_plot=True)
-        data["perK"][str(k)] = {
-            "order": order, "labels": labels,
-            "item": [_clean(imap.get(s)) for s in samples],
-            "icoord": dend["icoord"], "dcoord": dend["dcoord"],
-        }
-        # stabilité Jaccard des branches, rattachée à l'arbre de CE k
-        if int(k) in stab_by_id_per_k:
-            data["perK"][str(k)]["stability"] = _link_stability(
-                Z, dend, stab_by_id_per_k[int(k)])
-        C = result.consensus[k]
-        data["consensus"][str(k)] = [[int(round(float(x) * 100)) for x in row] for row in C]
+    # Bloc consensus (matrices par k, arbres, PAC, stabilité des branches) : la
+    # branche historique et les branches ICA passent par le MÊME sérialiseur,
+    # sans quoi les deux vues du rapport peuvent diverger sans que rien ne le
+    # signale. `bestBoth` et `samples` en ressortent pour la suite.
+    data = _consensus_payload(result, k_final, linkage_method, min_cluster_size,
+                              k_criterion, res.branch_stability_by_k)
+    samples, best_both = data["samples"], data["bestBoth"]
 
     # signatures (signatures × échantillons). `sources` = collection d'origine
     # (source du signature_sources : IPRES / sigGeNeHetX / select…) alignée sur
@@ -823,21 +768,8 @@ def _gather(res, outdir):
         outdir, clinical_degsea
     )
 
-    # métadonnées cliniques
-    data["meta"], data["metaTypes"] = {}, {}
-    if meta is not None and meta.shape[1]:
-        m = meta.reindex(samples)
-        for var in map(str, m.columns):
-            col = m[var]
-            if col.dropna().empty or (not _is_continuous(col) and col.nunique() > 40):
-                continue                      # ignore vides / identifiants uniques
-            if _is_continuous(col):
-                num = pd.to_numeric(col, errors="coerce")
-                data["meta"][var] = [_clean(v) for v in num]
-                data["metaTypes"][var] = "continuous"
-            else:
-                data["meta"][var] = [None if pd.isna(v) else str(v) for v in col]
-                data["metaTypes"][var] = "categorical"
+    # métadonnées cliniques (vides et identifiants uniques écartés)
+    data["meta"], data["metaTypes"] = _meta_payload(meta, samples)
 
     # `filter_columns` a déjà restreint les métadonnées en amont (cf.
     # run_pipeline._restrict_metadata) : data["meta"] ne contient donc plus que

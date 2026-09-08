@@ -1,24 +1,24 @@
-"""Étape 7 — Projection de signatures : scoring par patient + association clinique.
+"""Étape 14 — Projection de signatures : scoring par patient + association clinique.
 
-7.1  Score chaque signature (gene set) pour chaque tumeur, de **deux façons** :
+14.1  Score chaque signature (gene set) pour chaque tumeur, de **deux façons** :
        - **ssGSEA** (gseapy) : enrichissement rang-based par échantillon (NES) ;
        - **expression moyenne** : moyenne des z-scores (par gène) des gènes de
          la signature présents dans la matrice.
 
-7.2  Teste l'**association** score de signature ↔ variable clinique (métadonnées) :
+14.2  Teste l'**association** score de signature ↔ variable clinique (métadonnées) :
        - variable **catégorielle** : test de Wilcoxon rang-somme (Mann-Whitney)
          entre chaque paire de modalités ;
        - variable **continue** : corrélation (Spearman par défaut — robuste,
          monotone ; Pearson en option).
      Correction BH (FDR) des p-valeurs, séparément par méthode de score.
 
-7.2bis  Tests de Wilcoxon *one-vs-rest* (score de signature vs le reste) pour
+14.2bis  Tests de Wilcoxon *one-vs-rest* (score de signature vs le reste) pour
      chaque modalité de chaque stratification affichée dans le rapport — le
      **cluster** (pour **chaque k**) et chaque **variable clinique catégorielle**.
      Sert aux **étoiles de significativité** au-dessus des boxplots de l'onglet
      « Signatures détaillé » (`stratified_signature_tests`).
 
-7.3  Figures, par variable clinique catégorielle et pour chaque méthode :
+14.3  Figures, par variable clinique catégorielle et pour chaque méthode :
        - **boxplots** des top signatures qui séparent le mieux les modalités ;
        - **heatmap** de l'activation des signatures par échantillon.
 
@@ -161,7 +161,7 @@ def score_mean_expression(expr_samples_x_genes: pd.DataFrame,
 
 
 # --------------------------------------------------------------------------
-# 7.2  Association aux variables cliniques
+# 14.2  Association aux variables cliniques
 # --------------------------------------------------------------------------
 def associate(scores: pd.DataFrame, metadata: pd.DataFrame,
               corr_method: str = "spearman", min_group: int = 3,
@@ -242,6 +242,19 @@ def associate(scores: pd.DataFrame, metadata: pd.DataFrame,
     return df
 
 
+def _paired_scores(score_row, groups) -> tuple[np.ndarray, np.ndarray]:
+    """Scores et étiquettes alignés, débarrassés des couples inexploitables.
+
+    Un couple est écarté si l'étiquette manque (`None`) ou si le score n'est pas
+    fini. Les deux familles de tests ci-dessous partent exactement du même
+    filtrage : sans quoi une correction appliquée à l'une manquerait à l'autre.
+    """
+    x = np.asarray(score_row, dtype=float)
+    g = np.asarray([None if v is None else str(v) for v in groups], dtype=object)
+    keep = np.array([(gi is not None) and np.isfinite(xi) for gi, xi in zip(g, x)])
+    return x[keep], g[keep]
+
+
 def group_pvals(score_row, groups, min_group: int = 3) -> dict:
     """Test de Wilcoxon rang-somme (Mann-Whitney) **une modalité contre le reste**
     pour chaque modalité. `score_row` est aligné sur `groups` (labels de groupe,
@@ -249,10 +262,7 @@ def group_pvals(score_row, groups, min_group: int = 3) -> dict:
     l'un des deux échantillons a moins de `min_group` tumeurs (test non fiable)."""
     from scipy.stats import mannwhitneyu
 
-    x = np.asarray(score_row, dtype=float)
-    g = np.asarray([None if v is None else str(v) for v in groups], dtype=object)
-    keep = np.array([(gi is not None) and np.isfinite(xi) for gi, xi in zip(g, x)])
-    x, g = x[keep], g[keep]
+    x, g = _paired_scores(score_row, groups)
     out = {}
     for lvl in pd.unique(g):
         a, b = x[g == lvl], x[g != lvl]
@@ -274,10 +284,7 @@ def pair_pvals(score_row, groups, min_group: int = 3) -> dict:
     petites (< `min_group` de part ou d'autre) omises."""
     from scipy.stats import mannwhitneyu
 
-    x = np.asarray(score_row, dtype=float)
-    g = np.asarray([None if v is None else str(v) for v in groups], dtype=object)
-    keep = np.array([(gi is not None) and np.isfinite(xi) for gi, xi in zip(g, x)])
-    x, g = x[keep], g[keep]
+    x, g = _paired_scores(score_row, groups)
     levels = list(pd.unique(g))
     out: dict = {}
     for i in range(len(levels)):
@@ -405,7 +412,7 @@ def top_signatures(assoc: pd.DataFrame, variable: str, top_n: int,
 
 
 # --------------------------------------------------------------------------
-# Orchestration 7.1 -> 7.3
+# Orchestration 14.1 -> 14.3
 # --------------------------------------------------------------------------
 def run_signature_projection(
     expr: pd.DataFrame,
@@ -434,8 +441,8 @@ def run_signature_projection(
         logger.warning("Projection : %d signatures — le ssGSEA peut être long "
                        "(collection volumineuse ?).", len(signatures))
 
-    # 7.1  scoring (deux méthodes)
-    logger.info("Projection 7.1 : scoring de %d signatures (ssGSEA + expression moyenne)…",
+    # 14.1  scoring (deux méthodes)
+    logger.info("Projection 14.1 : scoring de %d signatures (ssGSEA + expression moyenne)…",
                 len(signatures))
     scores = {
         "ssgsea": score_ssgsea(expr.T, signatures, threads=threads, seed=seed),
@@ -443,21 +450,21 @@ def run_signature_projection(
     }
     for method, mat in scores.items():
         mat.to_csv(sig_dir / f"scores_{method}.csv")
-    logger.info("Projection 7.1 :  bites sauvegardées (%d signatures scorées).",
+    logger.info("Projection 14.1 : tables sauvegardées (%d signatures scorées).",
                 scores["ssgsea"].shape[0])
 
     if metadata is None or metadata.shape[1] == 0:
-        logger.info("Projection : pas de métadonnées -> association (7.2) et "
-                    "figures (7.3) sautées.")
+        logger.info("Projection : pas de métadonnées -> association (14.2) et "
+                    "figures (14.3) sautées.")
         return scores
 
-    # 7.2  association + 7.3  figures, pour chaque méthode
+    # 14.2  association + 14.3  figures, pour chaque méthode
     for method, mat in scores.items():
         assoc = associate(mat, metadata, corr_method=corr_method, min_group=min_group,
                           max_text_levels=max_text_levels)
         assoc.to_csv(sig_dir / f"association_{method}.csv", index=False)
         n_sig = int((assoc["padj"] <= sig_pval).sum()) if len(assoc) else 0
-        logger.info("Projection 7.2 [%s] : %d tests, %d significatifs (FDR <= %.3g).",
+        logger.info("Projection 14.2 [%s] : %d tests, %d significatifs (FDR <= %.3g).",
                     method, len(assoc), n_sig, sig_pval)
         
         # Added unnecessary computing time

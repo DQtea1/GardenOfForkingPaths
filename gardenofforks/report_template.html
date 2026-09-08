@@ -2165,7 +2165,7 @@ function drawCorrScatter(){const cv=$("coScatter"),info=$("coInfo");
 }
 (function initCorr(){const A=DATA.corr,w=$("coWarn");
   if(!A||!A.blocks||!Object.keys(A.blocks).length){w.className="warn on";
-    w.textContent="Pas d'analyse de corrélations (aucune variable continue par patient, ou étape 9b désactivée).";return;}
+    w.textContent="Pas d'analyse de corrélations (aucune variable continue par patient, ou étape 17 désactivée).";return;}
   A.pairs.forEach(p=>CO.lut.set(coKey(p.a,p.b),p));
   const bl=Object.keys(A.blocks),rs=$("coRow"),cs=$("coCol");
   bl.forEach(b=>{const o=document.createElement("option");o.value=b;o.textContent=coBlockLabel(b)+" ("+A.blocks[b].length+")";
@@ -2346,7 +2346,7 @@ function renderIcaAssoc(){const B=icaBranch();if(!B)return;const A=B.assoc||{},p
   icaSetWarn("icaAssocWarn",rows.length?"":"Aucune association catégorielle ICA disponible (métadonnées absentes, aucune variable catégorielle exploitable, ou étape désactivée).");$("icaAssocTable").innerHTML=icaTable(["Variable clinique","Test","p","FDR","V de Cramér","n"],rows);
 }
 function renderIcaCorr(){const B=icaBranch();if(!B)return;const C=B.corr||{},rows=(C.pairs||[]).filter(o=>(o.a||"").startsWith("ica:")||(o.b||"").startsWith("ica:")).map(o=>[o.a,o.b,icaFmt(o.rho),icaFmt(o.p,4),icaFmt(o.padj,4),o.n]);
-  icaSetWarn("icaCorrWarn",rows.length?"":"Aucune corrélation ICA disponible (il faut au moins une variable clinique continue et l'étape 9b active). ");$("icaCorrTable").innerHTML=icaTable(["Variable 1","Variable 2","ρ / r","p","FDR","n"],rows);
+  icaSetWarn("icaCorrWarn",rows.length?"":"Aucune corrélation ICA disponible (il faut au moins une variable clinique continue et l'étape 17 active). ");$("icaCorrTable").innerHTML=icaTable(["Variable 1","Variable 2","ρ / r","p","FDR","n"],rows);
 }
 function renderIcaAll(){renderIcaProjection();renderIcaMetageneGsea();renderIcaConsensus();renderIcaEmbed();renderIcaComparisons();renderIcaAssoc();renderIcaCorr();}
 function initICA(){const branches=ICA.branches||{},dims=(ICA.topDimensions&&ICA.topDimensions.length?ICA.topDimensions:Object.keys(branches)).map(String).filter(d=>branches[d]);

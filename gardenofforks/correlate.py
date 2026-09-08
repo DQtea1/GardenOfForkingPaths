@@ -1,4 +1,4 @@
-"""Étape 9b — Corrélations entre variables continues à l'échelle du patient.
+"""Étape 17 — Corrélations entre variables continues à l'échelle du patient.
 
 Croise chaque variable clinique **continue** des métadonnées avec les autres scores
 continus calculés par patient (signatures **ssGSEA** / **expression moyenne**,
@@ -158,7 +158,7 @@ def run_correlations(sig_scores: dict | None, deconv: dict | None,
         extra_features=extra_features, extra_prefix=extra_prefix,
     )
     if feat_df.shape[1] < 2:
-        logger.info("9b. Corrélations : moins de 2 variables continues à l'échelle "
+        logger.info("17. Corrélations : moins de 2 variables continues à l'échelle "
                     "du patient — étape sautée.")
         return {}
 
@@ -166,12 +166,12 @@ def run_correlations(sig_scores: dict | None, deconv: dict | None,
     n_sig = sum(1 for f in family.values() if f == "sig")
     n_dec = sum(1 for f in family.values() if f == "deconv")
     n_extra = sum(1 for f in family.values() if f == "extra")
-    logger.info("9b. Corrélations (%s) : %d variables continues (clinique %d, "
+    logger.info("17. Corrélations (%s) : %d variables continues (clinique %d, "
                 "signatures %d, déconvolution %d, %s %d)%s", method, feat_df.shape[1],
                 n_clin, n_sig, n_dec, extra_prefix, n_extra,
                 "" if not all_pairs else " — TOUTES paires")
     if n_dec and all_pairs:
-        logger.warning("9b. Corrélations — déconv × déconv incluses (all_pairs) : "
+        logger.warning("17. Corrélations — déconv × déconv incluses (all_pairs) : "
                        "fractions COMPOSITIONNELLES, corrélations négatives possiblement "
                        "artéfactuelles. À interpréter avec prudence (CLR / corrélation "
                        "partielle recommandées).")
@@ -181,7 +181,7 @@ def run_correlations(sig_scores: dict | None, deconv: dict | None,
     cdir = root / "tables" / (output_subdir or "") / "correlations"
     cdir.mkdir(parents=True, exist_ok=True)
     if not len(tab):
-        logger.info("9b. Corrélations : aucune paire exploitable (n < %d).", min_n)
+        logger.info("17. Corrélations : aucune paire exploitable (n < %d).", min_n)
         return {"features": list(feat_df.columns), "family": family, "block": block,
                 "method": method, "table": tab,
                 "values": {str(k): feat_df[k].tolist() for k in feat_df.columns}}
@@ -189,7 +189,7 @@ def run_correlations(sig_scores: dict | None, deconv: dict | None,
     tab = tab.sort_values("padj").reset_index(drop=True)
     tab.to_csv(cdir / "correlations.csv", index=False)
     n_sig_pairs = int((tab["padj"] <= 0.05).sum())
-    logger.info("9b. Corrélations : %d paires testées, %d significatives (FDR <= 0.05) "
+    logger.info("17. Corrélations : %d paires testées, %d significatives (FDR <= 0.05) "
                 "-> %s", len(tab), n_sig_pairs, cdir / "correlations.csv")
     top = tab.reindex(columns=["var1", "var2", "rho", "padj", "n"]).head(8)
     if len(top):

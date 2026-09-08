@@ -128,7 +128,7 @@ def _add_degsea_filter_options(group, prefix: str, scope: str) -> None:
     options par préfixe.
 
     Rappel : un DEGSEA part des counts BRUTS (DESeq2 modélise des comptages),
-    donc aucun filtre de l'étape 1 — min_cpm, keep_technical, n_top_genes — ne
+    donc aucun filtre de l'étape 2 — min_cpm, keep_technical, n_top_genes — ne
     s'y applique ; ces options rejouent ces familles de filtres pour lui.
     """
     add = group.add_argument
@@ -200,7 +200,7 @@ def build_parser() -> argparse.ArgumentParser:
                          "color_by) ne peut pas être exclue : le run s'arrête avec un "
                          "message plutôt que de changer un modèle en silence.")
 
-    harm = p.add_argument_group("harmonisation des identifiants de gènes (étape 1a)")
+    harm = p.add_argument_group("harmonisation des identifiants de gènes (étape 3)")
     harm.add_argument("--harmonize_gene_ids", choices=["y", "n"], default="n",
                       help="'y' : ramène tous les identifiants de gènes aux symboles "
                            "HGNC avant toute analyse. Nécessaire quand la matrice "
@@ -233,6 +233,16 @@ def build_parser() -> argparse.ArgumentParser:
     pre.add_argument("--n-top-genes", type=int, default=5000)
     pre.add_argument("--variance-method", choices=["mad", "var"], default="mad")
     pre.add_argument("--scale-genes", action="store_true")
+    pre.add_argument("--refit_after_sample_filters", choices=["y", "n"], default="y",
+                     help="'y' (défaut) : une fois les tumeurs écartées par la "
+                          "pureté PUREE et l'ACP, REJOUE le prétraitement sur la "
+                          "seule cohorte conservée. Sans cela, le filtre de "
+                          "prévalence, les size factors, la médiane de centrage et "
+                          "surtout la sélection des n_top_genes les plus variables "
+                          "restent décidés avec des tumeurs qui ne sont plus dans "
+                          "l'analyse. Coût : un second VST, payé uniquement si des "
+                          "tumeurs ont réellement été retirées. 'n' conserve le "
+                          "panneau de gènes de la première passe.")
     pre.add_argument("--outlier_sd_threshold", type=float, default=0.0,
                      help="ACP sur la matrice prétraitée puis retrait des tumeurs "
                           "à plus de N écarts-types sur une composante principale. "
@@ -360,16 +370,20 @@ def build_parser() -> argparse.ArgumentParser:
                           "Convention GSEA usuelle : 0.25.")
 
     clinical_deg = p.add_argument_group("DEGSEA clinique (DESeq2 ajusté + GSEA)")
-    clinical_deg.add_argument("--run_clinical_degsea", choices=["y", "n"], default="n",
-                             help="exécute les expériences clinical_degsea du YAML, "
-                                  "indépendamment du consensus clustering. Une entrée "
-                                  "clinical_degsea dans le YAML les active aussi.")
+    clinical_deg.add_argument("--run_clinical_degsea", choices=["y", "n"], default=None,
+                             help="interrupteur du DEGSEA clinique (étape 7). NON "
+                                  "RENSEIGNÉ (défaut) : l'étape tourne si — et "
+                                  "seulement si — le YAML contient un bloc "
+                                  "clinical_degsea. 'n' la désactive même quand ce "
+                                  "bloc existe, ce qui permet de garder les designs "
+                                  "sous la main sans les rejouer ; 'y' est explicite "
+                                  "et prévient si aucune expérience n'est configurée.")
     # Filtrage des gènes en entrée du DEGSEA clinique : mêmes filtres que le
     # DEGSEA par cluster, seuils indépendants (cf. _add_degsea_filter_options).
     clinical_deg.add_argument("--clinical_degsea_drop_pca_outliers",
                              choices=["y", "n"], default="n",
                              help="'y' : restreint le DEGSEA clinique aux tumeurs "
-                                  "conservées par les filtres de l'étape 1 (pureté "
+                                  "conservées par les filtres des étapes 4 et 5 (pureté "
                                   "PUREE + outliers ACP). Défaut 'n' : le DEGSEA "
                                   "clinique porte sur TOUTES les tumeurs de la "
                                   "matrice, y compris les outliers ACP. Sans objet "
@@ -434,7 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="permutations du khi² de Monte-Carlo (repli des tables R×C "
                           "aux conditions de Cochran non remplies ; défaut 2000).")
 
-    cor = p.add_argument_group("corrélations continues (9b)")
+    cor = p.add_argument_group("corrélations continues (étape 17)")
     cor.add_argument("--run_correlations", choices=["y", "n"], default="y",
                      help="'y' (défaut) : corrèle deux à deux les variables CONTINUES "
                           "par patient — clinique continue × signatures/déconvolution "
@@ -585,7 +599,7 @@ def _extract_structured(config: dict, consumed: set[str]) -> dict:
             out[key] = config[key]
             consumed.add(key)
 
-    # Variables ORDINALES (test de tendance, 9a). Deux écritures :
+    # Variables ORDINALES (test de tendance, étape 16). Deux écritures :
     #   {stade: [I, II, III]}  ordre explicite (recommandé)
     #   [stade, grade]         ordre = tri des modalités
     if "ordinal_variables" in config:

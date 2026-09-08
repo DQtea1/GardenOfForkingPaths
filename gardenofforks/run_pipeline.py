@@ -47,7 +47,6 @@ class _Ctx:
     X_df: object = None
     metadata: object = None
     primary: AnalysisBranch | None = None
-    nes: object = None
     sig_scores: object = None
     sig_provenance: object = None
     sig_tests: object = None
@@ -57,10 +56,13 @@ class _Ctx:
     deconv: dict = field(default_factory=dict)
     ica_branches: dict = field(default_factory=dict)
     ica_metagene_gsea: dict = field(default_factory=dict)
+    # branches ICA vivantes (dimension -> (branche, métasamples)), conservées
+    # pour leur rejouer les analyses cliniques en fin de run.
+    ica_branch_objects: dict = field(default_factory=dict)
 
 
 def _setup(argv) -> _Ctx:
-    # ------------------------------------------ 0. configuration & démarrage
+    # ------------------------------- 1. entrées / sorties (configuration, journal)
     args = load_config(argv)
 
     outdir = Path(args.outdir)
@@ -99,15 +101,20 @@ def _setup(argv) -> _Ctx:
     return _Ctx(args=args, log=log, outdir=outdir, t_start=t_start, eff_n_jobs=eff_n_jobs)
 
 
-def _preprocess_matrix(c: _Ctx) -> None:
-    """(Re)construit la matrice du clustering à partir de `c.raw`.
+def _preprocess_matrix(c: _Ctx, samples=None) -> None:
+    """Étape 2 — construit la matrice du clustering à partir de `c.raw`.
 
-    Isolée de `_load_data` parce que l'harmonisation des identifiants change
-    `c.raw` : la matrice prétraitée doit alors être rebâtie sur le nouvel index.
+    Séparée du chargement parce que l'harmonisation des identifiants (étape 3)
+    réécrit l'index de `c.raw` : le prétraitement — dont le VST, de loin le plus
+    cher — doit donc avoir lieu APRÈS elle, et une seule fois.
+
+    ``samples`` restreint le calcul à une sous-cohorte : c'est ce qui permet de
+    rejouer le prétraitement sur les seules tumeurs conservées (étape 2b).
     """
     args = c.args
+    counts = c.raw if samples is None else c.raw.loc[list(samples)]
     c.X_df = pp.preprocess(
-        c.raw,
+        counts,
         already_normalized=args.already_normalized,
         min_cpm=args.min_cpm,
         min_frac_samples=args.min_frac_samples,
@@ -121,14 +128,51 @@ def _preprocess_matrix(c: _Ctx) -> None:
     c.log.info("Matrice prétraitée : %d tumeurs x %d gènes", *c.X_df.shape)
 
 
+def _refit_matrix(c: _Ctx) -> None:
+    """Étape 2b — rejoue le prétraitement sur les tumeurs réellement conservées.
+
+    Le prétraitement (2) précède forcément la détection d'outliers (5), qui a
+    besoin d'une matrice normalisée pour faire son ACP. Mais du coup TOUT ce que
+    l'étape 2 décide — quels gènes passent le filtre de prévalence, les size
+    factors du VST, la médiane de centrage et surtout la liste des `n_top_genes`
+    les plus variables — est décidé en tenant compte de tumeurs qui viennent
+    d'être écartées. Une tumeur aberrante peut donc choisir une partie du
+    panneau de gènes… avant d'être jetée.
+
+    On rejoue donc l'étape 2 sur la cohorte propre. Le coût est un second VST,
+    payé uniquement si des tumeurs ont réellement été retirées.
+    """
+    args, log = c.args, c.log
+    kept = list(c.X_df.index)
+    dropped = len(c.raw.index) - len(kept)
+    if args.refit_after_sample_filters != "y":
+        if dropped:
+            log.info("2b. Reprise du prétraitement désactivée "
+                     "(refit_after_sample_filters = n) : le panneau de gènes reste "
+                     "celui calculé avec les %d tumeur(s) écartée(s).", dropped)
+        return
+    if not dropped:
+        return
+
+    genes_before = set(c.X_df.columns)
+    log.info("2b. Reprise du prétraitement sur les %d tumeurs conservées "
+             "(%d écartée(s) aux étapes 4-5) : normalisation, gènes techniques et "
+             "sélection des plus variables rejugés sans elles…", len(kept), dropped)
+    _preprocess_matrix(c, samples=kept)
+    genes_after = set(c.X_df.columns)
+    log.info("2b. Panneau de gènes : %d conservés à l'identique, %d entrés, "
+             "%d sortis (sur %d).", len(genes_before & genes_after),
+             len(genes_after - genes_before), len(genes_before - genes_after),
+             len(genes_before))
+
+
 def _load_data(c: _Ctx) -> None:
-    # ---------------------------------------------------------------- 1. data
+    # ------------------------------------------- 1. chargement de la matrice
     c.raw = pp.load_matrix(c.args.counts, genes_in_rows=not c.args.samples_in_rows)
-    _preprocess_matrix(c)
 
 
 def _harmonize_gene_ids(c: _Ctx) -> None:
-    """Étape 1a — ramène tous les identifiants de gènes aux symboles HGNC.
+    """Étape 3 — ramène tous les identifiants de gènes aux symboles HGNC.
 
     Deux sous-étapes : un diagnostic des espaces d'identifiants présents, puis la
     conversion proprement dite. Le diagnostic est journalisé et exporté même
@@ -157,11 +201,8 @@ def _harmonize_gene_ids(c: _Ctx) -> None:
         drop_unmapped=args.harmonize_drop_unmapped == "y")
     trace.to_csv(outdir / "tables" / "gene_id_harmonization.csv", index=False)
     c.raw = harmonized
-
-    # La matrice du clustering a été bâtie sur l'ancien index : on la refait.
-    log.info("Harmonisation : reconstruction de la matrice prétraitée sur les "
+    log.info("Harmonisation terminée : le prétraitement (étape 2) part des "
              "identifiants harmonisés.")
-    _preprocess_matrix(c)
 
 
 def _load_metadata(c: _Ctx) -> None:
@@ -267,7 +308,7 @@ def _restrict_metadata(c: _Ctx, metadata: pd.DataFrame) -> pd.DataFrame:
 def _purity_filter(c: _Ctx) -> None:
     args, log, outdir = c.args, c.log, c.outdir
     raw, X_df = c.raw, c.X_df
-    # ------------------------------------- 1a. pureté tumorale (PUREE) + filtrage
+    # -------------------------------------- 4. pureté tumorale (PUREE) + filtrage
     purity_thr = pur.parse_threshold(args.purity_threshold)
     if purity_thr is not None:
         purity = pur.run_puree(raw, args.puree_dir, args.puree_python,
@@ -296,7 +337,7 @@ def _purity_filter(c: _Ctx) -> None:
 def _outlier_filter(c: _Ctx) -> None:
     args, log, outdir = c.args, c.log, c.outdir
     X_df = c.X_df
-    # ------------------------------------------- 1b. filtrage d'outliers (ACP)
+    # -------------------------------------------- 5. filtrage d'outliers (ACP)
     if args.outlier_sd_threshold and args.outlier_sd_threshold > 0:
         keep, pca_diag = pp.pca_outliers(
             X_df, args.outlier_sd_threshold,
@@ -328,11 +369,11 @@ def _ica(c: _Ctx) -> None:
     """
     args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
     if args.run_ica != "y":
-        log.info("1c. ICA stabilisée désactivée (run_ica = n).")
+        log.info("8. ICA stabilisée désactivée (run_ica = n).")
         return
 
     log.info(
-        "1c. ICA stabilisée : dimensions %d..%d (pas %d), %d runs/dimension…",
+        "8. ICA stabilisée : dimensions %d..%d (pas %d), %d runs/dimension…",
         args.ica_n_components_min, args.ica_n_components_max,
         args.ica_n_components_step, args.ica_n_runs,
     )
@@ -382,12 +423,10 @@ def _run_ica_branches(c: _Ctx) -> None:
             forced_k_name="ica_k_final",
             input_export_name="ica_projection.csv",
             logger=c.log,
-        ).run(
-            run_associations=True,
-            run_correlations=True,
-            correlation_extra_features=dec.metasamples,
-            correlation_prefix="ica",
-        )
+        ).run()
+        # Les analyses cliniques attendent la fin du run : à cet instant, ni les
+        # signatures ni la déconvolution n'existent encore.
+        c.ica_branch_objects[int(dimension)] = (branch, dec.metasamples)
         labels_by_k = {
             int(k): branch.result.labels(int(k), c.args.linkage)
             for k in branch.k_values
@@ -430,7 +469,7 @@ def _ica_metagene_gsea(c: _Ctx) -> None:
     if c.ica_result is None:
         return
     if c.args.run_ica_gsea != "y":
-        c.log.info("1d. GSEA des métagènes ICA désactivé (run_ica_gsea = n).")
+        c.log.info("9. GSEA des métagènes ICA désactivé (run_ica_gsea = n).")
         return
 
     gene_sets = dg.resolve_gene_sets(
@@ -438,7 +477,7 @@ def _ica_metagene_gsea(c: _Ctx) -> None:
     )
     if not gene_sets:
         c.log.warning(
-            "1d. GSEA des métagènes ICA demandé, mais aucune collection GMT "
+            "9. GSEA des métagènes ICA demandé, mais aucune collection GMT "
             "existante n'est disponible ; étape sautée."
         )
         # Conserver toutes les dimensions et composantes dans le contrat de
@@ -455,7 +494,7 @@ def _ica_metagene_gsea(c: _Ctx) -> None:
         return
 
     c.log.info(
-        "1d. Annotation GSEA des métagènes ICA : %d dimension(s), "
+        "9. Annotation GSEA des métagènes ICA : %d dimension(s), "
         "%d collection(s), %d permutations…",
         len(c.ica_result.persisted_dimensions), len(gene_sets),
         c.args.gsea_permutations,
@@ -520,7 +559,7 @@ def _run_primary_branch(c: _Ctx) -> None:
         metadata=c.metadata,
         forced_k=c.args.k_final,
         logger=c.log,
-    ).run(run_associations=True)
+    ).run()
 
 
 def _clinical_strata(c: _Ctx, counts) -> list[tuple[str, str, pd.Index]]:
@@ -565,6 +604,13 @@ def _clinical_degsea(c: _Ctx) -> None:
     """
     args, log = c.args, c.log
     c.clinical_degsea = {}
+    # Trois états : 'n' coupe l'étape même si des designs sont configurés,
+    # 'y' la demande explicitement, non renseigné = la présence d'un bloc
+    # `clinical_degsea` décide (comportement historique).
+    if args.run_clinical_degsea == "n":
+        log.info("7. DEGSEA clinique désactivé (run_clinical_degsea = n) : les "
+                 "designs du YAML ne sont pas rejoués.")
+        return
     experiments = cf.clinical_experiments(args.clinical_degsea)
     if not experiments:
         if args.run_clinical_degsea == "y":
@@ -576,7 +622,7 @@ def _clinical_degsea(c: _Ctx) -> None:
         raise ValueError("DEGSEA clinique configuré, mais aucune table de métadonnées n'est fournie.")
 
     # Par défaut le DEGSEA clinique porte sur TOUTE la matrice : les tumeurs
-    # écartées à l'étape 1 (pureté PUREE, outliers ACP) y reviennent, car ces
+    # écartées aux étapes 4 et 5 (pureté PUREE, outliers ACP) y reviennent, car ces
     # filtres sont jugés sur la matrice du clustering et n'engagent pas un
     # contraste clinique. `clinical_degsea_drop_pca_outliers: y` aligne les deux.
     counts = c.raw
@@ -588,15 +634,15 @@ def _clinical_degsea(c: _Ctx) -> None:
             kept = counts.index.intersection(c.X_df.index)
             n_out = counts.shape[0] - len(kept)
             counts = counts.loc[kept]
-            log.info("DEGSEA clinique : aligné sur les tumeurs conservées à "
-                     "l'étape 1 — %d tumeur(s) écartée(s), %d conservée(s).",
+            log.info("DEGSEA clinique : aligné sur les tumeurs conservées aux "
+                     "étapes 4 et 5 — %d tumeur(s) écartée(s), %d conservée(s).",
                      n_out, len(kept))
 
     gene_filters = dg.DegseaFilters.from_args(args)
     deseq_settings = dg.DeseqSettings.from_args(args)
     strata = _clinical_strata(c, counts)
     n_planned = len(strata) * len(experiments)
-    log.info("DEGSEA clinique : %d strate(s) x %d design(s) = %d ajustement(s) "
+    log.info("7. DEGSEA clinique : %d strate(s) x %d design(s) = %d ajustement(s) "
              "DESeq2 au maximum.", len(strata), len(experiments), n_planned)
 
     plan: list[dict] = []
@@ -708,6 +754,7 @@ def _degsea(c: _Ctx, k: int, gene_sets: dict[str, str], *,
         c.raw, labels, branch.result.sample_names, c.outdir,
         gene_sets=gene_sets,
         gene_filters=dg.DegseaFilters.from_args(args, prefix="degsea"),
+        settings=dg.DeseqSettings.from_args(args, prefix="degsea"),
         mode=args.degsea_mode,
         permutations=args.gsea_permutations,
         heatmap_pval=args.gsea_heatmap_pval,
@@ -721,7 +768,7 @@ def _degsea_all_k(c: _Ctx) -> None:
     """Orchestre DEGSEA sur le K recommandé PAC+Δ(K), ou sur tous les K."""
     args, log, outdir = c.args, c.log, c.outdir
     branch = c.primary
-    c.nes, c.degsea_by_k = None, {}
+    c.degsea_by_k = {}
     if args.run_degsea != "y":
         return
 
@@ -751,11 +798,10 @@ def _degsea_all_k(c: _Ctx) -> None:
                 if recommended_k != branch.k_final else ""
             ),
         )
-    log.info("DEGSEA : DESeq2 + GSEA par cluster (mode=%s, %d collection(s)) "
+    log.info("13. DEGSEA par cluster : DESeq2 + GSEA (mode=%s, %d collection(s)) "
              "sur %d valeur(s) de k=%s — étape longue…",
              args.degsea_mode, len(gene_sets), len(ks_degsea), list(ks_degsea))
 
-    final_nes_by_coll = {}
     for index, k in enumerate(ks_degsea, start=1):
         if all_k:
             log.info("DEGSEA — k=%d (%d/%d)…", k, index, len(ks_degsea))
@@ -767,18 +813,6 @@ def _degsea_all_k(c: _Ctx) -> None:
                     matrix, outdir / "figures",
                     pval=args.gsea_heatmap_pval, collection=coll,
                 )
-        if k == branch.k_final:
-            # La synthèse historique est construite sur k_final : ne lui
-            # transmettre qu'une matrice NES calculée pour cette même partition.
-            final_nes_by_coll = result
-
-    if final_nes_by_coll:
-        key = next(
-            (name for name in ("h", "HALLMARK", "hallmark")
-             if name in final_nes_by_coll),
-            next(iter(final_nes_by_coll)),
-        )
-        c.nes = final_nes_by_coll[key]
     log.info("DEGSEA terminé : tables dans %s", outdir / "tables" / "degsea")
 
 
@@ -786,7 +820,7 @@ def _signatures(c: _Ctx) -> None:
     args, log, outdir, eff_n_jobs = c.args, c.log, c.outdir, c.eff_n_jobs
     branch = c.primary
     raw, result, k_values = c.raw, branch.result, branch.k_values
-    # ------------------------------------------ 7. projection de signatures
+    # ----------------------------------------- 14. projection de signatures
     sig_scores = None
     sig_tests = None
     prov = None
@@ -805,7 +839,7 @@ def _signatures(c: _Ctx) -> None:
             log.warning("Projection de signatures : aucune signature chargée "
                         "(sources : %s) — étape sautée.", list(sources) or "aucune")
         else:
-            log.info("7. Projection de %d signatures (%d source(s) : %s)",
+            log.info("14. Projection de %d signatures (%d source(s) : %s)",
                      len(signatures), len(sources), ", ".join(sources))
             (outdir / "tables" / "signatures").mkdir(parents=True, exist_ok=True)
             prov.to_csv(outdir / "tables" / "signatures" / "signature_sources.csv",
@@ -821,7 +855,7 @@ def _signatures(c: _Ctx) -> None:
             )
             # tests de Wilcoxon (one-vs-rest) score de signature x modalité, pour
             # chaque k (stratif. cluster) et chaque variable clinique catégorielle
-            # -> étoiles au-dessus des boxplots du rapport (7.2 bis).
+            # -> étoiles au-dessus des boxplots du rapport (14.2 bis).
             cluster_labels_by_k = {k: result.labels(k, args.linkage) for k in k_values}
             sig_tests, sig_tests_tidy = sp.stratified_signature_tests(
                 sig_scores, cluster_labels_by_k, meta_full,
@@ -831,7 +865,7 @@ def _signatures(c: _Ctx) -> None:
                     outdir / "tables" / "signatures" / "signature_group_tests.csv",
                     index=False)
                 n_sig = int((sig_tests_tidy["padj"] < 0.05).sum())
-                log.info("Projection 7.2bis : %d tests de Wilcoxon (score x modalité, "
+                log.info("Projection 14.2bis : %d tests de Wilcoxon (score x modalité, "
                          "one-vs-rest + pairwise, tous k), %d significatifs "
                          "(FDR < 0.05) -> %s", len(sig_tests_tidy), n_sig,
                          outdir / "tables" / "signatures" / "signature_group_tests.csv")
@@ -844,10 +878,10 @@ def _deconvolution(c: _Ctx) -> None:
     args, log, outdir = c.args, c.log, c.outdir
     branch = c.primary
     raw, result, labels = c.raw, branch.result, branch.labels
-    # ------------------------------------------------- 8. déconvolution (R)
+    # ------------------------------------------------ 15. déconvolution (R)
     deconv = {}
     if args.run_deconv == "y":
-        log.info("8. Déconvolution (omnideconv / immunedeconv) — étape longue…")
+        log.info("15. Déconvolution (omnideconv / immunedeconv) — étape longue…")
         if args.already_normalized:
             log.warning("Déconvolution : --already-normalized est actif, mais la "
                         "déconvolution attend des counts BRUTS (CPM linéaire pour "
@@ -866,28 +900,50 @@ def _deconvolution(c: _Ctx) -> None:
     c.deconv = deconv
 
 
-def _correlations(c: _Ctx) -> None:
-    """Complète la branche historique une fois signatures/déconv disponibles."""
-    c.primary.run_correlations(sig_scores=c.sig_scores, deconv=c.deconv or None)
+def _clinical_analyses(c: _Ctx) -> None:
+    """Étapes 16-17 — khi² et corrélations, pour TOUTES les branches.
 
+    Ces deux analyses croisent une partition (ou des scores) avec les variables
+    cliniques. Elles sont volontairement jouées ici, en fin de pipeline, et non
+    dans `AnalysisBranch.run()` : les corrélations consomment les scores de
+    signatures (étape 14) et de déconvolution (étape 15), qui n'existaient pas
+    encore au moment où les branches sont construites. Lancées trop tôt — ce que
+    faisait la branche ICA — elles ne voyaient que la clinique continue et les
+    composantes, sans que rien ne le signale.
 
-def _synthesis(c: _Ctx) -> None:
-    args, log, outdir = c.args, c.log, c.outdir
-    branch = c.primary
-    # ------------------------------- 9. figure de synthèse (tout combiné)
-    pl.plot_cluster_overview(
-        branch.result, branch.k_final, outdir / "figures", linkage_method=args.linkage,
-        branch_stability=branch.branch_stability, items=branch.items,
-        color_by=branch.color_var, color_label=args.color_by or "color_by",
-        nes=c.nes,
-    )
-    log.info("Figure de synthèse : cluster_overview_k%d.png", branch.k_final)
+    Le khi² ne dépend, lui, que des labels et des métadonnées : le déplacer ici
+    ne change aucun résultat, mais met les deux familles de tests au même
+    endroit, avec le même périmètre, pour la branche historique comme pour
+    chaque projection ICA.
+    """
+    branches = [("Consensus Clustering", c.primary, None)]
+    branches += [(f"ICA m={dim}", branch, features)
+                 for dim, (branch, features) in sorted(c.ica_branch_objects.items())]
+
+    c.log.info("16-17. Analyses cliniques (khi² + corrélations) sur %d branche(s) : "
+               "%s. Les corrélations disposent maintenant des signatures (%s) et de "
+               "la déconvolution (%s).", len(branches),
+               ", ".join(name for name, _, _ in branches),
+               "oui" if c.sig_scores else "non", "oui" if c.deconv else "non")
+    for name, branch, features in branches:
+        branch.run_associations()
+        branch.run_correlations(
+            sig_scores=c.sig_scores, deconv=c.deconv or None,
+            extra_features=features, extra_prefix="ica",
+        )
+
+    # Le rapport lit les branches ICA via un dictionnaire figé plus haut :
+    # on y reporte les résultats produits à l'instant.
+    for dim, (branch, _) in c.ica_branch_objects.items():
+        if dim in c.ica_branches:
+            c.ica_branches[dim]["assoc"] = branch.assoc
+            c.ica_branches[dim]["corr"] = branch.corr
 
 
 def _report(c: _Ctx) -> None:
     args, log, outdir = c.args, c.log, c.outdir
     branch = c.primary
-    # ------------------------------ 10. rapport d'analyse HTML interactif
+    # ------------------------------ 18. rapport d'analyse HTML interactif
     if args.create_report == "y":
         results = PipelineResults(
             result=branch.result, k_final=branch.k_final, linkage_method=args.linkage,
@@ -912,7 +968,7 @@ def _report(c: _Ctx) -> None:
 def _save(c: _Ctx) -> None:
     args, log, outdir, t_start = c.args, c.log, c.outdir, c.t_start
     k_final = c.primary.k_final
-    # --------------------------------------------- 11. sauvegarde du run
+    # --------------------------------------------- 19. sauvegarde du run
     with open(outdir / "run_params.json", "w") as fh:
         json.dump({**vars(args), "outdir": str(args.outdir), "k_final": k_final},
                   fh, indent=2, default=str)
@@ -931,23 +987,26 @@ def main(argv=None) -> int:
         # rien n'a encore été calculé, il n'y a rien d'autre à diagnostiquer.
         print(f"[config] {exc}", file=sys.stderr)
         return 2
-    _load_data(c)
-    _harmonize_gene_ids(c)
-    _purity_filter(c)
-    _outlier_filter(c)
-    _load_metadata(c)
-    _clinical_degsea(c)
-    _ica(c)
-    _ica_metagene_gsea(c)
-    _run_ica_branches(c)
-    _run_primary_branch(c)
-    _degsea_all_k(c)
-    _signatures(c)
-    _deconvolution(c)
-    _correlations(c)
-    # _synthesis(c)
-    _report(c)
-    _save(c)
+    # L'ordre ci-dessous EST la définition des étapes : il est repris tel quel
+    # par les sections numérotées des fichiers de configuration.
+    _load_data(c)              # 1.  chargement de la matrice
+    _harmonize_gene_ids(c)     # 3.  identifiants -> symboles HGNC
+    _preprocess_matrix(c)      # 2.  filtrage + normalisation + gènes variables
+    _purity_filter(c)          # 4.  pureté tumorale (PUREE)
+    _outlier_filter(c)         # 5.  outliers ACP
+    _refit_matrix(c)           # 2b. prétraitement rejoué sans les tumeurs écartées
+    _load_metadata(c)          # 1.  métadonnées cliniques (+ filter_columns)
+    _clinical_degsea(c)        # 7.  DEGSEA clinique         (collections : 6)
+    _ica(c)                    # 8.  ICA stabilisée
+    _ica_metagene_gsea(c)      # 9.  GSEA des métagènes ICA
+    _run_ica_branches(c)       # 10-12. consensus, Jaccard, embeddings (ICA)
+    _run_primary_branch(c)     # 10-12. idem sur l'expression
+    _degsea_all_k(c)           # 13. DEGSEA par cluster
+    _signatures(c)             # 14. projection de signatures
+    _deconvolution(c)          # 15. déconvolution
+    _clinical_analyses(c)      # 16-17. khi² + corrélations, toutes branches
+    _report(c)                 # 18. rapport HTML
+    _save(c)                   # 19. paramètres du run
     return 0
 
 

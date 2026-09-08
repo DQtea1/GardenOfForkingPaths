@@ -74,36 +74,6 @@ def _bool_matrix(members: dict[int, np.ndarray], n: int) -> tuple[np.ndarray, li
 # Un arbre bootstrap -> Jaccard max par branche consensus
 # --------------------------------------------------------------------------
 def _bootstrap_max_jaccard(
-    seed: int, X: np.ndarray, Cons: np.ndarray, cons_sizes: np.ndarray,
-    prop_genes: float, gene_mode: str, metric: str, linkage_method: str,
-    min_size: int,
-) -> np.ndarray:
-    """Renvoie, pour chaque branche consensus, le Jaccard max avec une branche
-    de cet arbre bootstrap (vecteur aligné sur les lignes de `Cons`)."""
-    rng = np.random.default_rng(seed)
-    n, p = X.shape
-
-    idx_g = _draw(p, prop_genes, gene_mode, rng)
-    Xb = X[:, idx_g]
-    D = pairwise_distance(Xb, metric)
-    Z = linkage(squareform(D, checks=False), method=linkage_method)
-
-    members = branch_members(Z, min_size=min_size, include_root=True)
-    if not members:
-        return np.zeros(Cons.shape[0])
-
-    Boot, _ = _bool_matrix(members, n)          # (n_boot_branches x n)
-    inter = Cons @ Boot.T                        # (n_cons x n_boot)
-    boot_sizes = Boot.sum(axis=1)
-    union = cons_sizes[:, None] + boot_sizes[None, :] - inter
-    jaccard = inter / np.maximum(union, 1e-12)
-    return jaccard.max(axis=1)
-
-
-# --------------------------------------------------------------------------
-# Résultat + API
-# --------------------------------------------------------------------------
-def _bootstrap_max_jaccard_multi(
     seed: int, X: np.ndarray, cons_list: list, sizes_list: list,
     prop_genes: float, gene_mode: str, metric: str, linkage_method: str,
     min_size: int,
@@ -178,58 +148,19 @@ class BranchStability:
 def branch_stability(
     X: np.ndarray,
     consensus_distance: np.ndarray,
-    n_resamples: int = 1000,
-    prop_genes: float = 1.0,
-    gene_mode: str = "bootstrap",
-    metric: str = "pearson",
-    linkage_method: str = "average",
-    min_size: int = 2,
-    random_state: int = 0,
-    n_jobs: int = -1,
+    **kwargs,
 ) -> BranchStability:
-    """Stabilité Jaccard des branches de l'arbre consensus par bootstrap des gènes.
+    """Stabilité Jaccard des branches, pour **un seul** arbre consensus.
 
-    Parameters
-    ----------
-    X : matrice `samples x genes` prétraitée (celle qui a servi au consensus).
-    consensus_distance : distance consensus `n x n` du k retenu (`result.distance(k)`).
-    n_resamples : B, nombre d'arbres bootstrap (réutilise `--n-resamples`).
-    prop_genes, gene_mode : par défaut bootstrap classique (tirage de p gènes
-        avec remise) ; les tumeurs restent toutes présentes.
-    metric, linkage_method : mêmes réglages que l'arbre consensus, pour comparer
-        des arbres construits de la même façon.
+    Enveloppe de :func:`branch_stability_multi` : un unique k, donc une seule
+    entrée dans le dictionnaire. Les deux versions partageaient auparavant leur
+    code à la virgule près, avec le risque qu'une correction n'en touche qu'une.
+
+    `X` : matrice `samples x genes` prétraitée (celle du consensus).
+    `consensus_distance` : distance consensus `n x n` (`result.distance(k)`).
+    Les autres arguments sont ceux de :func:`branch_stability_multi`.
     """
-    X = np.ascontiguousarray(X, dtype=np.float64)
-    n = X.shape[0]
-
-    Zc = linkage(squareform(consensus_distance, checks=False), method=linkage_method)
-    cons_members = branch_members(Zc, min_size=min_size, include_root=False)
-    Cons, node_ids = _bool_matrix(cons_members, n)
-    cons_sizes = Cons.sum(axis=1)
-
-    logger.info(
-        "Stabilité Jaccard : %d branches consensus, B=%d arbres bootstrap "
-        "(gènes %s, metric=%s, linkage=%s)",
-        len(node_ids), n_resamples, gene_mode, metric, linkage_method,
-    )
-
-    seeds = np.random.SeedSequence(random_state).generate_state(n_resamples)
-    vecs = Parallel(n_jobs=n_jobs, batch_size=8)(
-        delayed(_bootstrap_max_jaccard)(
-            int(s), X, Cons, cons_sizes, prop_genes, gene_mode,
-            metric, linkage_method, min_size,
-        )
-        for s in seeds
-    )
-    stability = np.vstack(vecs).mean(axis=0)
-
-    return BranchStability(
-        linkage=Zc,
-        node_ids=node_ids,
-        members={nid: cons_members[nid] for nid in node_ids},
-        sizes=cons_sizes.astype(int),
-        stability=stability,
-    )
+    return branch_stability_multi(X, {0: consensus_distance}, **kwargs)[0]
 
 
 def branch_stability_multi(
@@ -272,7 +203,7 @@ def branch_stability_multi(
 
     seeds = np.random.SeedSequence(random_state).generate_state(n_resamples)
     vecs = Parallel(n_jobs=n_jobs, batch_size=8)(
-        delayed(_bootstrap_max_jaccard_multi)(
+        delayed(_bootstrap_max_jaccard)(
             int(s), X, cons_l, sizes_l, prop_genes, gene_mode,
             metric, linkage_method, min_size,
         )

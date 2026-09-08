@@ -176,11 +176,20 @@ class AnalysisBranch:
             return None
         return self.metadata.reindex(self.sample_names)
 
-    def run(self, *, run_associations: bool = True,
+    def run(self, *, run_associations: bool = False,
             run_correlations: bool = False,
             correlation_extra_features: pd.DataFrame | None = None,
             correlation_prefix: str = "ica") -> "AnalysisBranch":
-        """Exécute le flux commun jusqu'aux sorties cliniques demandées."""
+        """Exécute le flux commun : consensus, k, stabilité, embeddings.
+
+        Les analyses cliniques (khi² et corrélations) ne sont PAS lancées ici par
+        défaut : elles consomment des résultats produits plus tard dans le
+        pipeline — scores de signatures et déconvolution — et sont donc jouées en
+        fin de run, pour toutes les branches à la fois
+        (`run_pipeline._clinical_analyses`). Les lancer depuis `run()` les
+        priverait silencieusement de ces variables. Les deux drapeaux restent
+        disponibles pour un usage direct de la classe.
+        """
         self.paths.create()
         if self.input_export_name:
             self.matrix.to_csv(

@@ -14,21 +14,15 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from pathlib import Path
 
 import pandas as pd
 from joblib import Parallel, delayed
 
+from .config import slug as _safe_filename
 from .degsea import gsea_prerank_scores, resolve_gene_sets
 
 logger = logging.getLogger(__name__)
-
-
-def _safe_filename(value: object) -> str:
-    """Produit un fragment de chemin stable sans modifier le libellé métier."""
-    text = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("._")
-    return text or "unnamed"
 
 
 def _run_one_metagene(
