@@ -68,6 +68,7 @@ _STRUCTURED_KEYS = (
     "deconv_reference",
     "ordinal_variables",
     "clinical_degsea",
+    "subset_by",
 )
 
 
@@ -402,6 +403,77 @@ def build_parser() -> argparse.ArgumentParser:
                                   "ATTENTION au coût : le nombre d'ajustements DESeq2 "
                                   "vaut n_designs x (1 + somme des modalités).")
 
+    out_g = p.add_argument_group("OUTRIDER — expression aberrante (étape 7b)")
+    out_g.add_argument("--run_outrider", choices=["y", "n"], default="n",
+                       help="'y' : cherche les gènes anormalement exprimés CHEZ UNE "
+                            "TUMEUR (py_outrider, autoencodeur + binomiale négative), "
+                            "indépendamment du consensus clustering. Le découpage de "
+                            "la cohorte est déclaré par le bloc YAML `subset_by` : un "
+                            "run par combinaison de modalités. Étape longue. Défaut 'n'.")
+    out_g.add_argument("--outrider_python", default=None,
+                       help="interpréteur de l'environnement où py_outrider est "
+                            "installé (TensorFlow). Défaut : l'interpréteur courant, "
+                            "ce qui suppose `pip install py_outrider` dans le même "
+                            "environnement que le pipeline.")
+    out_g.add_argument("--outrider_profile", default="outrider",
+                       choices=["outrider", "protrider", "pca"],
+                       help="modèle py_outrider : 'outrider' (counts RNA-seq, "
+                            "binomiale négative, défaut), 'protrider' (intensités "
+                            "protéiques, gaussienne + covariables), 'pca'.")
+    out_g.add_argument("--outrider_encod_dim", type=int, default=None,
+                       help="dimension du goulot de l'autoencodeur. NON RENSEIGNÉE "
+                            "(défaut) : py_outrider cherche l'optimum, ce qui est "
+                            "correct mais coûte plusieurs ajustements complets PAR "
+                            "GROUPE. Règle du pouce pour figer : n_tumeurs / 4.")
+    out_g.add_argument("--outrider_iterations", type=int, default=None,
+                       help="itérations maximales d'ajustement (défaut du profil).")
+    out_g.add_argument("--outrider_min_samples", type=int, default=30,
+                       help="taille minimale d'un sous-groupe pour être analysé "
+                            "(défaut 30). Sous ce seuil l'autoencodeur n'a pas de "
+                            "quoi apprendre une norme : le groupe est écarté AVANT "
+                            "calcul et le motif est tracé dans plan.csv.")
+    out_g.add_argument("--outrider_min_count", type=int, default=10,
+                       help="counts bruts minimum par tumeur pour qu'un gène soit "
+                            "testé (défaut 10), jugé DANS le sous-groupe.")
+    out_g.add_argument("--outrider_min_frac_samples", type=float, default=0.25,
+                       help="fraction des tumeurs du sous-groupe devant atteindre ce "
+                            "seuil (0.25 = 25 %%, défaut).")
+    out_g.add_argument("--outrider_min_genes", type=int, default=100,
+                       help="nombre minimal de gènes survivant au filtrage pour "
+                            "lancer un run (défaut 100).")
+    out_g.add_argument("--outrider_alpha", type=float, default=0.05,
+                       help="seuil de FDR au-delà duquel un couple (tumeur, gène) "
+                            "est déclaré aberrant (défaut 0.05).")
+    out_g.add_argument("--outrider_max_events", type=int, default=5000,
+                       help="nombre maximal d'événements aberrants embarqués par run "
+                            "dans le rapport, les plus significatifs d'abord (défaut "
+                            "5000). Les tables complètes restent sur disque.")
+    out_g.add_argument("--outrider_figures", choices=["y", "n"], default="y",
+                       help="'y' (défaut) : embarque dans le rapport de quoi rejouer "
+                            "les figures d'OUTRIDER (volcano par tumeur, rang "
+                            "d'expression, QQ, heatmaps, dispersions…). 'n' ne garde "
+                            "que les tables.")
+    out_g.add_argument("--outrider_figure_cells", type=int, default=20000,
+                       help="budget, en CELLULES (gènes × tumeurs), des matrices "
+                            "embarquées pour les figures (défaut 20 000, soit environ "
+                            "1 Mo de rapport PAR RUN — sept matrices y sont stockées). "
+                            "Le panneau de gènes rétrécit donc automatiquement quand la "
+                            "cohorte grandit : c'est ce qui borne le poids du rapport, "
+                            "au prix d'un nuage de volcano plus clairsemé.")
+    out_g.add_argument("--outrider_heatmap_genes", type=int, default=100,
+                       help="gènes les plus variables retenus pour la heatmap "
+                            "gènes × tumeurs (défaut 100 ; R en prend 500).")
+    out_g.add_argument("--outrider_covariates", default=None, metavar="COL[,COL…]",
+                       help="colonnes cliniques passées à py_outrider comme "
+                            "covariables connues (profil protrider surtout).")
+    out_g.add_argument("--outrider_extra_args", default=None,
+                       help="options supplémentaires passées telles quelles à "
+                            "py_outrider (ex. '--distribution NB --convergence 1e-4').")
+    out_g.add_argument("--outrider_keep_h5ad", choices=["y", "n"], default="y",
+                       help="'y' (défaut) : conserve l'AnnData complet de chaque run "
+                            "(toutes les matrices : p-valeurs, z-scores, prédictions). "
+                            "C'est lui qui portera les figures.")
+
     sig = p.add_argument_group("projection de signatures (scoring + association clinique)")
     sig.add_argument("--compute_signatures", choices=["y", "n"], default="n",
                      help="'y' : après DEGSEA, score les signatures par tumeur "
@@ -619,6 +691,26 @@ def _extract_structured(config: dict, consumed: set[str]) -> dict:
         out["clinical_degsea"] = value
         consumed.add("clinical_degsea")
 
+    # Découpages OUTRIDER (7b) : {nom: [colonnes]}. Une liste vide — ou `null` —
+    # désigne la cohorte entière, un seul run sans stratification.
+    if "subset_by" in config:
+        value = config["subset_by"]
+        if isinstance(value, dict):
+            out["subset_by"] = {
+                str(k): ([] if v is None else
+                         [v] if isinstance(v, str) else list(v))
+                for k, v in value.items()
+            }
+        elif isinstance(value, (list, tuple)):      # forme courte : [col1, col2]
+            out["subset_by"] = {str(v): [str(v)] for v in value}
+        elif value is None:
+            out["subset_by"] = {}
+        else:
+            raise ConfigError(
+                "subset_by doit être un dictionnaire {nom: [colonnes]} (ou une "
+                "liste de colonnes, chacune devenant son propre découpage).")
+        consumed.add("subset_by")
+
     return out
 
 
@@ -683,6 +775,14 @@ def _check_ranges(cfg: dict, errors: list[str]) -> None:
     bounded("sig_pval", 0, 1, low_open=True)
     bounded("sig_top_n", 1)
     bounded("chi2_mc_resamples", 1)
+    bounded("outrider_min_samples", 2)
+    bounded("outrider_min_count", 0)
+    bounded("outrider_min_frac_samples", 0, 1)
+    bounded("outrider_min_genes", 1)
+    bounded("outrider_alpha", 0, 1, low_open=True)
+    bounded("outrider_max_events", 1)
+    bounded("outrider_encod_dim", 1)
+    bounded("outrider_iterations", 1)
 
     k_min, k_max = cfg.get("k_min"), cfg.get("k_max")
     if k_min is not None and k_max is not None and k_max < k_min:
@@ -761,6 +861,22 @@ def _check_steps(cfg: dict, errors: list[str]) -> None:
             "run_degsea requiert des counts BRUTS : incompatible avec "
             "--already-normalized."
         )
+    if cfg.get("already_normalized") and cfg.get("run_outrider") == "y":
+        errors.append(
+            "run_outrider requiert des counts BRUTS (OUTRIDER modélise une "
+            "binomiale négative) : incompatible avec --already-normalized."
+        )
+    try:
+        specs = subset_specs(cfg.get("subset_by"))
+    except ConfigError as exc:
+        errors.append(str(exc))
+    else:
+        if cfg.get("run_outrider") == "y" and not specs:
+            logger.warning(
+                "[config] run_outrider = y sans bloc subset_by : OUTRIDER sera "
+                "lancé une seule fois, sur toute la cohorte. Sur une cohorte "
+                "hétérogène, le modèle apprend la moyenne des populations et "
+                "chaque programme spécifique devient une « aberration ».")
     if cfg.get("tsne_dim") == 3:
         try:
             import plotly  # noqa: F401
@@ -873,6 +989,45 @@ def grouping_columns(value) -> tuple[str, ...]:
     return tuple(dict.fromkeys(
         str(col) for col in as_str_tuple(value)
         if str(col).strip().lower() not in _NO_GROUPING))
+
+
+def subset_specs(config) -> dict[str, tuple[str, ...]]:
+    """Normalise `subset_by` -> ``{nom: (colonnes…)}``, ordre du YAML conservé.
+
+    Chaque entrée décrit UN découpage de la cohorte : OUTRIDER (étape 7b) est
+    relancé indépendamment sur chaque combinaison de modalités de ces colonnes.
+    Une liste vide signifie « pas de découpage » : un seul run, toute la cohorte.
+    """
+    if not config:
+        return {}
+    if isinstance(config, (list, tuple)):
+        return {str(col): (str(col),) for col in config}
+    if not isinstance(config, dict):
+        raise ConfigError("subset_by doit être un dictionnaire {nom: [colonnes]}.")
+    out: dict[str, tuple[str, ...]] = {}
+    for name, columns in config.items():
+        if columns is None:
+            out[str(name)] = ()
+        elif isinstance(columns, str):
+            out[str(name)] = (columns,)
+        elif isinstance(columns, (list, tuple)):
+            out[str(name)] = tuple(str(c) for c in columns)
+        else:
+            raise ConfigError(
+                f"subset_by.{name} : attendu une liste de colonnes, reçu "
+                f"{type(columns).__name__}.")
+    return out
+
+
+def subset_columns(config) -> tuple[str, ...]:
+    """Toutes les colonnes citées par `subset_by`, sans doublon.
+
+    Sert au même usage que :func:`grouping_columns` : ces colonnes ne peuvent
+    pas être écartées par `filter_columns`, sinon le découpage disparaîtrait
+    en silence.
+    """
+    return tuple(dict.fromkeys(
+        col for columns in subset_specs(config).values() for col in columns))
 
 
 def contrast_columns(config: dict | None) -> tuple[str, ...]:
@@ -997,6 +1152,8 @@ __all__ = [
     "clinical_gene_sets",
     "contrast_columns",
     "grouping_columns",
+    "subset_specs",
+    "subset_columns",
     "as_str_tuple",
     "slug",
     "ALL_STRATA",

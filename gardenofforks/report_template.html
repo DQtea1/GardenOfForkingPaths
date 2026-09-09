@@ -29,9 +29,20 @@
   .pane.active{display:block}
   .sub,.ica-sub,.diff-sub,.pre-sub{display:none}
   .sub.active,.ica-sub.active,.diff-sub.active,.pre-sub.active{display:block}
+  /* troisième niveau d'onglets : une figure OUTRIDER par vue */
+  .out-subtabs{display:flex;gap:2px;flex-wrap:wrap;margin:12px 0 0;
+    border-bottom:1px solid var(--line);padding-bottom:6px}
+  .out-subtab{padding:4px 9px;border:1px solid var(--line);background:var(--surface2);
+    border-radius:6px;color:var(--ink2);font:600 11px var(--sans);cursor:pointer}
+  .out-subtab.active{background:var(--surface);color:var(--accent);border-color:var(--accent)}
+  .out-sub{display:none;margin-top:10px}
+  .out-sub.active{display:block}
   .ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0;padding:10px;
     background:var(--surface);border:1px solid var(--line);border-radius:9px}
   .ctl label{font:600 12px var(--sans);color:var(--ink2)}
+  /* groupe de contrôles montré/caché d'un bloc (attribut `hidden`) */
+  .ctlgrp{display:inline-flex;gap:10px;align-items:center}
+  .ctlgrp[hidden]{display:none}
   select,input[type=text],input[type=number]{font:13px var(--sans);padding:5px 8px;border:1px solid var(--line);
     border-radius:6px;background:#fff;color:var(--ink)}
   button.mini{font:600 12px var(--sans);padding:5px 10px;border:1px solid var(--line);border-radius:6px;
@@ -78,6 +89,22 @@
   .imgcard{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:10px;margin-bottom:16px}
   .imgcard h3{margin:0 0 8px;font-size:.95rem}
   .imgcard img{max-width:100%;height:auto}
+  /* ---- export de figures : bouton flottant + boîte de dialogue ---- */
+  #figBtn{position:fixed;z-index:60;display:none;font:600 11px var(--sans);padding:4px 9px;
+    border:1px solid var(--line);border-radius:6px;background:rgba(255,255,255,.94);
+    color:var(--ink);cursor:pointer;box-shadow:0 1px 5px rgba(0,0,0,.18)}
+  #figBtn:hover{border-color:var(--accent);color:var(--accent)}
+  .modal{position:fixed;inset:0;z-index:70;display:none;background:rgba(24,30,35,.42);
+    align-items:center;justify-content:center}
+  .modal.on{display:flex}
+  .modal .box{background:#fff;border:1px solid var(--line);border-radius:11px;padding:16px 18px;
+    min-width:360px;max-width:min(600px,92vw);box-shadow:0 10px 34px rgba(0,0,0,.32)}
+  .modal h4{margin:0 0 4px;font-size:.95rem}
+  .modal .fmt{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 10px}
+  .modal .fmt button{font:600 12px var(--sans);padding:8px 14px;border:1px solid var(--line);
+    border-radius:7px;background:var(--surface2);color:var(--ink);cursor:pointer}
+  .modal .fmt button:hover{border-color:var(--accent);color:var(--accent)}
+  .modal input[type=text]{width:100%;box-sizing:border-box;margin-top:3px}
   .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--ink2);align-items:center}
   .legend .sw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-1px}
   .muted{color:var(--ink2);font-size:.82rem}
@@ -571,14 +598,27 @@
     <div id="sdFilters"></div>
 
     <div class="ctl" style="margin-top:9px">
-      <label>Collection :</label><select id="sdColl"></select>
-      <label>Signature :</label><select id="sdSig"></select>
+      <label>Données :</label>
+      <select id="sdMode">
+        <option value="signatures">Plot signatures</option>
+        <option value="clinical">Plot clinical</option>
+      </select>
+      <span class="ctlgrp" id="sdSigCtl">
+        <label>Collection :</label><select id="sdColl"></select>
+        <label>Signature :</label><select id="sdSig"></select>
+      </span>
+      <span class="ctlgrp" id="sdClinCtl" hidden>
+        <label>Variable clinique :</label><select id="sdClin"></select>
+      </span>
       <label>Stratifier par :</label><select id="sdStrat"></select>
+      <label title="Modalités de la colonne de stratification à tracer">Modalités :</label>
+      <select id="sdMods" multiple size="4" style="min-width:150px"></select>
+      <button class="mini" id="sdModsAll">toutes</button>
       <label>k :</label><select id="sdK"></select>
     </div>
     <div class="flexrow">
-      <div><div class="muted">ssGSEA</div><canvas id="sdBoxSs"></canvas></div>
-      <div><div class="muted">Expression moyenne</div><canvas id="sdBoxMean"></canvas></div>
+      <div><div class="muted" id="sdLabSs">ssGSEA</div><canvas id="sdBoxSs"></canvas></div>
+      <div id="sdPanMean"><div class="muted">Expression moyenne</div><canvas id="sdBoxMean"></canvas></div>
       <div class="boxopts">
         <div class="hd">Affichage</div>
         <label><span>Axe Y + échelle</span><input type="checkbox" id="boAxes" checked></label>
@@ -593,13 +633,148 @@
           <i>Filtre actif → tests recalculés en direct (p brute, sans FDR).</i></div>
       </div>
     </div>
-    <div class="muted" style="margin-top:10px">Heatmap des scores (ssGSEA) alignée sur les patients (ordre du k choisi) :</div>
-    <div class="stack" id="sdHeat"></div>
+    <div id="sdHeatWrap">
+      <div class="muted" style="margin-top:10px">Heatmap des scores (ssGSEA) alignée sur les patients (ordre du k choisi) :</div>
+      <div class="stack" id="sdHeat"></div>
+    </div>
   </div>
 
 
   <div class="diff-sub" id="diff-sub-outrider">
-    <div class="warn on">OUTRIDER n'est pas encore exécuté par le pipeline. Ce sous-onglet est prêt à recevoir ses résultats lorsqu'une étape OUTRIDER sera ajoutée.</div>
+    <div class="warn" id="outWarn"></div>
+    <div class="ctl" id="outCtl">
+      <label title="Un run OUTRIDER par sous-groupe déclaré dans subset_by">Sous-groupe analysé :</label>
+      <select id="outRun"></select>
+      <label>Trier les événements :</label>
+      <select id="outSort">
+        <option value="padj">FDR croissante</option>
+        <option value="absz">|z-score| décroissant</option>
+        <option value="l2fc">|log2FC| décroissant</option>
+      </select>
+      <label>Sens :</label>
+      <select id="outDir">
+        <option value="all">sur- et sous-expression</option>
+        <option value="sur">sur-expression seule</option>
+        <option value="sous">sous-expression seule</option>
+      </select>
+      <label>Filtrer :</label>
+      <input id="outSearch" type="search" placeholder="tumeur ou gène…" style="min-width:170px">
+    </div>
+    <div class="muted" id="outSummary"></div>
+
+    <!-- Les 14 figures du paquet R OUTRIDER, une par vue. -->
+    <div class="out-subtabs" id="outSubtabs">
+      <button class="out-subtab active" data-out-sub="aberrant">Aberrations / tumeur</button>
+      <button class="out-subtab" data-out-sub="volcano">Volcano</button>
+      <button class="out-subtab" data-out-sub="rank">Rang d'expression</button>
+      <button class="out-subtab" data-out-sub="expobs">Observé vs attendu</button>
+      <button class="out-subtab" data-out-sub="qq">QQ</button>
+      <button class="out-subtab" data-out-sub="corheat">Corrélation tumeurs</button>
+      <button class="out-subtab" data-out-sub="geneheat">Heatmap gènes × tumeurs</button>
+      <button class="out-subtab" data-out-sub="disp">Dispersions</button>
+      <button class="out-subtab" data-out-sub="encdim">Dimension d'encodage</button>
+      <button class="out-subtab" data-out-sub="power">Puissance</button>
+      <button class="out-subtab" data-out-sub="sizefactors">Size factors</button>
+      <button class="out-subtab" data-out-sub="expressed">Gènes exprimés</button>
+      <button class="out-subtab" data-out-sub="filter">Filtrage (FPKM)</button>
+      <button class="out-subtab" data-out-sub="manhattan">Manhattan</button>
+    </div>
+
+    <div class="out-sub active" id="out-sub-aberrant">
+      <div class="ctl"><label>Échelle :</label>
+        <select id="outAbLog"><option value="log">logarithmique</option><option value="lin">linéaire</option></select>
+        <label>Ligne de repère (ratio) :</label><input id="outAbRatio" type="number" value="0.001" step="0.0005" min="0" style="width:90px">
+        <span class="muted">clic sur une tumeur = ses données cliniques</span></div>
+      <canvas id="outAbCanvas"></canvas><div class="legend" id="outAbLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-volcano">
+      <div class="ctl"><label>Tumeur :</label><select id="outVolSample"></select>
+        <label>Axe des x :</label><select id="outVolX">
+          <option value="zscore">z-score</option><option value="l2fc">log2 fold change</option></select>
+        <span class="muted">clic sur un point = le gène et son lien GeneCards</span></div>
+      <canvas id="outVolCanvas"></canvas><div class="legend" id="outVolLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-rank">
+      <div class="ctl"><label>Gène :</label><select id="outRankGene"></select>
+        <label>Comptages :</label><select id="outRankNorm">
+          <option value="norm">normalisés</option><option value="counts">bruts</option></select>
+        <label><input type="checkbox" id="outRankLog" checked> échelle log</label>
+        <span class="muted">clic sur un point = la tumeur</span></div>
+      <canvas id="outRankCanvas"></canvas><div class="legend" id="outRankLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-expobs">
+      <div class="ctl"><label>Gène :</label><select id="outEoGene"></select>
+        <label><input type="checkbox" id="outEoLog" checked> échelle log</label>
+        <span class="muted">clic sur un point = la tumeur</span></div>
+      <canvas id="outEoCanvas"></canvas><div class="legend" id="outEoLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-qq">
+      <div class="ctl"><label>Portée :</label><select id="outQQScope">
+          <option value="global">toutes les p-valeurs</option><option value="gene">un gène</option></select>
+        <label>Gène :</label><select id="outQQGene"></select></div>
+      <canvas id="outQQCanvas"></canvas><div class="legend" id="outQQLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-corheat">
+      <div class="ctl"><label>Comptages :</label><select id="outCorNorm">
+          <option value="norm">normalisés</option><option value="raw">bruts</option></select>
+        <span class="muted">clic sur une cellule = les deux tumeurs</span></div>
+      <canvas id="outCorCanvas"></canvas><div class="legend" id="outCorLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-geneheat">
+      <div class="ctl"><span class="muted">gènes les plus variables, centrés par gène — clic sur une cellule = gène + tumeur</span></div>
+      <canvas id="outGhCanvas"></canvas><div class="legend" id="outGhLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-disp">
+      <div class="ctl"><span class="muted">dispersion ajustée en fonction de l'expression moyenne — clic sur un point = le gène</span></div>
+      <canvas id="outDispCanvas"></canvas><div class="legend" id="outDispLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-encdim">
+      <canvas id="outEncCanvas"></canvas><div class="legend" id="outEncLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-power">
+      <canvas id="outPowCanvas"></canvas><div class="legend" id="outPowLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-sizefactors">
+      <div class="ctl"><span class="muted">clic sur une barre = la tumeur</span></div>
+      <canvas id="outSfCanvas"></canvas><div class="legend" id="outSfLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-expressed">
+      <div class="ctl"><span class="muted">tumeurs classées par nombre de gènes exprimés — clic = la tumeur</span></div>
+      <canvas id="outExpCanvas"></canvas><div class="legend" id="outExpLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-filter">
+      <canvas id="outFiltCanvas"></canvas><div class="legend" id="outFiltLegend"></div>
+    </div>
+
+    <div class="out-sub" id="out-sub-manhattan">
+      <canvas id="outManCanvas"></canvas><div class="legend" id="outManLegend"></div>
+    </div>
+
+    <div class="flexrow" style="align-items:flex-start;margin-top:10px">
+      <div style="flex:1 1 320px;min-width:300px">
+        <h3 style="font-size:.92rem;margin:0 0 6px">Aberrations par tumeur</h3>
+        <div class="tblwrap" style="max-height:46vh"><table class="dt" id="outSamples"></table></div>
+      </div>
+      <div style="flex:1 1 260px;min-width:240px">
+        <h3 style="font-size:.92rem;margin:0 0 6px">Gènes les plus souvent aberrants</h3>
+        <div class="tblwrap" style="max-height:46vh"><table class="dt" id="outGenes"></table></div>
+      </div>
+    </div>
+    <h3 style="font-size:.92rem;margin:16px 0 6px">Événements aberrants</h3>
+    <div class="tblwrap"><table class="dt" id="outEvents"></table></div>
+    <div class="muted" id="outSkipped" style="margin-top:12px"></div>
   </div>
 </div>
 
@@ -621,6 +796,29 @@
   </div>
   <div class="pre-sub active" id="pre-sub-consensus"><div id="preList"></div></div>
   <div class="pre-sub" id="pre-sub-ica"><div id="preIcaList"></div></div>
+</div>
+
+<!-- ============ EXPORT DE FIGURES ============ -->
+<button id="figBtn" title="Exporter cette figure (titre et légende compris)">⤓ Exporter</button>
+<div class="modal" id="figModal">
+  <div class="box">
+    <h4>Exporter la figure</h4>
+    <div class="muted" id="figWhat"></div>
+    <label style="display:block;margin-top:11px;font:600 12px var(--sans);color:var(--ink2)">
+      Nom du fichier
+      <input type="text" id="figName" spellcheck="false">
+    </label>
+    <div class="fmt">
+      <button id="figPng">Enregistrer en PNG</button>
+      <button id="figPdf">Enregistrer en PDF</button>
+      <button id="figClip">Copier dans le presse-papiers</button>
+    </div>
+    <div class="muted" id="figHint"></div>
+    <div class="muted" id="figStatus" style="margin-top:7px"></div>
+    <div style="text-align:right;margin-top:10px">
+      <button class="mini" id="figCancel">Fermer</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -1085,6 +1283,7 @@ function drawBox(cv,groups,tst,members,meta){const opt=boxOptions();
         if(mem&&mem[vi]!=null)cv._hits.push({x:px,y:py,r:Math.max(opt.radius,4),
           i:mem[vi],v,key:k,box:groups[k],
           pool:(meta&&meta.pool)||[],sig:(meta&&meta.sig)||"",
+          kind:(meta&&meta.kind)||"signature",
           metric:(meta&&meta.metric)||"score"});});
       ctx.globalAlpha=1;}
     // one-vs-rest au-dessus de la moustache haute (mode par défaut) : étoiles
@@ -1102,11 +1301,41 @@ function drawBox(cv,groups,tst,members,meta){const opt=boxOptions();
       ctx.strokeStyle="#555";ctx.lineWidth=1;ctx.beginPath();
       ctx.moveTo(xi,yB+4);ctx.lineTo(xi,yB);ctx.lineTo(xj,yB);ctx.lineTo(xj,yB+4);ctx.stroke();
       ctx.fillStyle="#111";ctx.textAlign="center";ctx.fillText(starStr(br.p),(xi+xj)/2,yB-2);ctx.textAlign="left";});}}
+/* Modalités de la colonne de stratification courante, dans l'ordre d'affichage. */
+function sdStratLevels(stratKey){
+  if(stratKey==="__cluster__"){const per=DATA.perK[String(+$("sdK").value)];
+    return [...new Set(per.labels)].sort((a,b)=>a-b).map(l=>"C"+l);}
+  const col=(DATA.meta||{})[stratKey]||[];
+  return [...new Set(col.filter(v=>v!=null).map(v=>""+v))].sort((a,b)=>a.localeCompare(b));}
+
+/* Sélection du menu « Modalités » : un Set, ou null quand tout est retenu.
+   Restreindre les modalités change le sens des tests one-vs-rest précalculés
+   (leur « reste » était la cohorte entière) : redrawBoxes repasse donc en
+   calcul live dès que la sélection n'est pas complète, comme pour le filtre
+   patients. */
+function sdSelectedMods(){
+  const sel=$("sdMods");if(!sel)return null;
+  const chosen=[...sel.selectedOptions].map(o=>o.value);
+  return (!chosen.length||chosen.length===sel.options.length)?null:new Set(chosen);}
+function sdModsRestricted(){return sdSelectedMods()!==null;}
+
+function sdFillMods(){
+  const sel=$("sdMods");if(!sel)return;
+  const previous=new Set([...sel.selectedOptions].map(o=>o.value));
+  const levels=sdStratLevels($("sdStrat").value);
+  sel.innerHTML="";
+  levels.forEach(l=>{const o=document.createElement("option");o.value=l;o.textContent=l;
+    // à colonne inchangée on garde le choix de l'utilisateur ; sinon tout est repris
+    o.selected=previous.size?previous.has(l):true;sel.appendChild(o);});
+  if(![...sel.selectedOptions].length)[...sel.options].forEach(o=>o.selected=true);}
+
 function sdStratGroups(scoreRow,stratKey,members){
-  const g={},per=DATA.perK[String(+$("sdK").value)],pass=filterMask();
+  const g={},per=DATA.perK[String(+$("sdK").value)],pass=filterMask(),
+        keep=sdSelectedMods();
   for(let i=0;i<N;i++){if(!pass(i))continue;let key;   // filtre patients
     if(stratKey==="__cluster__")key="C"+per.labels[i];
     else{const v=DATA.meta[stratKey][i];if(v==null)continue;key=""+v;}
+    if(keep&&!keep.has(key))continue;                  // modalités retenues
     const s=scoreRow[i];if(s==null)continue;
     (g[key]=g[key]||[]).push(s);
     // `members` accompagne `g` sans en changer la forme : quart() et liveTests()
@@ -1127,7 +1356,7 @@ function sdShowPoint(hit,e){if(e&&e.stopPropagation)e.stopPropagation();
   const b=_el("bubble","bubble"), pct=q=>q==null?"—":(100*q).toFixed(1)+" %";
   const inBox=sdQuantile(hit.v,hit.box), all=sdQuantile(hit.v,hit.pool);
   b.innerHTML="<button class='cls'>×</button><h4>"+esc(SAMPLES[hit.i])+"</h4>"
-    +"<div class='row'><span>signature</span><b>"+esc(hit.sig)+"</b></div>"
+    +"<div class='row'><span>"+esc(hit.kind||"signature")+"</span><b>"+esc(hit.sig)+"</b></div>"
     +"<div class='row'><span>"+esc(hit.metric)+"</span><b>"+(+hit.v).toFixed(4)+"</b></div>"
     +"<div class='row'><span>rang dans « "+esc(hit.key)+" » (n="+hit.box.length+")</span><b>"
     +pct(inBox)+"</b></div>"
@@ -1138,16 +1367,70 @@ function sdShowPoint(hit,e){if(e&&e.stopPropagation)e.stopPropagation();
   b.style.left=Math.min(e.clientX+13,window.innerWidth-330)+"px";
   b.style.top=Math.min(e.clientY+15,window.innerHeight-Math.min(320,b.scrollHeight+20))+"px";
   b.querySelector(".cls").onclick=ev=>{ev.stopPropagation();b.style.display="none";};}
+/* ---- Mode « plot clinical » : mêmes boîtes, mais la valeur tracée vient d'une
+   colonne continue de la métadonnée au lieu d'un score de signature. ---- */
+function sdIsClin(){const m=$("sdMode");return !!m&&m.value==="clinical";}
+
+// colonne clinique -> tableau aligné sur les tumeurs ; non numérique = absent
+function sdClinRow(v){const col=(DATA.meta||{})[v]||[];
+  return col.map(x=>{if(x==null||x==="")return null;const n=+x;return isFinite(n)?n:null;});}
+
+/* Colonnes de la table clinique traçables en boîte : toutes celles dont les
+   valeurs sont numériques. On ne se limite PAS au type « continuous » du
+   rapport : un statut 0/1 ou un grade, catégoriels pour les filtres et les
+   tests, se tracent parfaitement en boxplot et l'utilisateur les attend dans ce
+   menu. Seules les colonnes purement textuelles sont exclues — il n'y a pas de
+   boîte à moustaches d'un sous-type histologique. */
+function sdClinVars(){
+  const out=[];
+  for(const v in (DATA.meta||{})){
+    const n=sdClinRow(v).filter(x=>x!=null).length;
+    if(n>=MING)out.push({name:v,n});}
+  return out.sort((a,b)=>a.name.localeCompare(b.name));}
+
+function sdFillClin(){
+  const sel=$("sdClin");if(!sel)return;const old=sel.value;sel.innerHTML="";
+  const vars=sdClinVars();
+  vars.forEach(v=>{const o=document.createElement("option");o.value=v.name;
+    // n rappelé quand la colonne est incomplète : une boîte sur 12 tumeurs
+    // n'a pas le même poids qu'une boîte sur toute la cohorte
+    o.textContent=v.n<N?(v.name+" (n="+v.n+")"):v.name;sel.appendChild(o);});
+  if(!vars.length){const o=document.createElement("option");o.value="";
+    o.textContent="(aucune colonne numérique dans la table clinique)";sel.appendChild(o);}
+  if(old&&[...sel.options].some(o=>o.value===old))sel.value=old;}
+
+/* Bascule des contrôles : la seconde boîte (expression moyenne) et la heatmap
+   ssGSEA ne veulent rien dire pour une variable clinique. */
+function sdApplyMode(){
+  const clin=sdIsClin();
+  $("sdSigCtl").hidden=clin;
+  $("sdClinCtl").hidden=!clin;
+  $("sdPanMean").hidden=clin;
+  $("sdHeatWrap").hidden=clin;
+  $("sdLabSs").textContent=clin
+    ?($("sdClin").value||"aucune colonne numérique dans la table clinique")
+    :"ssGSEA";}
+
 function redrawBoxes(){
-  const sig=$("sdSig").value,strat=$("sdStrat").value,k=+$("sdK").value,filt=isFilterActive();
+  const strat=$("sdStrat").value,k=+$("sdK").value,
+        // Restreindre les patients OU les modalités change le « reste » des tests
+        // one-vs-rest précalculés : on les recalcule alors en direct.
+        live=isFilterActive()||sdModsRestricted();
+  if(sdIsClin()){
+    const v=$("sdClin").value,cv=$("sdBoxSs"),members={};
+    const g=v?sdStratGroups(sdClinRow(v),strat,members):{};
+    const pool=[].concat(...Object.keys(g).map(k2=>g[k2]));
+    // aucun test précalculé pour les variables cliniques : toujours en direct
+    drawBox(cv,g,liveTests(g),members,{pool,sig:v,metric:"valeur",kind:"variable clinique"});
+    sdBindPoints(cv);return;}
+  const sig=$("sdSig").value;
   ["ss","mean"].forEach(m=>{const meth=m==="ss"?"ssgsea":"mean";const S=DATA.signatures[meth];if(!S){return;}
     const ri=S.names.indexOf(sig);if(ri<0)return;
     const members={}, g=sdStratGroups(S.values[ri],strat,members);
     // « toutes boîtes réunies » = l'union des groupes affichés, donc APRÈS le
     // filtre patients et sans les tumeurs sans valeur de stratification.
     const pool=[].concat(...Object.keys(g).map(k2=>g[k2]));
-    // filtre actif -> recalcul live (Mann-Whitney JS) ; sinon tests précalculés (scipy)
-    const tst=filt?liveTests(g):sigTestPvals(meth,sig,strat,k);
+    const tst=live?liveTests(g):sigTestPvals(meth,sig,strat,k);
     const cv=$("sdBox"+(m==="ss"?"Ss":"Mean"));
     drawBox(cv,g,tst,members,{pool,sig,metric:m==="ss"?"score ssGSEA":"expression moyenne"});
     sdBindPoints(cv);});
@@ -1168,7 +1451,9 @@ function sdBindPoints(cv){if(cv._bound)return;cv._bound=true;
   cv.onmouseleave=_hideTip;
   cv.onclick=e=>{const h=find(e);if(h)sdShowPoint(h,e);};}
 function renderSigDet(){
+  sdApplyMode();
   redrawBoxes();
+  if(sdIsClin())return;               // pas de heatmap de signatures en mode clinique
   // heatmap alignée (ssgsea)
   const host=$("sdHeat");host.innerHTML="";const per=DATA.perK[String(+$("sdK").value)];
   const p=document.createElement("div");p.className="panel";const cv=document.createElement("canvas");p.appendChild(cv);host.appendChild(p);
@@ -1197,6 +1482,11 @@ function renderSigDet(){
   const st=$("sdStrat");const oc=document.createElement("option");oc.value="__cluster__";oc.textContent="Cluster";st.appendChild(oc);
   for(const v in DATA.meta) if(DATA.metaTypes[v]==="categorical"){const o=document.createElement("option");o.value=v;o.textContent=v;st.appendChild(o);}
   fillKSelect($("sdK"),DATA.kFinal);
+  sdFillClin();
+  sdFillMods();                          // dépend de sdK : à remplir après fillKSelect
+  // rapport sans ssGSEA : le mode signatures n'aurait rien à montrer
+  if(!(DATA.signatures||{}).ssgsea&&$("sdClin").value)$("sdMode").value="clinical";
+  sdApplyMode();
   // ---- filtres patients : ajout à la demande, comme dans le sous-onglet ssGSEA
   const host=$("sdFilters");
   $("sdAddFilter").onclick=()=>{sdFilters.push({col:"",values:[]});sdRenderFilters();renderSigDet();};
@@ -1209,7 +1499,11 @@ function renderSigDet(){
     sdFilters.splice(+e.target.dataset.fi,1);sdRenderFilters();renderSigDet();}});
   sdRenderFilters();
   $("sdFilterReset").onclick=()=>{sdFilters=[];sdRenderFilters();renderSigDet();};
-  ["sdSig","sdStrat","sdK"].forEach(id=>$(id).onchange=renderSigDet);
+  ["sdSig","sdClin","sdMode","sdMods"].forEach(id=>$(id).onchange=renderSigDet);
+  // les modalités disponibles dépendent de la colonne de stratification, et pour
+  // « Cluster » aussi du k : les deux menus doivent recharger la liste.
+  ["sdStrat","sdK"].forEach(id=>$(id).onchange=()=>{sdFillMods();renderSigDet();});
+  $("sdModsAll").onclick=()=>{[...$("sdMods").options].forEach(o=>o.selected=true);renderSigDet();};
   // menu d'affichage des boxplots : ne redessine que les deux boîtes (léger)
   ["boAxes","boPoints","boOpacity","boJitter","boRadius","boPair"].forEach(id=>$(id).oninput=()=>{
     const v=$(id+"V");if(v)v.textContent=(+$(id).value).toFixed(2);redrawBoxes();});
@@ -2375,6 +2669,503 @@ function renderTable(){const name=$("tblSelect").value;const T=DATA.tables[name]
   rows.slice(0,4000).forEach(r=>{h+="<tr>";r.forEach(c=>h+="<td>"+esc(c==null?"":c)+"</td>");h+="</tr>";});h+="</tbody>";tbl.innerHTML=h;
   tbl.querySelectorAll("th").forEach((th,i)=>th.onclick=()=>{tblSort.dir=(tblSort.col===i)?-tblSort.dir:1;tblSort.col=i;renderTable();});
   $("tblInfo").textContent=rows.length+" lignes"+(T.truncated?" (table tronquée à 3000)":"");}
+// ================= OUTRIDER (7b) — un run par sous-groupe `subset_by` =======
+// Chaque run a son propre modèle : on ne compare donc JAMAIS deux sous-groupes
+// dans une même vue, on en choisit un dans le menu. Les groupes écartés sont
+// listés avec leur motif, pour qu'une absence attendue soit explicable.
+const OUT = DATA.outrider || {status: "not_run", runs: [], skipped: [], settings: {}};
+let outReady = false;
+function outSetWarn(msg){const w=$("outWarn");w.textContent=msg||"";w.classList.toggle("on",!!msg);}
+function outFmt(v,digits){if(v==null||!isFinite(v))return"—";const a=Math.abs(v);
+  return (a!==0&&(a<1e-3||a>=1e5))?v.toExponential(2):v.toFixed(digits==null?2:digits);}
+function outCurrent(){const runs=OUT.runs||[];if(!runs.length)return null;
+  const v=$("outRun").value;return runs.find(r=>r.key===v)||runs[0];}
+function outPrepare(){
+  if(outReady)return;outReady=true;
+  const sel=$("outRun"),groups={};
+  (OUT.runs||[]).forEach(r=>{(groups[r.subset]=groups[r.subset]||[]).push(r);});
+  sel.innerHTML="";
+  Object.keys(groups).forEach(name=>{                 // un optgroup par bloc du YAML
+    const g=document.createElement("optgroup");g.label=name;
+    groups[name].forEach(r=>{const o=document.createElement("option");o.value=r.key;
+      const s=r.summary||{};
+      o.textContent=(r.columns.length?r.modalities.join(" × "):"toute la cohorte")
+        +"  —  n="+(s.n_samples||0)+", "+(s.n_aberrant||0)+" aberration(s)";
+      g.appendChild(o);});
+    sel.appendChild(g);});
+  ["outRun","outSort","outDir"].forEach(id=>$(id).onchange=outRender);
+  $("outSearch").oninput=outRender;
+  // troisième niveau d'onglets : une figure par vue
+  document.querySelectorAll(".out-subtab").forEach(t=>t.onclick=()=>{
+    document.querySelectorAll(".out-subtab").forEach(x=>x.classList.remove("active"));
+    t.classList.add("active");
+    document.querySelectorAll(".out-sub").forEach(p=>p.classList.remove("active"));
+    $("out-sub-"+t.dataset.outSub).classList.add("active");
+    outView=t.dataset.outSub;outRenderFigure();});
+  // chaque réglage de figure ne redessine que la figure courante
+  [["outAbLog"],["outAbRatio","input"],["outVolSample"],["outVolX"],["outRankGene"],
+   ["outRankNorm"],["outRankLog"],["outEoGene"],["outEoLog"],["outQQScope"],
+   ["outQQGene"],["outCorNorm"]].forEach(([id,ev])=>{
+    const el=$(id);if(el)el[ev==="input"?"oninput":"onchange"]=outRenderFigure;});
+}
+function outSkippedHTML(){
+  const sk=OUT.skipped||[];if(!sk.length)return"";
+  return "<b>"+sk.length+" sous-groupe(s) écarté(s)</b> — "+sk.map(e=>
+    esc(e.label||e.key||"?")+" : "+esc(e.raison||"motif non renseigné")).join(" · ");
+}
+function outRender(){
+  const status=OUT.status||"not_run";
+  if(status!=="complete"){
+    outSetWarn(OUT.message||"OUTRIDER n'a pas été exécuté pour ce run.");
+    $("outCtl").style.display="none";$("outSubtabs").style.display="none";
+    $("outSummary").textContent="";
+    document.querySelectorAll(".out-sub").forEach(p=>p.style.display="none");
+    ["outSamples","outGenes","outEvents"].forEach(id=>$(id).innerHTML="");
+    $("outSkipped").innerHTML=outSkippedHTML();return;}
+  outSetWarn("");$("outCtl").style.display="";$("outSubtabs").style.display="";
+  outPrepare();
+  const r=outCurrent();if(!r)return;
+  outFillFigureSelects();outRenderFigure();
+  const s=r.summary||{},alpha=(OUT.settings||{}).alpha||s.alpha;
+
+  $("outSummary").innerHTML=
+    "<b>"+esc(r.label)+"</b> — "+(s.n_samples||0)+" tumeurs × "+(s.n_genes||0)
+    +" gènes testés · profil "+esc(s.profile||"outrider")
+    +" · dimension d'encodage "+(s.encod_dim==null?"?":s.encod_dim)
+    +(s.hyperpar_search?" (cherchée par py_outrider)":" (fixée)")
+    +" · <b>"+(s.n_aberrant||0)+"</b> événement(s) aberrant(s) à FDR ≤ "+outFmt(alpha,3)
+    +", touchant "+(s.n_samples_with_event||0)+" tumeur(s) et "
+    +(s.n_genes_with_event||0)+" gène(s)"
+    +(s.seconds?" · calculé en "+s.seconds+" s":"")
+    +(s.events_truncated?" · <span style='color:#8a2a30'>table limitée aux "
+       +(s.n_events_written||0)+" plus significatifs (tables complètes sur disque)</span>":"");
+
+  $("outSamples").innerHTML=icaTable(["Tumeur","Aberrations","Sur-exprimés","Sous-exprimés"],
+    (r.samples||[]).filter(x=>x.n_aberrant>0)
+      .map(x=>[x.sample,x.n_aberrant,x.n_sur,x.n_sous]));
+  $("outGenes").innerHTML=icaTable(["Gène","Tumeurs aberrantes"],
+    (r.genes||[]).map(x=>[x.gene,x.n_aberrant]));
+
+  const dir=$("outDir").value,q=($("outSearch").value||"").trim().toLowerCase(),
+        sort=$("outSort").value;
+  let ev=(r.events||[]).filter(e=>dir==="all"||e.direction===dir);
+  if(q)ev=ev.filter(e=>(""+e.sample).toLowerCase().includes(q)||
+                       (""+e.gene).toLowerCase().includes(q));
+  const key=e=>sort==="absz"?-Math.abs(e.zscore||0)
+            :sort==="l2fc"?-Math.abs(e.l2fc||0)
+            :(e.padj==null?Infinity:e.padj);
+  ev=ev.slice().sort((a,b)=>key(a)-key(b));
+  $("outEvents").innerHTML=icaTable(
+    ["Tumeur","Gène","FDR","p","log2FC","z-score","Counts","Attendu","Sens"],
+    ev.map(e=>[e.sample,e.gene,outFmt(e.padj),outFmt(e.pvalue),outFmt(e.l2fc),
+               outFmt(e.zscore),outFmt(e.raw_count,0),outFmt(e.predicted,1),
+               e.direction==="sur"?"sur-exprimé":"sous-exprimé"]));
+  $("outSkipped").innerHTML=outSkippedHTML();
+}
+
+/* ---- Les 14 figures du paquet R OUTRIDER, en interactif ------------------
+   Toutes lisent le même panneau embarqué par le runner (figure_tables) :
+   matrices gènes × tumeurs bornées par un budget de cellules. Deux
+   interactions partagées, calquées sur l'existant : clic sur un gène -> ses
+   valeurs + bouton GeneCards (comme les volcanos DESeq2) ; clic sur une
+   tumeur -> ses données cliniques (comme les boxplots). */
+const OUTC={ab:"#c73c3c",ok:"#8aa1ad",hi:"#2676b8",grid:"#e4e9eb",ink:"#52616a"};
+function outFig(){const r=outCurrent();return r&&r.figures?r.figures:null;}
+/* « aberrant » n'est pas transporté : c'est padj <= alpha, on le redéduit ici
+   plutôt que d'embarquer une huitième matrice gènes × tumeurs. */
+function outAlpha(){const f=outFig();return (f&&f.alpha)||(OUT.settings||{}).alpha||0.05;}
+function outIsAb(P,gi,si){const v=P.padj[gi]&&P.padj[gi][si];
+  return v!=null&&isFinite(v)&&v<=outAlpha();}
+function outMsg(cvId,legendId,msg){const ctx=fitCanvas($(cvId),640,86);
+  ctx.font="12px ui-monospace";ctx.fillStyle=OUTC.ink;ctx.fillText(msg,12,34);
+  if(legendId)$(legendId).innerHTML="";outBind($(cvId),[]);}
+function outBind(cv,hits){cv._outHits=hits;cv.style.cursor=hits.length?"pointer":"default";
+  if(cv._outBound)return;cv._outBound=true;
+  cv.addEventListener("click",e=>{const b=cv.getBoundingClientRect(),
+    mx=e.clientX-b.left,my=e.clientY-b.top;let best=null,bd=Infinity;
+    (cv._outHits||[]).forEach(h=>{const d=(h.x-mx)**2+(h.y-my)**2,r=h.r||7;
+      if(d<bd&&d<=r*r){bd=d;best=h;}});
+    if(best)best.show(e);});}
+function outBubble(id,title,rows,e,extraHTML){
+  const b=_el(id,"bubble");
+  b.innerHTML="<button class='cls'>×</button><h4>"+esc(title)+"</h4>"
+    +rows.map(([k,v])=>"<div class='row'><span>"+esc(k)+"</span><b>"+esc(v)+"</b></div>").join("")
+    +(extraHTML||"");
+  b.style.display="block";
+  b.style.left=Math.min(e.clientX+13,window.innerWidth-330)+"px";
+  b.style.top=Math.min(e.clientY+15,window.innerHeight-Math.min(320,b.scrollHeight+20))+"px";
+  b.querySelector(".cls").onclick=ev=>{ev.stopPropagation();b.style.display="none";};
+  return b;}
+function outShowGene(gene,rows,e){if(e&&e.stopPropagation)e.stopPropagation();
+  const b=outBubble("outriderGeneBubble","Gène "+gene,rows,e);
+  const link=document.createElement("button");link.className="mini";
+  link.textContent="Voir GeneCards";
+  link.onclick=ev=>{ev.stopPropagation();
+    window.open("https://www.genecards.org/card/"+encodeURIComponent(gene),"_blank","noopener");};
+  b.appendChild(link);}
+function outShowSample(name,rows,e){if(e&&e.stopPropagation)e.stopPropagation();
+  const oi=SAMPLES.indexOf(name);
+  outBubble("outriderSampleBubble","Tumeur "+name,rows,e,
+    "<h4 style='margin-top:9px'>Données cliniques</h4>"
+    +(oi>=0?_clinHtml(oi):"<div class='muted'>Tumeur absente des métadonnées.</div>"));}
+function outFmtP(v){return v==null||!isFinite(v)?"—":
+  (Math.abs(v)<1e-3&&v!==0?(+v).toExponential(2):(+v).toFixed(4));}
+
+/* Cadre commun : renvoie les échelles et trace axes + grille. */
+function outFrame(cvId,W,H,xlim,ylim,xlab,ylab,opts){
+  const o=opts||{},ML=o.ML==null?62:o.ML,MB=o.MB==null?46:o.MB,MT=14,MR=16;
+  const ctx=fitCanvas($(cvId),W,H);
+  const sx=v=>ML+(v-xlim[0])/((xlim[1]-xlim[0])||1)*(W-ML-MR);
+  const sy=v=>H-MB-(v-ylim[0])/((ylim[1]-ylim[0])||1)*(H-MB-MT);
+  const xt=[],yt=[];for(let i=0;i<=5;i++){xt.push(xlim[0]+i*(xlim[1]-xlim[0])/5);
+    yt.push(ylim[0]+i*(ylim[1]-ylim[0])/5);}
+  deDrawAxis(ctx,ML,H-MB,W-MR,MT,xt,yt,sx,sy);
+  ctx.fillStyle=OUTC.ink;ctx.font="11px ui-monospace";ctx.textAlign="center";
+  ctx.textBaseline="alphabetic";ctx.fillText(xlab,(ML+W-MR)/2,H-10);
+  ctx.save();ctx.translate(14,(MT+H-MB)/2);ctx.rotate(-Math.PI/2);
+  ctx.fillText(ylab,0,0);ctx.restore();
+  return {ctx,sx,sy,ML,MB,MT,MR,W,H};}
+function outDot(ctx,x,y,r,color,alpha){ctx.globalAlpha=alpha==null?.75:alpha;
+  ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,6.284);ctx.fill();ctx.globalAlpha=1;}
+
+/* 1 — plotAberrantPerSample : gènes aberrants par tumeur, triés. */
+function outDrawAberrant(){const f=outFig();
+  if(!f||!f.aberrant_per_sample)return outMsg("outAbCanvas","outAbLegend","Aucune donnée.");
+  const rows=f.aberrant_per_sample.slice().sort((a,b)=>b.n-a.n),n=rows.length;
+  const log=$("outAbLog").value==="log",maxN=Math.max(1,...rows.map(r=>r.n));
+  const W=Math.max(620,Math.min(1100,80+n*9)),H=380;
+  const fr=outFrame("outAbCanvas",W,H,[0,n],[0,log?Math.log10(maxN+1):maxN],
+                    "tumeurs (triées)",log?"gènes aberrants (log)":"gènes aberrants");
+  const ratio=Math.max(0,+$("outAbRatio").value||0),
+        nGenes=(f.panel&&f.panel.n_genes_total)||0,line=ratio*nGenes;
+  const ty=v=>fr.sy(log?Math.log10(v+1):v),hits=[];
+  if(line>0){fr.ctx.strokeStyle=OUTC.ab;fr.ctx.setLineDash([5,4]);fr.ctx.beginPath();
+    fr.ctx.moveTo(fr.ML,ty(line));fr.ctx.lineTo(W-fr.MR,ty(line));fr.ctx.stroke();
+    fr.ctx.setLineDash([]);}
+  rows.forEach((r,i)=>{const x=fr.sx(i+.5),y=ty(r.n);
+    fr.ctx.strokeStyle=OUTC.grid;fr.ctx.beginPath();fr.ctx.moveTo(x,fr.sy(0));
+    fr.ctx.lineTo(x,y);fr.ctx.stroke();
+    outDot(fr.ctx,x,y,3.4,r.n>line&&line>0?OUTC.ab:OUTC.hi,.9);
+    hits.push({x,y,r:7,show:e=>outShowSample(r.sample,
+      [["gènes aberrants",r.n],["sur-exprimés",r.n_sur],["sous-exprimés",r.n_sous],
+       ["rang",(i+1)+" / "+n]],e)});});
+  outBind($("outAbCanvas"),hits);
+  $("outAbLegend").innerHTML="<span><i class='sw' style='background:"+OUTC.ab
+    +"'></i>au-dessus du repère</span><span class='muted'>repère = ratio × "
+    +nGenes+" gènes testés = "+line.toFixed(1)+"</span>";}
+
+/* 2 — plotVolcano : une tumeur, tous les gènes du panneau. */
+function outDrawVolcano(){const f=outFig();
+  if(!f||!f.panel)return outMsg("outVolCanvas","outVolLegend","Aucune donnée de figure.");
+  const si=+$("outVolSample").value,P=f.panel,xkey=$("outVolX").value;
+  if(!(si>=0))return outMsg("outVolCanvas","outVolLegend","Choisissez une tumeur.");
+  const pts=[];
+  P.genes.forEach((g,gi)=>{const x=P[xkey][gi][si],p=P.pvalue[gi][si];
+    if(x==null||p==null||!isFinite(x)||!isFinite(p))return;
+    pts.push({g,gi,x,y:-Math.log10(Math.max(p,Number.MIN_VALUE)),
+              ab:outIsAb(P,gi,si),padj:P.padj[gi][si],p});});
+  if(!pts.length)return outMsg("outVolCanvas","outVolLegend","Aucun point exploitable.");
+  const xa=Math.max(1,...pts.map(q=>Math.abs(q.x))),ym=Math.max(2,...pts.map(q=>q.y));
+  const fr=outFrame("outVolCanvas",760,430,[-xa*1.05,xa*1.05],[0,ym*1.08],
+                    xkey==="zscore"?"z-score":"log2 fold change","-log10(p-value)");
+  const hits=[];
+  pts.forEach(q=>{const x=fr.sx(q.x),y=fr.sy(q.y);
+    outDot(fr.ctx,x,y,q.ab?3.6:2.2,q.ab?OUTC.ab:OUTC.ok,q.ab?.95:.45);
+    if(q.ab)hits.push({x,y,r:7,show:e=>outShowGene(q.g,
+      [["z-score",outFmtP(P.zscore[q.gi][si])],["log2 fold change",outFmtP(P.l2fc[q.gi][si])],
+       ["p-value",outFmtP(q.p)],["padj (FDR)",outFmtP(q.padj)],
+       ["counts observés",outFmtP(P.counts[q.gi][si])],
+       ["counts attendus",outFmtP(P.predicted[q.gi][si])]],e)});});
+  pts.filter(q=>!q.ab).forEach(q=>hits.push({x:fr.sx(q.x),y:fr.sy(q.y),r:4,
+    show:e=>outShowGene(q.g,[["z-score",outFmtP(q.x)],["p-value",outFmtP(q.p)],
+                             ["padj (FDR)",outFmtP(q.padj)],["aberrant","non"]],e)}));
+  outBind($("outVolCanvas"),hits);
+  $("outVolLegend").innerHTML="<span><i class='sw' style='background:"+OUTC.ab
+    +"'></i>aberrant (FDR ≤ "+(f.alpha||0.05)+")</span><span class='muted'>"
+    +pts.length+" gènes du panneau sur "+P.n_genes_total+" testés</span>";}
+
+/* 3 — plotExpressionRank : un gène, toutes les tumeurs classées. */
+function outDrawRank(){const f=outFig();
+  if(!f||!f.panel)return outMsg("outRankCanvas","outRankLegend","Aucune donnée de figure.");
+  const gi=+$("outRankGene").value,P=f.panel,key=$("outRankNorm").value,
+        useLog=$("outRankLog").checked;
+  if(!(gi>=0))return outMsg("outRankCanvas","outRankLegend","Choisissez un gène.");
+  const vals=f.samples.map((s,si)=>({s,si,v:P[key][gi][si],
+        ab:outIsAb(P,gi,si),padj:P.padj[gi][si]}))
+      .filter(d=>d.v!=null&&isFinite(d.v)).sort((a,b)=>a.v-b.v);
+  if(!vals.length)return outMsg("outRankCanvas","outRankLegend","Aucun comptage exploitable.");
+  const tr=v=>useLog?Math.log10(Math.max(v,0)+1):v,
+        ymax=Math.max(...vals.map(d=>tr(d.v)));
+  const fr=outFrame("outRankCanvas",760,400,[0,vals.length],[0,ymax*1.08],
+                    "rang d'expression",(useLog?"log10(1+":"")+(key==="norm"
+                    ?"counts normalisés":"counts bruts")+(useLog?")":""));
+  const hits=[];
+  vals.forEach((d,i)=>{const x=fr.sx(i+.5),y=fr.sy(tr(d.v));
+    outDot(fr.ctx,x,y,d.ab?4:2.6,d.ab?OUTC.ab:OUTC.ok,d.ab?.95:.6);
+    hits.push({x,y,r:7,show:e=>outShowSample(d.s,
+      [["gène",P.genes[gi]],[key==="norm"?"counts normalisés":"counts bruts",outFmtP(d.v)],
+       ["padj (FDR)",outFmtP(d.padj)],["aberrant",d.ab?"oui":"non"],
+       ["rang",(i+1)+" / "+vals.length]],e)});});
+  outBind($("outRankCanvas"),hits);
+  $("outRankLegend").innerHTML="<span><i class='sw' style='background:"+OUTC.ab
+    +"'></i>aberrant</span><span class='muted'>gène "+esc(P.genes[gi])+"</span>";}
+
+/* 4 — plotExpectedVsObservedCounts : un gène, observé vs prédit. */
+function outDrawExpObs(){const f=outFig();
+  if(!f||!f.panel)return outMsg("outEoCanvas","outEoLegend","Aucune donnée de figure.");
+  const gi=+$("outEoGene").value,P=f.panel,useLog=$("outEoLog").checked;
+  if(!(gi>=0))return outMsg("outEoCanvas","outEoLegend","Choisissez un gène.");
+  const pts=f.samples.map((s,si)=>({s,si,o:P.counts[gi][si],p:P.predicted[gi][si],
+        ab:outIsAb(P,gi,si),padj:P.padj[gi][si]}))
+      .filter(d=>d.o!=null&&d.p!=null&&isFinite(d.o)&&isFinite(d.p));
+  if(!pts.length)return outMsg("outEoCanvas","outEoLegend","Aucun comptage exploitable.");
+  const tr=v=>useLog?Math.log10(Math.max(v,0)+1):v;
+  const m=Math.max(...pts.map(d=>Math.max(tr(d.o),tr(d.p))))*1.08;
+  const fr=outFrame("outEoCanvas",620,560,[0,m],[0,m],
+                    (useLog?"log10(1+attendu)":"attendu"),
+                    (useLog?"log10(1+observé)":"observé"));
+  fr.ctx.strokeStyle="#9aa5ab";fr.ctx.setLineDash([4,4]);fr.ctx.beginPath();
+  fr.ctx.moveTo(fr.sx(0),fr.sy(0));fr.ctx.lineTo(fr.sx(m),fr.sy(m));fr.ctx.stroke();
+  fr.ctx.setLineDash([]);
+  const hits=[];
+  pts.forEach(d=>{const x=fr.sx(tr(d.p)),y=fr.sy(tr(d.o));
+    outDot(fr.ctx,x,y,d.ab?4:2.8,d.ab?OUTC.ab:OUTC.ok,d.ab?.95:.6);
+    hits.push({x,y,r:7,show:e=>outShowSample(d.s,
+      [["gène",P.genes[gi]],["observé",outFmtP(d.o)],["attendu",outFmtP(d.p)],
+       ["padj (FDR)",outFmtP(d.padj)],["aberrant",d.ab?"oui":"non"]],e)});});
+  outBind($("outEoCanvas"),hits);
+  $("outEoLegend").innerHTML="<span class='muted'>diagonale = observé égal à l'attendu ; "
+    +"gène "+esc(P.genes[gi])+"</span>";}
+
+/* 5 — plotQQ : global (toutes les p-valeurs) ou par gène. */
+function outDrawQQ(){const f=outFig();
+  if(!f)return outMsg("outQQCanvas","outQQLegend","Aucune donnée de figure.");
+  const scope=$("outQQScope").value;let exp=[],obs=[],hits=[],title="";
+  if(scope==="global"){const q=f.qq_global||{};exp=q.expected||[];obs=q.observed||[];
+    title="toutes les p-valeurs du run";}
+  else{const gi=+$("outQQGene").value,P=f.panel;
+    if(!P||!(gi>=0))return outMsg("outQQCanvas","outQQLegend","Choisissez un gène.");
+    const ps=f.samples.map((s,si)=>({s,si,p:P.pvalue[gi][si],
+          ab:outIsAb(P,gi,si)}))
+        .filter(d=>d.p!=null&&isFinite(d.p)&&d.p>0).sort((a,b)=>a.p-b.p);
+    ps.forEach((d,i)=>{exp.push(-Math.log10((i+.5)/ps.length));
+      obs.push(-Math.log10(d.p));d.i=i;});
+    hits=ps;title="gène "+P.genes[gi];}
+  if(!exp.length)return outMsg("outQQCanvas","outQQLegend","Pas de p-valeur exploitable.");
+  const m=Math.max(1,...exp,...obs)*1.05;
+  const fr=outFrame("outQQCanvas",620,560,[0,m],[0,m],
+                    "-log10(p) attendu","-log10(p) observé");
+  fr.ctx.strokeStyle="#9aa5ab";fr.ctx.setLineDash([4,4]);fr.ctx.beginPath();
+  fr.ctx.moveTo(fr.sx(0),fr.sy(0));fr.ctx.lineTo(fr.sx(m),fr.sy(m));fr.ctx.stroke();
+  fr.ctx.setLineDash([]);
+  const picks=[];
+  exp.forEach((ev,i)=>{const x=fr.sx(ev),y=fr.sy(obs[i]);
+    const d=hits[i];outDot(fr.ctx,x,y,d&&d.ab?4:2.4,d&&d.ab?OUTC.ab:OUTC.ok,.7);
+    if(d)picks.push({x,y,r:7,show:e=>outShowSample(d.s,
+      [["p-value",outFmtP(d.p)],["aberrant",d.ab?"oui":"non"]],e)});});
+  outBind($("outQQCanvas"),picks);
+  $("outQQLegend").innerHTML="<span class='muted'>"+esc(title)
+    +" — la diagonale est l'attendu sous l'hypothèse nulle</span>";}
+
+/* 6 — plotCountCorHeatmap : corrélation tumeur × tumeur. */
+function outDrawCorHeat(){const f=outFig(),C=f&&f.cor_heatmap;
+  if(!C||!C.order||!C.order.length)return outMsg("outCorCanvas","outCorLegend",
+    "Heatmap de corrélation non calculée (cohorte trop grande pour être embarquée).");
+  const key=$("outCorNorm").value,M=C[key]||C.norm,names=C.order,n=names.length;
+  const side=Math.max(260,Math.min(620,n*9)),ML=8,MT=8;
+  const ctx=fitCanvas($("outCorCanvas"),side+ML+120,side+MT+16),cw=side/n;
+  const hits=[];
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){const v=M[i][j];
+    ctx.fillStyle=v==null?"#eee":outDiv(v,-1,1);
+    ctx.fillRect(ML+j*cw,MT+i*cw,Math.ceil(cw),Math.ceil(cw));}
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++)
+    hits.push({x:ML+(j+.5)*cw,y:MT+(i+.5)*cw,r:Math.max(3,cw/2),
+      show:e=>outShowSample(names[i],[["corrélation avec "+names[j],outFmtP(M[i][j])],
+        ["comptages",key==="norm"?"normalisés":"bruts"]],e)});
+  outBind($("outCorCanvas"),hits);
+  $("outCorLegend").innerHTML="<span class='muted'>"+n+" tumeurs, ordre par "
+    +"regroupement — bleu = corrélation faible, rouge = forte</span>";}
+function outDiv(v,lo,hi){const t=Math.max(0,Math.min(1,(v-lo)/((hi-lo)||1)));
+  const r=Math.round(255*Math.min(1,2*t)),b=Math.round(255*Math.min(1,2*(1-t)));
+  return "rgb("+r+","+Math.round(80+60*(1-Math.abs(2*t-1)))+","+b+")";}
+
+/* 7 — plotCountGeneSampleHeatmap : gènes les plus variables × tumeurs. */
+function outDrawGeneHeat(){const f=outFig(),G=f&&f.gene_sample_heatmap;
+  if(!G||!G.genes||!G.genes.length)return outMsg("outGhCanvas","outGhLegend","Aucune donnée.");
+  const ng=G.genes.length,ns=G.samples.length,cw=Math.max(4,Math.min(14,760/ns)),
+        ch=Math.max(5,Math.min(14,520/ng)),ML=110,MT=10;
+  const ctx=fitCanvas($("outGhCanvas"),ML+ns*cw+20,MT+ng*ch+22);
+  let amax=0;G.values.forEach(r=>r.forEach(v=>{if(v!=null&&isFinite(v))amax=Math.max(amax,Math.abs(v));}));
+  amax=amax||1;const hits=[];
+  ctx.font="9px ui-monospace";ctx.textAlign="right";ctx.textBaseline="middle";
+  G.values.forEach((row,gi)=>{row.forEach((v,si)=>{
+      ctx.fillStyle=v==null?"#eee":outDiv(v,-amax,amax);
+      ctx.fillRect(ML+si*cw,MT+gi*ch,Math.ceil(cw),Math.ceil(ch));
+      hits.push({x:ML+(si+.5)*cw,y:MT+(gi+.5)*ch,r:Math.max(3,Math.min(cw,ch)/2),
+        show:e=>outShowGene(G.genes[gi],[["tumeur",G.samples[si]],
+          ["expression centrée (log2)",outFmtP(v)]],e)});});
+    if(ch>=8){ctx.fillStyle=OUTC.ink;ctx.fillText(G.genes[gi].slice(0,16),ML-5,MT+(gi+.5)*ch);}});
+  outBind($("outGhCanvas"),hits);
+  $("outGhLegend").innerHTML="<span class='muted'>"+ng+" gènes les plus variables × "
+    +ns+" tumeurs, centrés par gène (rouge = au-dessus de la moyenne du gène)</span>";}
+
+/* 8 — plotDispEsts : dispersion ajustée vs expression moyenne. */
+function outDrawDisp(){const f=outFig(),D=f&&f.dispersion;
+  if(!D||!D.mean||!D.mean.length)return outMsg("outDispCanvas","outDispLegend",
+    "Dispersions absentes de la sortie py_outrider (profil sans paramètre de dispersion ?).");
+  const pts=[];D.mean.forEach((m,i)=>{const d=D.dispersion[i];
+    if(m!=null&&d!=null&&isFinite(m)&&isFinite(d)&&m>0&&d>0)
+      pts.push({g:D.genes[i],x:Math.log10(m),y:Math.log10(d)});});
+  if(!pts.length)return outMsg("outDispCanvas","outDispLegend","Aucune dispersion exploitable.");
+  const xs=pts.map(p=>p.x),ys=pts.map(p=>p.y);
+  const fr=outFrame("outDispCanvas",720,430,[Math.min(...xs),Math.max(...xs)],
+                    [Math.min(...ys),Math.max(...ys)],
+                    "log10(expression moyenne normalisée)","log10(dispersion)");
+  const hits=[];
+  pts.forEach(p=>{const x=fr.sx(p.x),y=fr.sy(p.y);outDot(fr.ctx,x,y,1.9,OUTC.hi,.35);
+    hits.push({x,y,r:5,show:e=>outShowGene(p.g,
+      [["expression moyenne",outFmtP(Math.pow(10,p.x))],
+       ["dispersion",outFmtP(Math.pow(10,p.y))]],e)});});
+  outBind($("outDispCanvas"),hits);
+  $("outDispLegend").innerHTML="<span class='muted'>"+pts.length
+    +" gènes — une dispersion qui s'effondre rend le |z| du gène ininterprétable</span>";}
+
+/* 9 — plotEncDimSearch : recherche de la dimension d'encodage. */
+function outDrawEncDim(){const f=outFig(),T=(f&&f.enc_dim_search)||[];
+  if(!T.length)return outMsg("outEncCanvas","outEncLegend",
+    "Aucune recherche d'hyperparamètre : la dimension d'encodage a été fixée "
+    +"(outrider_encod_dim).");
+  const rows=T.slice().sort((a,b)=>a.encod_dim-b.encod_dim);
+  const xs=rows.map(r=>+r.encod_dim),ys=rows.map(r=>+r.prec_rec);
+  const fr=outFrame("outEncCanvas",680,380,[Math.min(...xs),Math.max(...xs)],
+                    [0,Math.max(...ys)*1.1||1],"dimension d'encodage",
+                    "précision-rappel (outliers injectés)");
+  fr.ctx.strokeStyle=OUTC.hi;fr.ctx.lineWidth=1.6;fr.ctx.beginPath();
+  rows.forEach((r,i)=>{const x=fr.sx(+r.encod_dim),y=fr.sy(+r.prec_rec);
+    i?fr.ctx.lineTo(x,y):fr.ctx.moveTo(x,y);});fr.ctx.stroke();
+  const best=rows.reduce((a,b)=>(+b.prec_rec>+a.prec_rec?b:a),rows[0]);
+  rows.forEach(r=>outDot(fr.ctx,fr.sx(+r.encod_dim),fr.sy(+r.prec_rec),
+    r===best?5:3,r===best?OUTC.ab:OUTC.hi,.95));
+  outBind($("outEncCanvas"),[]);
+  $("outEncLegend").innerHTML="<span><i class='sw' style='background:"+OUTC.ab
+    +"'></i>optimum retenu : q = "+best.encod_dim+"</span>";}
+
+/* 10 — plotPowerAnalysis : puissance dérivée des paramètres ajustés. */
+function outDrawPower(){const f=outFig(),P=f&&f.power;
+  if(!P||!P.power)return outMsg("outPowCanvas","outPowLegend",
+    "Analyse de puissance indisponible (dispersions ou scipy absents).");
+  const xs=P.expression.map(v=>Math.log10(Math.max(v,1)));
+  const fr=outFrame("outPowCanvas",720,420,[Math.min(...xs),Math.max(...xs)],[0,1],
+                    "log10(expression moyenne attendue)",
+                    "fraction des gènes où l'événement serait détecté");
+  const cols=["#08306b","#2676b8","#7fb3d5","#f0a868","#d95f02","#a50f15"];
+  P.power.forEach((row,fi)=>{fr.ctx.strokeStyle=cols[fi%cols.length];fr.ctx.lineWidth=1.7;
+    fr.ctx.beginPath();row.forEach((v,i)=>{const x=fr.sx(xs[i]),y=fr.sy(v);
+      i?fr.ctx.lineTo(x,y):fr.ctx.moveTo(x,y);});fr.ctx.stroke();});
+  outBind($("outPowCanvas"),[]);
+  $("outPowLegend").innerHTML=P.fold_changes.map((fc,i)=>
+    "<span><i class='sw' style='background:"+cols[i%cols.length]+"'></i>fold change × "
+    +(fc<1?("1/"+Math.round(1/fc)):fc)+"</span>").join("")
+    +"<span class='muted'>dérivée des paramètres ajustés (binomiale négative), "
+    +"pas de la simulation de R ; seuil α = "+P.alpha+"</span>";}
+
+/* 11 — plotSizeFactors : facteur de taille par tumeur. */
+function outDrawSizeFactors(){const f=outFig(),S=(f&&f.size_factors)||[];
+  const rows=S.filter(d=>d.size_factor!=null).sort((a,b)=>b.size_factor-a.size_factor);
+  if(!rows.length)return outMsg("outSfCanvas","outSfLegend","Size factors absents.");
+  const n=rows.length,mx=Math.max(...rows.map(d=>d.size_factor))*1.1;
+  const W=Math.max(620,Math.min(1100,80+n*9));
+  const fr=outFrame("outSfCanvas",W,360,[0,n],[0,mx],"tumeurs (triées)","size factor");
+  const hits=[];
+  rows.forEach((d,i)=>{const x=fr.sx(i+.5),y=fr.sy(d.size_factor);
+    fr.ctx.strokeStyle=OUTC.hi;fr.ctx.lineWidth=Math.max(1,(fr.W-fr.ML-fr.MR)/n*.6);
+    fr.ctx.beginPath();fr.ctx.moveTo(x,fr.sy(0));fr.ctx.lineTo(x,y);fr.ctx.stroke();
+    hits.push({x,y,r:7,show:e=>outShowSample(d.sample,
+      [["size factor",outFmtP(d.size_factor)],["rang",(i+1)+" / "+n]],e)});});
+  fr.ctx.lineWidth=1;fr.ctx.strokeStyle=OUTC.ab;fr.ctx.setLineDash([5,4]);
+  fr.ctx.beginPath();fr.ctx.moveTo(fr.ML,fr.sy(1));fr.ctx.lineTo(fr.W-fr.MR,fr.sy(1));
+  fr.ctx.stroke();fr.ctx.setLineDash([]);
+  outBind($("outSfCanvas"),hits);
+  $("outSfLegend").innerHTML="<span class='muted'>la ligne rouge est 1 : au-delà, "
+    +"la librairie est plus profonde que la médiane</span>";}
+
+/* 12 — plotExpressedGenes : gènes exprimés, par tumeur puis en cumulé. */
+function outDrawExpressed(){const f=outFig(),E=f&&f.expressed_genes;
+  if(!E||!E.samples||!E.samples.length)return outMsg("outExpCanvas","outExpLegend","Aucune donnée.");
+  const n=E.samples.length,mx=Math.max(...E.expressed,...E.union)*1.08;
+  const W=Math.max(620,Math.min(1100,80+n*9));
+  const fr=outFrame("outExpCanvas",W,400,[0,n],[0,mx],
+                    "tumeurs (classées par nombre de gènes exprimés)","gènes");
+  const line=(arr,col)=>{fr.ctx.strokeStyle=col;fr.ctx.lineWidth=1.6;fr.ctx.beginPath();
+    arr.forEach((v,i)=>{const x=fr.sx(i+.5),y=fr.sy(v);i?fr.ctx.lineTo(x,y):fr.ctx.moveTo(x,y);});
+    fr.ctx.stroke();};
+  line(E.union,"#2676b8");line(E.intersection,"#d95f02");
+  const hits=[];
+  E.expressed.forEach((v,i)=>{const x=fr.sx(i+.5),y=fr.sy(v);
+    outDot(fr.ctx,x,y,3,OUTC.ok,.85);
+    hits.push({x,y,r:7,show:e=>outShowSample(E.samples[i],
+      [["gènes exprimés",v],["union cumulée",E.union[i]],
+       ["intersection cumulée",E.intersection[i]],
+       ["seuil « exprimé »","≥ "+E.min_count+" counts"]],e)});});
+  outBind($("outExpCanvas"),hits);
+  $("outExpLegend").innerHTML="<span><i class='sw' style='background:#2676b8'></i>union"
+    +"</span><span><i class='sw' style='background:#d95f02'></i>intersection</span>"
+    +"<span><i class='sw' style='background:"+OUTC.ok+"'></i>par tumeur</span>";}
+
+/* 13 — équivalent de plotFPKM : la statistique de filtrage réellement utilisée. */
+function outDrawFilter(){const f=outFig(),S=f&&f.filter_stats;
+  if(!S||!S.counts)return outMsg("outFiltCanvas","outFiltLegend","Aucune donnée.");
+  const mx=Math.max(...S.counts)*1.1||1,nb=S.counts.length;
+  const fr=outFrame("outFiltCanvas",700,380,[0,1],[0,mx],
+                    "fraction des tumeurs atteignant le seuil de comptage","gènes");
+  const thr=(OUT.settings||{}).min_frac_samples;
+  S.counts.forEach((c,i)=>{const x0=fr.sx(S.edges[i]),x1=fr.sx(S.edges[i+1]);
+    const kept=thr==null||S.edges[i]>=thr;
+    fr.ctx.fillStyle=kept?OUTC.hi:"#c9d3d9";
+    fr.ctx.fillRect(x0,fr.sy(c),Math.max(1,x1-x0-1),fr.sy(0)-fr.sy(c));});
+  if(thr!=null){fr.ctx.strokeStyle=OUTC.ab;fr.ctx.setLineDash([5,4]);fr.ctx.beginPath();
+    fr.ctx.moveTo(fr.sx(thr),fr.sy(0));fr.ctx.lineTo(fr.sx(thr),fr.sy(mx));
+    fr.ctx.stroke();fr.ctx.setLineDash([]);}
+  outBind($("outFiltCanvas"),[]);
+  $("outFiltLegend").innerHTML="<span class='muted'>OUTRIDER (R) trace ici des FPKM ; "
+    +"faute de longueurs de gènes, on montre la statistique de filtrage réellement "
+    +"appliquée : "+esc(S.statistic)+(thr!=null?", seuil "+thr:"")+"</span>";}
+
+/* 14 — plotManhattan : impossible sans coordonnées génomiques. */
+function outDrawManhattan(){
+  outMsg("outManCanvas","outManLegend",
+    "Manhattan indisponible : il faut la position génomique de chaque gène "
+    + "(chromosome, début), que le pipeline ne charge pas.");
+  $("outManLegend").innerHTML="<span class='muted'>Le paquet R lit ces positions dans "
+    +"le rowRanges de l'objet ; ici les gènes n'ont qu'un identifiant. Fournir une "
+    +"annotation gène → (chromosome, position) rendrait cette figure calculable.</span>";}
+
+const OUTVIEWS={aberrant:outDrawAberrant,volcano:outDrawVolcano,rank:outDrawRank,
+  expobs:outDrawExpObs,qq:outDrawQQ,corheat:outDrawCorHeat,geneheat:outDrawGeneHeat,
+  disp:outDrawDisp,encdim:outDrawEncDim,power:outDrawPower,
+  sizefactors:outDrawSizeFactors,expressed:outDrawExpressed,filter:outDrawFilter,
+  manhattan:outDrawManhattan};
+let outView="aberrant";
+function outRenderFigure(){const fn=OUTVIEWS[outView];if(fn)fn();}
+function outFillFigureSelects(){
+  const f=outFig(),samples=(f&&f.samples)||[],genes=(f&&f.panel&&f.panel.genes)||[];
+  const fill=(id,items,label)=>{const s=$(id);if(!s)return;s.innerHTML="";
+    items.forEach((t,i)=>{const o=document.createElement("option");o.value=i;
+      o.textContent=label?label(t,i):t;s.appendChild(o);});};
+  const ab=(f&&f.aberrant_per_sample)||[];
+  fill("outVolSample",samples,(t,i)=>{const a=ab[i];
+    return t+(a&&a.n?"  ("+a.n+" aberration"+(a.n>1?"s":"")+")":"");});
+  const withEvent=new Set();
+  if(f&&f.panel)f.panel.padj.forEach((row,gi)=>{
+    if(row.some((v,si)=>outIsAb(f.panel,gi,si)))withEvent.add(gi);});
+  const geneLabel=(g,i)=>g+(withEvent.has(i)?"  ★":"");
+  ["outRankGene","outEoGene","outQQGene"].forEach(id=>fill(id,genes,geneLabel));
+  // d'emblée, un gène et une tumeur qui portent quelque chose à voir
+  const firstGene=genes.findIndex((g,i)=>withEvent.has(i));
+  if(firstGene>=0)["outRankGene","outEoGene","outQQGene"].forEach(id=>$(id).value=firstGene);
+  const firstSample=ab.findIndex(a=>a&&a.n>0);
+  if(firstSample>=0)$("outVolSample").value=firstSample;}
+
 function esc(s){return(""+s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 
 /* =========================================================
@@ -2401,7 +3192,8 @@ document.querySelectorAll(".diff-subtab").forEach(t=>t.onclick=()=>{document.que
   t.classList.add("active");document.querySelectorAll(".diff-sub").forEach(p=>p.classList.remove("active"));$("diff-sub-"+t.dataset.diffSub).classList.add("active");
   if(t.dataset.diffSub==="degsea")cdeRender();
   if(t.dataset.diffSub==="sigdet")renderSigDet();
-  if(t.dataset.diffSub==="ssgsea")ssRender();});
+  if(t.dataset.diffSub==="ssgsea")ssRender();
+  if(t.dataset.diffSub==="outrider")outRender();});
 document.querySelectorAll(".pre-subtab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".pre-subtab").forEach(x=>x.classList.remove("active"));
   t.classList.add("active");document.querySelectorAll(".pre-sub").forEach(p=>p.classList.remove("active"));$("pre-sub-"+t.dataset.preSub).classList.add("active");});
 window.addEventListener("resize",()=>{clearTimeout(window.__rt);window.__rt=setTimeout(()=>{if($("sub-unsup").classList.contains("active"))render();if($("sub-degsea").classList.contains("active"))deRender();if($("diff-sub-degsea").classList.contains("active"))cdeRender();if($("ica-sub-consensus").classList.contains("active"))renderIcaConsensus();if($("ica-sub-embed").classList.contains("active"))renderIcaCompareHeatmap();},200);});

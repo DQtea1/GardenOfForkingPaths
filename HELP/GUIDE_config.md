@@ -198,6 +198,94 @@ validation (calculée sur la même distance que le clustering). Les positions
 
 ---
 
+## 7b · OUTRIDER — expression aberrante par tumeur — `_outrider()`
+
+Question **orthogonale** au reste du pipeline : le consensus clustering cherche
+des groupes, le DEGSEA des différences entre groupes, OUTRIDER des événements
+**individuels** — un gène anormalement exprimé chez UNE tumeur. Un autoencodeur
+débruiteur apprend la covariance du jeu (effets techniques et programmes
+partagés compris), puis chaque comptage est testé contre sa valeur attendue
+(binomiale négative, FDR). Le calcul est délégué à `py_outrider`.
+
+**`subset_by` est le réglage qui décide de la validité du résultat.** OUTRIDER
+n'a de sens que sur une population *comparable* : mélanger deux types tumoraux
+fait apprendre au modèle la moyenne des deux, et les programmes propres à chaque
+type deviennent des « aberrations » chez tout le monde. Chaque entrée déclare un
+découpage, et chaque combinaison de modalités **réellement observée** donne un
+run indépendant — autoencodeur, size factors et correction FDR propres :
+
+```yaml
+subset_by:
+  histo_sexe: [histo_classe, sexe]   # melanome×M, melanome×F, sarcome×M, …
+  histo:      [histo_classe]         # un run par classe histologique
+  cohorte:    []                     # un seul run, toute la cohorte
+```
+
+Les combinaisons sans tumeur n'existent pas ; celles sous
+`outrider_min_samples` sont écartées **avant** calcul. Une tumeur dont une
+colonne de découpage est vide n'entre dans aucun groupe de ce découpage : elle
+n'a pas de comparable déclaré. Le plan complet — retenus, écartés, motifs —
+part dans `tables/outrider/plan.csv`, et le rapport propose un **menu déroulant**
+(un `optgroup` par bloc `subset_by`) pour choisir le run affiché.
+
+| Paramètre | Recommandation |
+|---|---|
+| `run_outrider` | `n` (défaut) / `y`. Étape longue : un autoencodeur **par sous-groupe**. |
+| `subset_by` | Le réglage central, ci-dessus. Sans lui, un seul run sur toute la cohorte — rarement ce qu'on veut sur une cohorte hétérogène (le pipeline le signale). |
+| `outrider_python` | Interpréteur de l'environnement où `py_outrider` est installé (il tire TensorFlow). `null` = celui du pipeline. Même logique que `puree_python`. |
+| `outrider_profile` | `outrider` (counts RNA-seq, binomiale négative), `protrider` (intensités protéiques, gaussienne + covariables), `pca`. |
+| `outrider_encod_dim` | Dimension du goulot de l'autoencodeur. `null` (défaut) = py_outrider cherche l'optimum : c'est correct, et **de loin le plus long** (plusieurs ajustements complets par sous-groupe). Règle du pouce pour figer : `n_tumeurs / 4`. |
+| `outrider_min_samples` | `30` par défaut. En dessous, l'autoencodeur n'a pas de quoi apprendre une norme ; le groupe est écarté avec son motif. |
+| `outrider_min_count` / `outrider_min_frac_samples` | Filtre d'expression, jugé **dans le sous-groupe** (`10` counts chez `25 %` des tumeurs par défaut) : un gène quasi nul n'a pas de loi estimable et dilue la FDR. |
+| `outrider_alpha` | Seuil de FDR d'un couple (tumeur, gène) aberrant. `0.05` par défaut. |
+| `outrider_max_events` | Événements embarqués par run dans le rapport, les plus significatifs d'abord (`5000`). Les tables complètes restent sur disque. |
+| `outrider_keep_h5ad` | `y` (défaut) : garde l'AnnData complet de chaque run (p-valeurs, z-scores, prédictions), pour rejouer un run ou aller plus loin que le rapport. |
+| `outrider_figures` | `y` (défaut) : embarque de quoi tracer les 14 figures d'OUTRIDER dans le rapport. `n` ne garde que les tables. |
+| `outrider_figure_cells` | Budget en **cellules** (gènes × tumeurs) des matrices embarquées, ≈ 1 Mo de rapport **par run** (`20000` par défaut). Le panneau de gènes rétrécit donc quand la cohorte grandit. |
+| `outrider_heatmap_genes` | Gènes les plus variables de la heatmap gènes × tumeurs (`100` ; R en prend 500). |
+
+### Les 14 figures, dans le rapport
+
+Le sous-onglet OUTRIDER porte un troisième niveau d'onglets, un par figure du
+paquet R. Partout : **clic sur un gène** → ses valeurs et un bouton GeneCards
+(comme les volcanos DESeq2) ; **clic sur une tumeur** → ses données cliniques
+(comme les boxplots).
+
+| Figure R | Ici | Note |
+|---|---|---|
+| `plotAberrantPerSample` | Aberrations / tumeur | tumeurs triées, ligne de repère `outlierRatio` réglable |
+| `plotVolcano` | Volcano | par tumeur ; x au choix z-score ou log2FC |
+| `plotExpressionRank` | Rang d'expression | par gène ; comptages normalisés ou bruts |
+| `plotExpectedVsObservedCounts` | Observé vs attendu | par gène, avec la diagonale |
+| `plotQQ` | QQ | global (toutes les p-valeurs) ou par gène |
+| `plotCountCorHeatmap` | Corrélation tumeurs | avant/après normalisation |
+| `plotCountGeneSampleHeatmap` | Heatmap gènes × tumeurs | gènes les plus variables, centrés |
+| `plotDispEsts` | Dispersions | dispersion ajustée vs expression moyenne |
+| `plotEncDimSearch` | Dimension d'encodage | vide si `outrider_encod_dim` est fixé |
+| `plotSizeFactors` | Size factors | ligne de repère à 1 |
+| `plotExpressedGenes` | Gènes exprimés | par tumeur, union et intersection cumulées |
+| `plotPowerAnalysis` | Puissance | **dérivée** des paramètres ajustés (binomiale négative), là où R simule des outliers injectés |
+| `plotFPKM` | Filtrage | **équivalent** : faute de longueurs de gènes, on trace la statistique de filtrage réellement appliquée, pas des FPKM |
+| `plotManhattan` | Manhattan | **non calculable** : il faut la position génomique de chaque gène, que le pipeline ne charge pas |
+
+Les figures par gène et par tumeur lisent toutes le même **panneau** de gènes,
+borné par `outrider_figure_cells`. Sa composition n'est pas neutre : tous les
+gènes aberrants d'abord, les plus significatifs ensuite, puis **un tirage
+aléatoire du reste** — sans ce tirage, le nuage d'un volcano ne contiendrait que
+des points significatifs et donnerait l'illusion d'un jeu entièrement aberrant.
+Le nombre de gènes réellement testés reste affiché à côté.
+
+Sorties, par sous-groupe, sous `tables/outrider/<découpage>/<modalités>/` :
+`aberrant_events.csv` (un événement par ligne), `aberrant_per_sample.csv`,
+`aberrant_per_gene.csv`, `summary.json`, `counts.csv` (l'entrée exacte envoyée à
+py_outrider, pour rejouer un run à la main) et `outrider.h5ad`.
+
+> Installation : `py_outrider` n'est pas une dépendance du paquet — il tire
+> TensorFlow. `pip install py_outrider` dans un environnement dédié, puis
+> pointer `outrider_python` dessus.
+
+---
+
 ## 13 · DEGSEA par cluster (DESeq2 + GSEA) — `_degsea_all_k()`
 
 Caractérise chaque cluster après le clustering. **Étape longue**, désactivée par défaut.

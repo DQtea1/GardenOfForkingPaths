@@ -201,6 +201,49 @@ clinical_degsea:
     test: R
     collections: [h]
 
+# ================================================= 7b · OUTRIDER — expression aberrante — _outrider()
+# OUTRIDER cherche les gènes anormalement exprimés CHEZ UNE TUMEUR : un
+# autoencodeur apprend « ce qui est normal » sur la population, puis chaque
+# comptage est testé contre sa valeur attendue (binomiale négative, FDR).
+#
+# `subset_by` déclare les découpages : le modèle n'a de sens que sur une
+# population COMPARABLE. Chaque combinaison de modalités réellement observée
+# donne UN run indépendant (autoencodeur, size factors et FDR propres).
+#
+#   type_sexe: [cancer_type, sexe]  -> melanome×M, melanome×F, sarcome×M, …
+#   cohorte:   []                   -> un seul run, toute la cohorte
+#
+# Les combinaisons sous outrider_min_samples sont écartées AVANT calcul ; le
+# plan complet part dans tables/outrider/plan.csv, et le rapport propose un menu
+# déroulant pour choisir le run affiché.
+run_outrider: n               # y | n — étape longue (un autoencodeur par sous-groupe)
+
+subset_by:
+  cohorte: []                 # liste vide = un seul run sur toute la cohorte
+  # antipd1: [antipd1]
+
+outrider_python: null         # interpréteur de l'env py_outrider ; null = celui du pipeline
+outrider_profile: outrider    # outrider (counts RNA-seq) | protrider (protéines) | pca
+outrider_encod_dim: null      # null = recherche d'hyperparamètre (correct, TRÈS long)
+outrider_iterations: null     # null = défaut du profil (15)
+outrider_min_samples: 30      # sous ce seuil, le sous-groupe est écarté sans calcul
+outrider_min_count: 10        # counts bruts minimum par tumeur pour tester un gène…
+outrider_min_frac_samples: 0.25   # … chez au moins 25 % des tumeurs DU SOUS-GROUPE
+outrider_min_genes: 100
+outrider_alpha: 0.05
+outrider_max_events: 5000
+
+# Figures : les 14 graphiques du paquet R OUTRIDER sont rejoués dans le rapport
+# (un sous-onglet chacun), avec clic sur un gène -> GeneCards et clic sur une
+# tumeur -> ses données cliniques.
+outrider_figures: y           # y | n
+outrider_figure_cells: 20000  # budget en cellules (gènes × tumeurs) ≈ 1 Mo par run
+outrider_heatmap_genes: 100   # gènes de la heatmap gènes × tumeurs
+
+outrider_covariates: null
+outrider_extra_args: null
+outrider_keep_h5ad: y
+
 # ================================================= 8 · ICA stabilisée (branche parallèle) — _ica()
 # Branche indépendante du consensus clustering : évalue la MSTD, sauvegarde la
 # MSTD, ses dimensions testées voisines inférieure/supérieure et la meilleure

@@ -29,6 +29,7 @@ from . import ica as ic
 from . import ica_cluster_compare as icc
 from . import ica_gsea as ig
 from . import metrics as mt
+from . import outrider as od
 from . import plots as pl
 from . import preprocessing as pp
 from . import purity as pur
@@ -53,6 +54,7 @@ class _Ctx:
     ica_result: object = None
     degsea_by_k: dict = field(default_factory=dict)
     clinical_degsea: dict = field(default_factory=dict)
+    outrider: dict = field(default_factory=dict)
     deconv: dict = field(default_factory=dict)
     ica_branches: dict = field(default_factory=dict)
     ica_metagene_gsea: dict = field(default_factory=dict)
@@ -279,6 +281,7 @@ def _restrict_metadata(c: _Ctx, metadata: pd.DataFrame) -> pd.DataFrame:
         "contrast": set(cf.contrast_columns(args.clinical_degsea)),
         "group_DESeq2_by": set(cf.grouping_columns(args.group_DESeq2_by)),
         "color_by": {str(args.color_by)} if args.color_by else set(),
+        "subset_by": set(cf.subset_columns(args.subset_by)),
     }
     designs = set()
     for spec in cf.clinical_experiments(args.clinical_degsea).values():
@@ -740,6 +743,31 @@ def _clinical_degsea(c: _Ctx) -> None:
              len(table) - n_done, root / "plan.csv")
 
 
+def _outrider(c: _Ctx) -> None:
+    """Étape 7b — expression aberrante par tumeur, découpée par `subset_by`.
+
+    Comme le DEGSEA clinique, cette étape ne lit ni labels ni branche : elle ne
+    consomme que les counts BRUTS et les métadonnées. Elle est donc placée juste
+    à côté de lui, avant tout ce qui dépend du clustering.
+    """
+    args, log = c.args, c.log
+    c.outrider = {}
+    if args.run_outrider != "y":
+        return
+    if c.metadata is None and cf.subset_specs(args.subset_by):
+        log.warning("7b. OUTRIDER : `subset_by` est renseigné mais aucune table de "
+                    "métadonnées n'est fournie — étape sautée.")
+        return
+
+    metadata = c.metadata if c.metadata is not None else pd.DataFrame(
+        index=pd.Index([str(s) for s in c.raw.index]))
+    settings = od.OutriderSettings.from_args(args, n_jobs=c.eff_n_jobs)
+    c.outrider = od.run_outrider(
+        c.raw, metadata, c.outdir, subset_by=args.subset_by, settings=settings,
+        samples=c.raw.index,
+    )
+
+
 def _degsea(c: _Ctx, k: int, gene_sets: dict[str, str], *,
              output_subdir: str = "") -> dict:
     """Exécute DEGSEA pour une partition consensus ``k`` donnée.
@@ -955,6 +983,7 @@ def _report(c: _Ctx) -> None:
             sig_tests=c.sig_tests, deconv=(c.deconv or None),
             degsea_by_k=(c.degsea_by_k or None),
             clinical_degsea=(c.clinical_degsea or None),
+            outrider=(c.outrider or None),
             branch_stability_by_k=(branch.branch_stability_by_k or None),
             assoc=(branch.assoc or None), corr=(branch.corr or None),
             ica={"result": c.ica_result, "branches": c.ica_branches,
@@ -997,6 +1026,7 @@ def main(argv=None) -> int:
     _refit_matrix(c)           # 2b. prétraitement rejoué sans les tumeurs écartées
     _load_metadata(c)          # 1.  métadonnées cliniques (+ filter_columns)
     _clinical_degsea(c)        # 7.  DEGSEA clinique         (collections : 6)
+    _outrider(c)               # 7b. OUTRIDER, un run par sous-groupe subset_by
     _ica(c)                    # 8.  ICA stabilisée
     _ica_metagene_gsea(c)      # 9.  GSEA des métagènes ICA
     _run_ica_branches(c)       # 10-12. consensus, Jaccard, embeddings (ICA)

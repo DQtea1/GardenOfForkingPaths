@@ -323,6 +323,69 @@ clinical_degsea:
   #   collections: [h]
   #   min_group: 7
 
+# ================================================= 7b · OUTRIDER — expression aberrante — _outrider()
+# OUTRIDER cherche les gènes anormalement exprimés CHEZ UNE TUMEUR : un
+# autoencodeur apprend « ce qui est normal » sur la population, puis chaque
+# comptage observé est testé contre sa valeur attendue (binomiale négative,
+# FDR). Question orthogonale au clustering, qui cherche des groupes.
+#
+# D'où `subset_by` : le modèle n'a de sens que sur une population COMPARABLE.
+# Mélanger deux types tumoraux lui fait apprendre la moyenne des deux, et les
+# programmes propres à chaque type deviennent des « aberrations » chez tout le
+# monde. Chaque entrée ci-dessous déclare un découpage ; chaque combinaison de
+# modalités réellement observée donne UN run indépendant (son autoencodeur, ses
+# size factors, sa correction FDR).
+#
+#   histo_sexe: [histo_classe, sexe]  -> melanome×M, melanome×F, sarcome×M, …
+#   histo:      [histo_classe]        -> un run par classe histologique
+#   cohorte:    []                    -> un seul run, toute la cohorte
+#
+# Les combinaisons sans tumeur n'existent pas ; celles sous
+# outrider_min_samples sont écartées AVANT calcul. Le plan complet, retenues
+# comme écartées et avec les motifs, part dans tables/outrider/plan.csv, et le
+# rapport propose un menu déroulant pour choisir le run à afficher.
+run_outrider: y               # y | n — étape longue (un autoencodeur par sous-groupe)
+
+subset_by:
+  histo_classe: [histo_classe]
+  histo_class_x_SOX10: [histo_classe, SOX10]
+  # histo_sexe: [histo_classe, sexe]
+  full_cohort: []                 # liste vide = un seul run sur toute la cohorte
+
+# py_outrider (TensorFlow) vit normalement dans son propre environnement, comme
+# PUREE. Laisser null = utiliser l'interpréteur du pipeline, ce qui suppose
+# `pip install py_outrider` au même endroit.
+outrider_python: null
+
+outrider_profile: outrider    # outrider (counts RNA-seq) | protrider (protéines) | pca
+outrider_encod_dim: null      # null = py_outrider cherche l'optimum (CORRECT mais TRÈS long :
+                              #   plusieurs ajustements complets PAR sous-groupe).
+                              #   Règle du pouce pour figer : n_tumeurs / 4.
+outrider_iterations: null     # null = défaut du profil (15)
+outrider_min_samples: 30      # sous ce seuil, le sous-groupe est écarté sans calcul
+outrider_min_count: 10        # counts bruts minimum par tumeur pour tester un gène…
+outrider_min_frac_samples: 0.25   # … chez au moins 25 % des tumeurs DU SOUS-GROUPE
+outrider_min_genes: 100       # nombre minimal de gènes survivants pour lancer un run
+outrider_alpha: 0.05          # seuil de FDR d'un couple (tumeur, gène) aberrant
+outrider_max_events: 5000     # événements embarqués par run dans le rapport (les plus significatifs)
+
+# Figures : le rapport rejoue les 14 graphiques du paquet R OUTRIDER (volcano
+# par tumeur, rang d'expression, observé/attendu, QQ, heatmaps, dispersions,
+# recherche de dimension, puissance, size factors, gènes exprimés, filtrage),
+# un sous-onglet chacun, avec clic sur un gène (-> GeneCards) ou une tumeur
+# (-> données cliniques).
+outrider_figures: y           # y | n — embarquer de quoi tracer ces figures
+outrider_figure_cells: 20000  # budget en CELLULES (gènes × tumeurs) des matrices
+                              #   embarquées : ~1 Mo de rapport PAR RUN. Le panneau de
+                              #   gènes rétrécit donc quand la cohorte grandit — il garde
+                              #   d'abord les gènes aberrants, puis les plus significatifs,
+                              #   puis un tirage aléatoire (pour que le nuage du volcano
+                              #   garde une forme honnête).
+outrider_heatmap_genes: 100   # gènes les plus variables de la heatmap gènes × tumeurs
+outrider_covariates: null     # colonnes cliniques passées comme covariables connues
+outrider_extra_args: null     # options passées telles quelles à py_outrider
+outrider_keep_h5ad: y         # conserve l'AnnData complet de chaque run (support des futures figures)
+
 # ================================================= 8 · ICA stabilisée (branche parallèle) — _ica()
 # Branche indépendante du consensus clustering : évalue la MSTD, sauvegarde la
 # MSTD, ses dimensions testées voisines inférieure/supérieure et la meilleure

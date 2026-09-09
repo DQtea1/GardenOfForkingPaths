@@ -39,6 +39,7 @@ class PipelineResults:
     deconv: dict | None = None                   # {méthode: df types × tumeurs}
     degsea_by_k: dict | None = None              # {k: {collection: matrice NES}}
     clinical_degsea: dict | None = None          # {expérience: résumé DEGSEA clinique ajusté}
+    outrider: dict | None = None                 # runs OUTRIDER par sous-groupe (7b)
     branch_stability_by_k: dict | None = None    # {k: stability.BranchStability}
     assoc: dict | None = None                    # khi² (16) prêt pour le rapport
     corr: dict | None = None                     # corrélations (17) prêtes pour le rapport

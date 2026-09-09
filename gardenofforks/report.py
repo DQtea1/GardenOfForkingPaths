@@ -83,6 +83,27 @@ def _embedding_payload(coords: pd.DataFrame | None, samples) -> dict:
     return embed
 
 
+def _mostly_numeric(col: pd.Series, min_ratio: float = 0.8) -> bool:
+    """True si `col`, non numérique au sens de pandas, est en fait une variable
+    quantitative saisie avec quelques mentions textuelles ("NC", "inconnu", "NA").
+
+    Une telle colonne a un dtype `object` : `is_continuous` la déclare
+    catégorielle et, passé `max_levels`, `_meta_payload` la SUPPRIME du rapport —
+    un âge disparaissait ainsi entièrement (couleur, filtres, boxplots) à cause
+    de deux cellules non renseignées. On la récupère quand la conversion réussit
+    sur au moins `min_ratio` des valeurs présentes ET que le résultat a trop de
+    valeurs distinctes pour être un code (grade, statut 0/1, qui doivent rester
+    catégoriels pour les filtres et les tests d'association).
+    """
+    present = col.dropna()
+    if present.empty or pd.api.types.is_numeric_dtype(present):
+        return False
+    numeric = pd.to_numeric(present, errors="coerce")
+    if numeric.notna().sum() < min_ratio * present.size:
+        return False
+    return numeric.nunique() > _META_MAX_LEVELS
+
+
 def _meta_payload(metadata: pd.DataFrame | None, samples,
                   max_levels: int = 40) -> tuple[dict, dict]:
     """Métadonnées cliniques sérialisées : ``({var: valeurs}, {var: type})``.
@@ -92,6 +113,9 @@ def _meta_payload(metadata: pd.DataFrame | None, samples,
     date) n'apporte rien à une couleur ni à un filtre, et ferait exploser les
     menus. Le même sérialiseur sert à la branche historique et aux branches ICA :
     les deux vues du rapport montrent donc exactement les mêmes variables.
+
+    Les colonnes quantitatives « sales » (cf. `_mostly_numeric`) sont converties
+    en continu plutôt qu'écartées.
     """
     meta: dict[str, list] = {}
     meta_types: dict[str, str] = {}
@@ -103,9 +127,10 @@ def _meta_payload(metadata: pd.DataFrame | None, samples,
     frame = frame.reindex([str(s) for s in samples])
     for variable in map(str, frame.columns):
         col = frame[variable]
-        if col.dropna().empty or (not _is_continuous(col) and col.nunique() > max_levels):
+        continuous = _is_continuous(col) or _mostly_numeric(col)
+        if col.dropna().empty or (not continuous and col.nunique() > max_levels):
             continue
-        if _is_continuous(col):
+        if continuous:
             meta[variable] = [_clean(v) for v in pd.to_numeric(col, errors="coerce")]
             meta_types[variable] = "continuous"
         else:
@@ -394,6 +419,66 @@ def _clinical_stratum_payload(root: Path, group_col: str, modality: str,
             "gsea": gsea,
         }
     return payload
+
+
+def _outrider_payload(outrider: dict | None, enabled: bool = False) -> dict:
+    """Sérialise les runs OUTRIDER (7b) pour le menu déroulant du rapport.
+
+    Un run = un sous-groupe de `subset_by`. Le rapport doit pouvoir dire
+    pourquoi un groupe attendu n'apparaît pas : les écartés voyagent donc avec
+    leur motif, à côté des runs aboutis.
+    """
+    if not outrider or not (outrider.get("runs") or outrider.get("skipped")):
+        return {
+            "status": "not_run",
+            "message": (
+                "OUTRIDER était demandé, mais aucun run n'a abouti. Voir run.log "
+                "et tables/outrider/plan.csv." if enabled else
+                "OUTRIDER n'a pas été exécuté pour ce run (run_outrider = n). "
+                "Déclare les découpages voulus dans `subset_by` et relance avec "
+                "--run_outrider y."),
+            "runs": [], "skipped": [], "settings": {},
+        }
+
+    def rows(frame, columns):
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            return []
+        keep = [c for c in columns if c in frame.columns]
+        return [{c: _clean(row[c]) for c in keep}
+                for row in frame[keep].to_dict(orient="records")]
+
+    runs = []
+    for run in outrider.get("runs", []):
+        summary = {str(k): _clean(v) for k, v in (run.get("summary") or {}).items()}
+        runs.append({
+            "key": str(run.get("key", "")),
+            "subset": str(run.get("subset", "")),
+            # Données des figures : déjà arrondies et bornées par le runner, on
+            # les transporte telles quelles (les retraiter ici les alourdirait).
+            "figures": run.get("figures") or {},
+            "label": str(run.get("label", run.get("key", ""))),
+            "columns": [str(c) for c in run.get("columns", [])],
+            "modalities": [str(m) for m in run.get("modalities", [])],
+            "summary": summary,
+            "samples": rows(run.get("per_sample"),
+                            ["sample", "n_aberrant", "n_sur", "n_sous"]),
+            "genes": rows(run.get("per_gene"), ["gene", "n_aberrant"]),
+            "events": rows(run.get("events"),
+                           ["sample", "gene", "padj", "pvalue", "l2fc", "zscore",
+                            "raw_count", "predicted", "direction"]),
+        })
+
+    return {
+        "status": "complete" if runs else "empty",
+        "message": None if runs else (
+            "Aucun sous-groupe n'a pu être analysé : tous ont été écartés. "
+            "Motifs dans tables/outrider/plan.csv."),
+        "runs": runs,
+        "skipped": [{str(k): _clean(v) for k, v in entry.items()}
+                    for entry in outrider.get("skipped", [])],
+        "settings": {str(k): _clean(v)
+                     for k, v in (outrider.get("settings") or {}).items()},
+    }
 
 
 def _link_stability(Z, dend, stab_by_id):
@@ -768,6 +853,10 @@ def _gather(res, outdir):
         outdir, clinical_degsea
     )
 
+    # OUTRIDER (7b) : un run par sous-groupe, choisi dans un menu du rapport.
+    data["outrider"] = _outrider_payload(res.outrider,
+                                         enabled=bool(res.outrider))
+
     # métadonnées cliniques (vides et identifiants uniques écartés)
     data["meta"], data["metaTypes"] = _meta_payload(meta, samples)
 
@@ -802,11 +891,19 @@ def _gather(res, outdir):
         for name, coords_m in (res.coords_by_distance or {}).items()
     }
 
-    # tables (toutes les .csv sous outdir/tables)
+    # tables (toutes les .csv sous outdir/tables) — sauf celles qui feraient
+    # doublon avec un onglet dédié. Les sorties OUTRIDER sont déjà dans
+    # `data["outrider"]`, et son `counts.csv` est la matrice d'ENTRÉE envoyée à
+    # py_outrider : l'embarquer reviendrait à recopier les counts bruts dans le
+    # rapport (mesuré : 4,1 Mo sur 6,2 pour cinq sous-groupes). Seul `plan.csv`,
+    # qui récapitule les runs retenus et écartés, reste consultable ici.
     data["tables"] = {}
     tdir = outdir / "tables"
     if tdir.exists():
         for f in sorted(tdir.rglob("*.csv")):
+            rel_parts = f.relative_to(tdir).parts
+            if rel_parts and rel_parts[0] == "outrider" and f.name != "plan.csv":
+                continue
             try:
                 df = pd.read_csv(f)
             except Exception:
