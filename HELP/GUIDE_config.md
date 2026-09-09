@@ -240,6 +240,7 @@ part dans `tables/outrider/plan.csv`, et le rapport propose un **menu déroulant
 | `outrider_alpha` | Seuil de FDR d'un couple (tumeur, gène) aberrant. `0.05` par défaut. |
 | `outrider_max_events` | Événements embarqués par run dans le rapport, les plus significatifs d'abord (`5000`). Les tables complètes restent sur disque. |
 | `outrider_keep_h5ad` | `y` (défaut) : garde l'AnnData complet de chaque run (p-valeurs, z-scores, prédictions), pour rejouer un run ou aller plus loin que le rapport. |
+| `outrider_jobs` | Sous-groupes menés **de front**. `0` (défaut) = automatique : `n_jobs` réparti à raison de ~4 threads TensorFlow par run. `1` = séquentiel. Mesuré sur 150 tumeurs × 4000 gènes : un run seul prend 168 s à 1 thread, 78 s à 4, 63 s à 16 — le gain sature vite, alors que les sous-groupes sont indépendants. Quatre runs de front à 4 threads : **106 s au total contre 256 s** en série à 16 threads. Contrepartie : chaque run de front est un TensorFlow de plus en mémoire (la préparation des matrices, elle, reste sérialisée). |
 | `outrider_figures` | `y` (défaut) : embarque de quoi tracer les 14 figures d'OUTRIDER dans le rapport. `n` ne garde que les tables. |
 | `outrider_figure_cells` | Budget en **cellules** (gènes × tumeurs) des matrices embarquées, ≈ 1 Mo de rapport **par run** (`20000` par défaut). Le panneau de gènes rétrécit donc quand la cohorte grandit. |
 | `outrider_heatmap_genes` | Gènes les plus variables de la heatmap gènes × tumeurs (`100` ; R en prend 500). |
@@ -283,6 +284,16 @@ py_outrider, pour rejouer un run à la main) et `outrider.h5ad`.
 > Installation : `py_outrider` n'est pas une dépendance du paquet — il tire
 > TensorFlow. `pip install py_outrider` dans un environnement dédié, puis
 > pointer `outrider_python` dessus.
+
+> Compatibilité : `py_outrider` 0.1.0 (2022) n'est plus maintenu et échoue sur
+> un environnement récent, à deux endroits sans rapport avec son modèle —
+> `anndata >= 0.9` remet en colonne les vecteurs 1-D d'`obsm` (les size factors),
+> ce qui fait diffuser une multiplication en `(n, n, g)` ; et `pandas >= 2.0` a
+> retiré `DataFrame.append`, utilisé pour l'historique de perte, donc **après**
+> l'entraînement. `gardenofforks/outrider_runner.py` corrige les deux au
+> lancement, dans son seul processus : rien à installer ni à épingler dans
+> l'environnement py_outrider. Le détail de ce qui a été appliqué est journalisé
+> une fois par run et repris dans `summary.json` (`anndata_compat`).
 
 ---
 

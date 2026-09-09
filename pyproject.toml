@@ -33,16 +33,22 @@ dependencies = [
 # `gsea` — autrement dit, l'installation de base ne suffit qu'avec
 # --already-normalized (ou --norm_method logcpm) et --run_ica n.
 # En pratique : installer l'extra `full`.
+#
+# `typing_extensions>=4.16` accompagne pydeseq2 : anndata 0.13 (tiré par
+# pydeseq2) appelle `typing_extensions.sentinel`, apparu en 4.16, mais ne
+# déclare aucune borne basse — un environnement resté en 4.15 échoue à
+# `import pydeseq2.dds` avec « cannot import name 'sentinel' ».
 [project.optional-dependencies]
-vst = ["pydeseq2>=0.5"]                 # normalisation VST (norm_method=vst, défaut)
+vst = ["pydeseq2>=0.5", "typing_extensions>=4.16"]   # normalisation VST (norm_method=vst, défaut)
 gsea = ["gseapy>=1.1"]                  # GSEA pré-classé (DEGSEA, GSEA des métagènes ICA)
-degsea = ["pydeseq2>=0.5", "gseapy>=1.1"]  # étape DEGSEA complète (run_degsea=y)
+degsea = ["pydeseq2>=0.5", "typing_extensions>=4.16", "gseapy>=1.1"]  # étape DEGSEA complète (run_degsea=y)
 ica = ["stabilized-ica>=2.0.0"]         # branche ICA stabilisée (MSTD, métagènes, projections)
 umap = ["umap-learn>=0.5.4"]            # embeddings UMAP ; sans lui, lancer avec --no-umap
 plotly = ["plotly>=5.18"]               # embeddings 3D interactifs (--t-SNE_dim 3)
 parquet = ["pyarrow>=14.0"]             # lecture de matrices au format parquet
 full = [
     "pydeseq2>=0.5",
+    "typing_extensions>=4.16",
     "gseapy>=1.1",
     "stabilized-ica>=2.0.0",
     "umap-learn>=0.5.4",

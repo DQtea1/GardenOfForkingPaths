@@ -105,6 +105,11 @@
     border-radius:7px;background:var(--surface2);color:var(--ink);cursor:pointer}
   .modal .fmt button:hover{border-color:var(--accent);color:var(--accent)}
   .modal input[type=text]{width:100%;box-sizing:border-box;margin-top:3px}
+  /* lecture conjointe p-valeur / taille d'effet (cf. effectVerdict) */
+  .vd-diff{color:#b3400f;font-weight:600}
+  .vd-triv{color:#8a6d00;font-weight:600;background:#fdf6dc}
+  .vd-eq{color:#2f7d32;font-weight:600;background:#eef7ee}
+  .vd-none{color:var(--ink2)}
   .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--ink2);align-items:center}
   .legend .sw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-1px}
   .muted{color:var(--ink2);font-size:.82rem}
@@ -179,6 +184,9 @@
 <header>
   <h1>Rapport d'analyse — consensus clustering</h1>
   <span class="sub" id="hdrSub"></span>
+  <span class="sub" style="display:block;margin-top:2px">Survolez une figure : un bouton
+    <b>⤓ Exporter</b> apparaît en haut à droite (PNG, PDF ou presse-papiers, titre et
+    légende compris).</span>
 </header>
 
 <div class="tabs" id="tabs">
@@ -631,7 +639,30 @@
           ★ Wilcoxon — décoché : 1 modalité vs reste (étoiles) ; coché : 2 à 2 (barres)<br>
           seuils sur la <b>FDR</b> : * q&lt;0.05&nbsp; ** q&lt;0.01&nbsp; *** q&lt;0.001 · <b>ns</b> = &lt; 3 / non testé<br>
           <i>Filtre actif → tests recalculés en direct (p brute, sans FDR).</i></div>
+        <div class="hd" style="margin-top:8px">Taille d'effet &amp; équivalence</div>
+        <label><span>δ sous les boîtes</span><input type="checkbox" id="boDelta" checked></label>
+        <label><span>Borne d'équivalence Δ</span>
+          <input type="number" id="boSesoi" min="0.01" max="0.99" step="0.01" value="0.147"
+                 style="width:72px"></label>
+        <div class="muted" style="font-size:11px;line-height:1.45;margin-top:2px">
+          Δ = plus petite taille d'effet qui vous intéresse (SESOI). Échelle usuelle
+          de |δ| (Romano 2006) : <b>0,147</b> négligeable · 0,33 petit · 0,474 moyen.<br>
+          TOST : équivalence déclarée si l'IC 90 % de δ tient entièrement dans
+          [−Δ ; +Δ].</div>
       </div>
+    </div>
+    <div id="sdStatsWrap">
+      <div class="ctl" style="margin-top:10px">
+        <b>Tailles d'effet et test d'équivalence (TOST)</b>
+        <span id="sdStatsMetricWrap"><label>Métrique :</label>
+          <select id="sdStatsMetric">
+            <option value="ss">score ssGSEA</option>
+            <option value="mean">expression moyenne</option>
+          </select></span>
+        <span class="muted">δ de Cliff = corrélation rang-bisériale r — c'est la
+          <b>même</b> quantité, δ = 2U/(n₁n₂) − 1, sous deux noms.</span>
+      </div>
+      <div id="sdStats"></div>
     </div>
     <div id="sdHeatWrap">
       <div class="muted" style="margin-top:10px">Heatmap des scores (ssGSEA) alignée sur les patients (ordre du k choisi) :</div>
@@ -1156,7 +1187,8 @@ function fmtTick(t){const a=Math.abs(t);if(a!==0&&(a<0.01||a>=1e4))return t.toEx
   return (Math.round(t*1000)/1000).toString();}
 function boxOptions(){return{axes:$("boAxes").checked,points:$("boPoints").checked,
   opacity:+$("boOpacity").value,jitter:+$("boJitter").value,radius:+$("boRadius").value,
-  pair:$("boPair").checked};}
+  pair:$("boPair").checked,delta:$("boDelta").checked,
+  sesoi:Math.min(0.99,Math.max(0.01,+$("boSesoi").value||0.147))};}
 // étoiles de significativité (Wilcoxon one-vs-rest) — cf. sigproj.stratified_signature_tests
 function starStr(p){return (p==null)?"":p<1e-3?"***":p<1e-2?"**":p<0.05?"*":"";}
 function sigTestPvals(method,sig,stratKey,k){
@@ -1188,6 +1220,109 @@ function liveTests(groups){const keys=Object.keys(groups),ovr={},pair={};
   for(let i=0;i<keys.length;i++)for(let j=i+1;j<keys.length;j++){
     const p=mannwhitneyU(cl(keys[i]),cl(keys[j]));if(p!=null)(pair[keys[i]]=pair[keys[i]]||{})[keys[j]]=p;}
   return {ovr,pair};}
+
+/* ---- Tailles d'effet et équivalence (TOST) ---------------------------------
+   Sur une grande cohorte, Wilcoxon finit par être significatif pour une
+   différence sans portée : une p-valeur répond « la différence est-elle nulle ? »,
+   jamais « est-elle assez grande pour compter ? ». D'où deux mesures
+   complémentaires, recalculées en direct sur les groupes réellement affichés.
+
+   1. TAILLE D'EFFET — δ de Cliff : proportion de paires (x, y) où x dépasse y,
+      moins la proportion inverse. δ = 2U/(n₁n₂) − 1, c'est-à-dire EXACTEMENT la
+      corrélation rang-bisériale (Kerby 2014, « simple difference formula ») :
+      deux noms, deux littératures, un seul nombre — que le rapport affiche donc
+      une seule fois, sous les deux étiquettes.
+   2. ÉQUIVALENCE — TOST : deux tests unilatéraux contre les bornes ±Δ, Δ étant
+      la plus petite taille d'effet qui intéresse l'utilisateur (SESOI). Conclure
+      « équivalent » exige de rejeter les DEUX hypothèses |δ| ≥ Δ ; un p > 0,05
+      ne démontre jamais une absence de différence, il constate une absence de
+      preuve.
+
+   Variance de δ : estimateur cohérent de Cliff (1993). Calculé en O(n log n) —
+   les dominances moyennes par ligne et par colonne s'obtiennent par recherche
+   dichotomique dans l'échantillon trié, et Σ(dᵢⱼ − δ)² se réduit à
+   n₁n₂ − (paires ex aequo) − n₁n₂δ² puisque dᵢⱼ ∈ {−1, 0, 1}. */
+function _lowerBound(arr,v){let lo=0,hi=arr.length;
+  while(lo<hi){const m=(lo+hi)>>1;if(arr[m]<v)lo=m+1;else hi=m;}return lo;}
+function _upperBound(arr,v){let lo=0,hi=arr.length;
+  while(lo<hi){const m=(lo+hi)>>1;if(arr[m]<=v)lo=m+1;else hi=m;}return lo;}
+function _normCdf(z){return 0.5*(1+_erf(z/Math.SQRT2));}
+
+function cliffDelta(a,b){
+  const A=a.filter(v=>v!=null&&isFinite(v)), B=b.filter(v=>v!=null&&isFinite(v));
+  const n1=A.length,n2=B.length;
+  if(n1<MING||n2<MING)return null;
+  const sa=[...A].sort((x,y)=>x-y), sb=[...B].sort((x,y)=>x-y);
+  const di=new Array(n1),dj=new Array(n2);
+  let ties=0,sum=0;
+  for(let i=0;i<n1;i++){                      // dᵢ. = (#{y<xᵢ} − #{y>xᵢ}) / n₂
+    const lt=_lowerBound(sb,A[i]),le=_upperBound(sb,A[i]);
+    ties+=le-lt; di[i]=(lt-(n2-le))/n2; sum+=di[i];}
+  const delta=sum/n1;
+  for(let j=0;j<n2;j++){                      // d.ⱼ = (#{x>yⱼ} − #{x<yⱼ}) / n₁
+    const lt=_lowerBound(sa,B[j]),le=_upperBound(sa,B[j]);
+    dj[j]=((n1-le)-lt)/n1;}
+  let Si=0,Sj=0;
+  for(let i=0;i<n1;i++)Si+=(di[i]-delta)*(di[i]-delta);
+  for(let j=0;j<n2;j++)Sj+=(dj[j]-delta)*(dj[j]-delta);
+  const Sij=n1*n2-ties-n1*n2*delta*delta;
+  let v=(n1>1&&n2>1)
+    ? (n2*n2*Si+n1*n1*Sj-Sij)/(n1*n2*(n1-1)*(n2-1)) : NaN;
+  if(!isFinite(v)||v<0)v=0;                   // δ = ±1 : variance nulle
+  return {delta,se:Math.sqrt(v),n1,n2};}
+
+/* IC asymétrique de Cliff : reste dans [−1, 1] même près des bornes, ce que ne
+   fait pas δ ± z·σ. Se réduit à δ quand σ → 0. */
+function cliffCI(d,se,z){
+  if(!(se>0))return {lo:d,hi:d};
+  const zz=z*z*se*se, den=1-d*d+zz;
+  const centre=d-d*d*d, rad=z*se*Math.sqrt((1-d*d)*(1-d*d)+zz);
+  return {lo:Math.max(-1,(centre-rad)/den), hi:Math.min(1,(centre+rad)/den)};}
+
+/* TOST : H₀₁ « δ ≤ −Δ » et H₀₂ « δ ≥ +Δ ». p_TOST = max des deux p unilatérales
+   — décision identique à « l'IC 90 % tient dans [−Δ ; +Δ] » pour α = 0,05. */
+function tostDelta(d,se,bound){
+  if(!(se>0)||!(bound>0))return null;
+  const p1=1-_normCdf((d+bound)/se), p2=_normCdf((d-bound)/se);
+  return {p:Math.max(p1,p2),p1,p2};}
+
+/* Grille de lecture à deux dimensions : « significatif ? » et « pertinent ? »
+   sont deux questions distinctes, et leurs quatre combinaisons ont chacune un
+   sens — dont celle qui motive tout ceci : significatif ET négligeable. */
+function effectVerdict(p,tost,alpha){
+  const sig=(p!=null&&p<alpha), equi=(tost!=null&&tost.p<alpha);
+  if(sig&&equi)return {txt:"significatif mais négligeable",cls:"vd-triv"};
+  if(sig)return {txt:"différence pertinente",cls:"vd-diff"};
+  if(equi)return {txt:"équivalent",cls:"vd-eq"};
+  return {txt:"indéterminé",cls:"vd-none"};}
+
+const _Z90=1.6448536269514722;              // IC 90 % <-> TOST à α = 0,05
+
+function _effRow(label,a,b,p,q,bound,alpha,key){
+  const eff=cliffDelta(a,b);
+  if(!eff)return {label,key,n1:a.length,n2:b.length,delta:null,p,q,
+                  verdict:{txt:"n < "+MING,cls:"vd-none"}};
+  const ci=cliffCI(eff.delta,eff.se,_Z90);
+  const tost=tostDelta(eff.delta,eff.se,bound);
+  const pv=(p==null)?mannwhitneyU(a,b):p;
+  return {label,key,n1:eff.n1,n2:eff.n2,delta:eff.delta,se:eff.se,
+          lo:ci.lo,hi:ci.hi,p:pv,q,tost,
+          verdict:effectVerdict(pv,tost,alpha)};}
+
+/* Une ligne par comparaison affichée : chaque modalité contre le reste, puis
+   toutes les paires — les deux familles que trace déjà le graphique. */
+function sdEffectRows(groups,tst,bound,alpha){
+  const keys=Object.keys(groups),rows=[];
+  const clean=k=>groups[k].filter(v=>v!=null&&isFinite(v));
+  keys.forEach(k=>{
+    let rest=[];keys.forEach(k2=>{if(k2!==k)rest=rest.concat(clean(k2));});
+    rows.push(_effRow(k+" vs reste",clean(k),rest,
+      (tst&&tst.ovr)?tst.ovr[k]:null,(tst&&tst.ovrq)?tst.ovrq[k]:null,bound,alpha,k));});
+  for(let i=0;i<keys.length;i++)for(let j=i+1;j<keys.length;j++){
+    const a=keys[i],b=keys[j];
+    rows.push(_effRow(a+" vs "+b,clean(a),clean(b),
+      pairP(tst&&tst.pair,a,b),pairP(tst&&tst.pairq,a,b),bound,alpha));}
+  return rows;}
 
 /* ---- Filtres patients (cases par variable clinique catégorielle) ---- */
 /* Filtres du sous-onglet Signatures : même forme que ceux du ssGSEA — on
@@ -1229,7 +1364,9 @@ function pairP(pair,a,b){if(!pair)return null;
 
 function drawBox(cv,groups,tst,members,meta){const opt=boxOptions();
   cv._hits=[];                       // zones cliquables, reconstruites à chaque dessin
-  const keys=Object.keys(groups),ML=opt.axes?54:14,MB=34,step=15;
+  // δ (1 modalité vs reste) sous chaque boîte : une ligne de plus sous l'axe
+  const eff=(opt.delta&&meta&&meta.effects)?meta.effects:null;
+  const keys=Object.keys(groups),ML=opt.axes?54:14,MB=eff?46:34,step=15;
   const boxes=keys.map(k=>quart(groups[k])),bx=boxes.filter(Boolean);
   if(!bx.length){const ctx=fitCanvas(cv,260,60);ctx.fillStyle="#888";ctx.fillText("—",20,20);return;}
   const cxs=keys.map((k,idx)=>ML+34+idx*92);
@@ -1293,7 +1430,17 @@ function drawBox(cv,groups,tst,members,meta){const opt=boxOptions();
       else{const stx=starStr(sv);if(stx){ctx.fillStyle="#111";ctx.font="bold 13px ui-sans-serif";ctx.fillText(stx,cx,y(b.max)-8);}}
       ctx.textAlign="left";}
     ctx.fillStyle="#33414a";ctx.font="10px ui-monospace";ctx.textAlign="center";
-    ctx.fillText((k+"").slice(0,11),cx,H-20);ctx.fillText("n="+b.n,cx,H-8);ctx.textAlign="left";});
+    const yLab=eff?H-32:H-20;
+    ctx.fillText((k+"").slice(0,11),cx,yLab);ctx.fillText("n="+b.n,cx,yLab+12);
+    if(eff){const e=eff[k];
+      // couleur = lecture conjointe p-valeur / taille d'effet, cf. effectVerdict
+      ctx.fillStyle=(!e||e.delta==null)?"#999"
+        :e.verdict.cls==="vd-diff"?"#b3400f"
+        :e.verdict.cls==="vd-triv"?"#a08000"
+        :e.verdict.cls==="vd-eq"?"#2f7d32":"#8a939a";
+      ctx.fillText((!e||e.delta==null)?"δ —"
+        :"δ="+(e.delta>=0?"+":"")+e.delta.toFixed(2),cx,H-8);}
+    ctx.textAlign="left";});
   // ---- barres de comparaison pairwise (chapeau + étoiles au-dessus)
   if(opt.pair&&bars.length){const topBox=Math.min(...bx.map(b=>y(b.max)));
     ctx.font="bold 12px ui-sans-serif";
@@ -1407,23 +1554,75 @@ function sdApplyMode(){
   $("sdClinCtl").hidden=!clin;
   $("sdPanMean").hidden=clin;
   $("sdHeatWrap").hidden=clin;
+  // une seule métrique en mode clinique : le choix n'a plus d'objet
+  $("sdStatsMetricWrap").hidden=clin;
   $("sdLabSs").textContent=clin
     ?($("sdClin").value||"aucune colonne numérique dans la table clinique")
     :"ssGSEA";}
+
+/* ---- Tableau des tailles d'effet et de l'équivalence ---- */
+function _pfmt(p){return p==null?"—":p<1e-4?p.toExponential(1):p.toFixed(4);}
+function sdRenderStats(rows,caption,bound){
+  const host=$("sdStats");if(!host)return;
+  if(!rows||!rows.length){host.innerHTML="<div class='muted'>Aucune comparaison "
+    +"— il faut au moins deux modalités d'au moins "+MING+" tumeurs.</div>";return;}
+  let h="<div class='muted' style='margin:2px 0 6px'>"+esc(caption)
+    +" · Δ = "+bound.toFixed(3)+" · α = 0,05</div>"
+    +"<div class='tblwrap'><table class='dt'><thead><tr>"
+    +"<th>comparaison</th><th>n₁</th><th>n₂</th>"
+    +"<th title='δ de Cliff = corrélation rang-bisériale r'>δ = r</th>"
+    +"<th>IC 90 %</th><th title='Wilcoxon (Mann-Whitney), p brute'>p</th>"
+    +"<th title='p corrigée FDR quand elle est précalculée'>q</th>"
+    +"<th title='max des deux p unilatérales contre ±Δ'>p TOST</th>"
+    +"<th>lecture</th></tr></thead><tbody>";
+  rows.forEach(r=>{
+    h+="<tr><td>"+esc(r.label)+"</td><td>"+r.n1+"</td><td>"+r.n2+"</td>";
+    if(r.delta==null){h+="<td colspan='5' class='muted'>non testable</td>";}
+    else{h+="<td><b>"+(r.delta>=0?"+":"")+r.delta.toFixed(3)+"</b></td>"
+      +"<td>["+r.lo.toFixed(3)+" ; "+r.hi.toFixed(3)+"]</td>"
+      +"<td>"+_pfmt(r.p)+"</td><td>"+_pfmt(r.q)+"</td>"
+      +"<td>"+(r.tost?_pfmt(r.tost.p):"—")+"</td>";}
+    h+="<td class='"+r.verdict.cls+"'>"+esc(r.verdict.txt)+"</td></tr>";});
+  h+="</tbody></table></div>"
+    +"<div class='muted' style='font-size:11px;line-height:1.5;margin-top:6px'>"
+    +"<b>Lecture</b> — deux questions distinctes : « la différence est-elle "
+    +"détectable ? » (p) et « est-elle assez grande pour compter ? » (δ vs Δ).<br>"
+    +"<span class='vd-diff' style='padding:0 3px'>différence pertinente</span> "
+    +"p &lt; 0,05 sans équivalence · "
+    +"<span class='vd-triv' style='padding:0 3px'>significatif mais négligeable</span> "
+    +"p &lt; 0,05 <i>et</i> équivalence démontrée — le cas typique des grandes "
+    +"cohortes · "
+    +"<span class='vd-eq' style='padding:0 3px'>équivalent</span> "
+    +"p_TOST &lt; 0,05 : l'IC 90 % tient dans [−Δ ; +Δ] · "
+    +"<span class='vd-none' style='padding:0 3px'>indéterminé</span> "
+    +"ni différence ni équivalence établie — puissance insuffisante, ce qui n'est "
+    +"<i>pas</i> une preuve d'absence de différence.</div>";
+  host.innerHTML=h;}
 
 function redrawBoxes(){
   const strat=$("sdStrat").value,k=+$("sdK").value,
         // Restreindre les patients OU les modalités change le « reste » des tests
         // one-vs-rest précalculés : on les recalcule alors en direct.
         live=isFilterActive()||sdModsRestricted();
+  const bound=boxOptions().sesoi, ALPHA=0.05;
+  // δ (une modalité vs reste) indexé par modalité : ce que drawBox écrit sous
+  // les boîtes. La clé est portée par la ligne elle-même (`row.key`), pas
+  // déduite d'un ordre : le tableau contient aussi les paires.
+  const ovrEffects=rows=>{const out={};
+    rows.forEach(r=>{if(r.key!=null)out[r.key]=r;});return out;};
   if(sdIsClin()){
     const v=$("sdClin").value,cv=$("sdBoxSs"),members={};
     const g=v?sdStratGroups(sdClinRow(v),strat,members):{};
     const pool=[].concat(...Object.keys(g).map(k2=>g[k2]));
     // aucun test précalculé pour les variables cliniques : toujours en direct
-    drawBox(cv,g,liveTests(g),members,{pool,sig:v,metric:"valeur",kind:"variable clinique"});
-    sdBindPoints(cv);return;}
-  const sig=$("sdSig").value;
+    const tst=liveTests(g), rows=sdEffectRows(g,tst,bound,ALPHA);
+    drawBox(cv,g,tst,members,{pool,sig:v,metric:"valeur",kind:"variable clinique",
+                              effects:ovrEffects(rows)});
+    sdBindPoints(cv);
+    sdRenderStats(rows,"Variable clinique « "+v+" » stratifiée par "
+                  +(strat==="__cluster__"?("cluster (k="+k+")"):strat),bound);
+    return;}
+  const sig=$("sdSig").value, shown=$("sdStatsMetric").value;
   ["ss","mean"].forEach(m=>{const meth=m==="ss"?"ssgsea":"mean";const S=DATA.signatures[meth];if(!S){return;}
     const ri=S.names.indexOf(sig);if(ri<0)return;
     const members={}, g=sdStratGroups(S.values[ri],strat,members);
@@ -1432,8 +1631,12 @@ function redrawBoxes(){
     const pool=[].concat(...Object.keys(g).map(k2=>g[k2]));
     const tst=live?liveTests(g):sigTestPvals(meth,sig,strat,k);
     const cv=$("sdBox"+(m==="ss"?"Ss":"Mean"));
-    drawBox(cv,g,tst,members,{pool,sig,metric:m==="ss"?"score ssGSEA":"expression moyenne"});
-    sdBindPoints(cv);});
+    const label=m==="ss"?"score ssGSEA":"expression moyenne";
+    const rows=sdEffectRows(g,tst,bound,ALPHA);
+    drawBox(cv,g,tst,members,{pool,sig,metric:label,effects:ovrEffects(rows)});
+    sdBindPoints(cv);
+    if(m===shown)sdRenderStats(rows,"« "+sig+" » ("+label+") stratifiée par "
+      +(strat==="__cluster__"?("cluster (k="+k+")"):strat),bound);});
 }
 
 /* Le canvas est redessiné en permanence ; les gestionnaires sont donc posés une
@@ -1499,13 +1702,16 @@ function renderSigDet(){
     sdFilters.splice(+e.target.dataset.fi,1);sdRenderFilters();renderSigDet();}});
   sdRenderFilters();
   $("sdFilterReset").onclick=()=>{sdFilters=[];sdRenderFilters();renderSigDet();};
-  ["sdSig","sdClin","sdMode","sdMods"].forEach(id=>$(id).onchange=renderSigDet);
+  ["sdSig","sdClin","sdMode","sdMods","sdStatsMetric"].forEach(id=>$(id).onchange=renderSigDet);
   // les modalités disponibles dépendent de la colonne de stratification, et pour
   // « Cluster » aussi du k : les deux menus doivent recharger la liste.
   ["sdStrat","sdK"].forEach(id=>$(id).onchange=()=>{sdFillMods();renderSigDet();});
   $("sdModsAll").onclick=()=>{[...$("sdMods").options].forEach(o=>o.selected=true);renderSigDet();};
   // menu d'affichage des boxplots : ne redessine que les deux boîtes (léger)
-  ["boAxes","boPoints","boOpacity","boJitter","boRadius","boPair"].forEach(id=>$(id).oninput=()=>{
+  // menus d'affichage : redessine les boîtes ET le tableau (δ, TOST : la borne Δ
+  // change les verdicts sans changer une seule valeur mesurée)
+  ["boAxes","boPoints","boOpacity","boJitter","boRadius","boPair","boDelta",
+   "boSesoi"].forEach(id=>$(id).oninput=()=>{
     const v=$(id+"V");if(v)v.textContent=(+$(id).value).toFixed(2);redrawBoxes();});
 })();
 
@@ -3176,6 +3382,340 @@ function esc(s){return(""+s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&
     c.innerHTML="<h3>"+esc(o.title)+"</h3>";const im=document.createElement("img");im.src=o.img;c.appendChild(im);host.appendChild(c);});})();
 initPreICA();
 initICA();
+
+/* =========================================================
+   EXPORT DE FIGURES — PNG / PDF / presse-papiers
+
+   Le bouton n'est PAS ajouté au DOM de chaque panneau : un unique bouton
+   flottant se pose sur la figure survolée. Les figures sont créées à la volée
+   par une quarantaine de fonctions de dessin ; les suivre une par une (ou
+   observer les mutations du DOM) reviendrait à maintenir un catalogue qui
+   diverge au premier ajout. Ici, tout <canvas> et toute image de pré-analyse
+   sont exportables, y compris ceux dessinés après coup.
+
+   L'export ne copie pas la seule zone de dessin : il recompose une image
+   autonome — fil d'Ariane des onglets, titre, figure, légende — pour qu'elle
+   reste lisible une fois collée dans une présentation ou un article.
+   ========================================================= */
+const FIGX = {el:null, busy:false};
+const FIG_MIN = 60;                       // en deçà : vignette, pas une figure
+
+function figIsFigure(el){
+  if(!el||!el.tagName)return false;
+  if(el.tagName==="CANVAS")return el.clientWidth>=FIG_MIN&&el.clientHeight>=40;
+  return el.tagName==="IMG"&&!!el.closest(".imgcard");}
+
+/* Fil d'Ariane : seuls les onglets réellement visibles comptent — l'onglet
+   actif d'un panneau caché reste marqué `active` dans le DOM. */
+function figCrumbParts(){
+  const sel=".tab.active,.subtab.active,.ica-subtab.active,.diff-subtab.active,"
+           +".pre-subtab.active,.out-subtab.active";
+  return [...document.querySelectorAll(sel)].filter(b=>b.offsetParent!==null)
+    .map(b=>b.textContent.trim()).filter(Boolean);}
+
+/* Panneau d'onglet : frontière que la recherche de légende ne franchit jamais —
+   sans cela, une figure sans légende adoptait celle d'un autre sous-onglet du
+   même volet. */
+const FIG_PANEL=".pane,.sub,.ica-sub,.diff-sub,.out-sub,.pre-sub";
+
+/* Légende associée : la plus proche en remontant les conteneurs, dans le seul
+   panneau de la figure. Quand un conteneur en porte plusieurs (figures côte à
+   côte), on garde celle qui SUIT la figure dans l'ordre du document. */
+function figLegendEl(el){
+  const scope=el.closest(FIG_PANEL);
+  let node=el;
+  for(let up=0;up<4&&node&&node.parentElement;up++,node=node.parentElement){
+    const host=node.parentElement;
+    const found=[...host.querySelectorAll(".legend")]
+      .filter(l=>l.textContent.trim()&&(!scope||l.closest(FIG_PANEL)===scope));
+    if(found.length===1)return found[0];
+    if(found.length>1){
+      const after=found.filter(l=>el.compareDocumentPosition(l)&4);
+      return after.length?after[0]:found[0];}
+    if(host===scope||host.matches(FIG_PANEL))break;}
+  return null;}
+
+/* Titre, par ordre de fiabilité : titre de la vignette de pré-analyse, libellé
+   qui précède immédiatement la figure, titre en gras de sa légende, à défaut le
+   dernier niveau d'onglet. Le libellé d'une AUTRE figure n'est jamais repris :
+   la remontée s'arrête à la figure précédente. */
+function figTitle(el){
+  const card=el.closest(".imgcard"), h3=card&&card.querySelector("h3");
+  if(h3)return h3.textContent.trim();
+  let node=el;
+  for(let up=0;up<3&&node;up++,node=node.parentElement){
+    if(node.matches&&node.matches(FIG_PANEL))break;      // pas au-delà du panneau
+    for(let sib=node.previousElementSibling;sib;sib=sib.previousElementSibling){
+      if(sib.matches("canvas,img,.panel,.imgcard"))break;
+      if(!sib.matches(".muted,.hd,h3,h4,b"))continue;
+      const t=(sib.textContent||"").trim().split("\n")[0].replace(/[:·—-]\s*$/,"").trim();
+      if(t&&t.length<=120)return t;}}
+  const leg=figLegendEl(el), b=leg&&leg.querySelector("b");
+  if(b&&b.textContent.trim())return b.textContent.trim();
+  const crumb=figCrumbParts();
+  return crumb.length?crumb[crumb.length-1]:"";}
+
+/* Titre + fil d'Ariane, sans répéter le dernier onglet quand il sert de titre. */
+function figHeading(el){
+  const title=figTitle(el);let parts=figCrumbParts();
+  if(parts.length&&parts[parts.length-1]===title)parts=parts.slice(0,-1);
+  return {title,crumb:parts.join(" › ")};}
+
+function figSlug(s){return (s||"figure").normalize("NFD").replace(/[̀-ͯ]/g,"")
+  .replace(/[^A-Za-z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,80)||"figure";}
+
+const FIG_FONT='ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif';
+
+/* ---- légende -> image : <foreignObject> rend le HTML tel quel (pastilles de
+   couleur, gras, retours à la ligne) sans bibliothèque externe. Le viewBox fait
+   le rendu à la résolution d'export, sinon le texte serait flou. ---- */
+function figLegendImage(legEl,cssWidth,scale){
+  return new Promise(resolve=>{
+    const holder=document.createElement("div");
+    holder.style.cssText="position:fixed;left:-99999px;top:0;pointer-events:none";
+    const probe=document.createElement("div");
+    probe.className="legend";
+    probe.style.cssText=(legEl.getAttribute("style")||"")
+      +";width:"+cssWidth+"px;background:#fff;margin:0";
+    probe.innerHTML=legEl.innerHTML;
+    holder.appendChild(probe);document.body.appendChild(holder);
+    const h=Math.ceil(probe.getBoundingClientRect().height);
+    let xml="";
+    try{xml=new XMLSerializer().serializeToString(probe);}catch(e){xml="";}
+    document.body.removeChild(holder);
+    if(!h||!xml)return resolve(null);
+    const css=[...document.querySelectorAll("style")].map(s=>s.textContent).join("\n");
+    const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+Math.round(cssWidth*scale)
+      +'" height="'+Math.round(h*scale)+'" viewBox="0 0 '+cssWidth+' '+h+'">'
+      +'<style><![CDATA['+css+']]></style>'
+      +'<foreignObject x="0" y="0" width="'+cssWidth+'" height="'+h+'">'+xml+'</foreignObject></svg>';
+    const img=new Image();
+    img.onload=()=>resolve({img,w:cssWidth,h});
+    img.onerror=()=>resolve(null);          // repli : légende redessinée en texte
+    img.src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg);});}
+
+/* Repli texte : une ligne par bloc, pastille de couleur si le bloc en porte une. */
+function figLegendLines(legEl){
+  const out=[];
+  const walk=(node,bold)=>{
+    node.childNodes.forEach(ch=>{
+      if(ch.nodeType===3){const t=ch.textContent.replace(/\s+/g," ").trim();
+        if(t){const last=out[out.length-1];
+          if(last&&last.open)last.text+=(last.text?" ":"")+t;
+          else out.push({text:t,color:null,bold,open:true});}
+        return;}
+      if(ch.nodeType!==1)return;
+      if(ch.matches("i.sw")){out.push({text:"",color:ch.style.background||"#888",bold:false,open:true});return;}
+      const block=getComputedStyle(ch).display!=="inline";
+      if(block)out.forEach(o=>o.open=false);
+      walk(ch,bold||ch.tagName==="B"||ch.tagName==="STRONG");
+      if(block)out.forEach(o=>o.open=false);});};
+  walk(legEl,false);
+  return out.filter(o=>o.text||o.color);}
+
+/* ---- composition : fil d'Ariane + titre + figure + légende sur fond blanc ---- */
+async function figCompose(el,withLegendImage){
+  const isCv=el.tagName==="CANVAS";
+  const natW=isCv?el.width:el.naturalWidth, natH=isCv?el.height:el.naturalHeight;
+  const cssW=Math.round(el.getBoundingClientRect().width)||natW||1;
+  const s=Math.max(1,Math.min(4,natW/cssW));      // dpr effectif : résolution native
+  const P=Math.round(14*s), head0=figHeading(el), title=head0.title, crumb=head0.crumb;
+  const legEl=figLegendEl(el);
+  const legCssW=Math.max(Math.round(natW/s),320);
+  const leg=(legEl&&withLegendImage)?await figLegendImage(legEl,legCssW,s):null;
+  const legLines=(legEl&&!leg)?figLegendLines(legEl):[];
+
+  const measure=document.createElement("canvas").getContext("2d");
+  const fT="bold "+Math.round(15*s)+"px "+FIG_FONT, fC=Math.round(11*s)+"px "+FIG_FONT,
+        fL=Math.round(12*s)+"px "+FIG_FONT;
+  const bodyW=Math.max(natW,leg?leg.w*s:0,320*s);
+  const wrap=(txt,font)=>{if(!txt)return[];measure.font=font;
+    const words=txt.split(/\s+/),lines=[];let cur="";
+    words.forEach(w=>{const t=cur?cur+" "+w:w;
+      if(measure.measureText(t).width>bodyW&&cur){lines.push(cur);cur=w;}else cur=t;});
+    if(cur)lines.push(cur);return lines;};
+  const cLines=wrap(crumb,fC), tLines=wrap(title,fT);
+  const lhC=Math.round(15*s), lhT=Math.round(20*s), lhL=Math.round(17*s);
+  const head=(cLines.length?cLines.length*lhC+Math.round(3*s):0)+tLines.length*lhT
+             +((cLines.length||tLines.length)?Math.round(9*s):0);
+  const legH=leg?Math.round(leg.h*s)+Math.round(10*s)
+                :(legLines.length?legLines.length*lhL+Math.round(10*s):0);
+
+  const cv=document.createElement("canvas");
+  cv.width=bodyW+2*P; cv.height=head+natH+legH+2*P;
+  const ctx=cv.getContext("2d");
+  ctx.fillStyle="#ffffff";ctx.fillRect(0,0,cv.width,cv.height);
+  let y=P;
+  ctx.textBaseline="top";
+  ctx.fillStyle="#7a848c";ctx.font=fC;
+  cLines.forEach(l=>{ctx.fillText(l,P,y);y+=lhC;});
+  if(cLines.length)y+=Math.round(3*s);
+  ctx.fillStyle="#1d262c";ctx.font=fT;
+  tLines.forEach(l=>{ctx.fillText(l,P,y);y+=lhT;});
+  if(cLines.length||tLines.length)y+=Math.round(9*s);
+  ctx.drawImage(el,P,y,natW,natH);
+  y+=natH+Math.round(10*s);
+  if(leg)ctx.drawImage(leg.img,P,y,Math.round(leg.w*s),Math.round(leg.h*s));
+  else legLines.forEach(o=>{let x=P;
+    if(o.color){ctx.fillStyle=o.color;ctx.fillRect(x,y+Math.round(3*s),Math.round(11*s),Math.round(11*s));
+      x+=Math.round(15*s);}
+    ctx.fillStyle=o.bold?"#1d262c":"#5a636c";
+    ctx.font=(o.bold?"bold ":"")+fL;ctx.fillText(o.text,x,y);y+=lhL;});
+  return cv;}
+
+/* Le rendu <foreignObject> peut « souiller » le canvas selon le navigateur :
+   on le détecte tout de suite et on recompose avec la légende en texte plutôt
+   que d'échouer à l'enregistrement. */
+async function figCanvas(el){
+  let cv=await figCompose(el,true);
+  try{cv.getContext("2d").getImageData(0,0,1,1);}
+  catch(e){cv=await figCompose(el,false);}
+  return cv;}
+
+function figBlob(cv,type,quality){
+  return new Promise((res,rej)=>cv.toBlob(
+    b=>b?res(b):rej(new Error("le navigateur n'a pas pu produire l'image")),type,quality));}
+
+/* ---- PDF minimal (image RVB + xref) : aucune dépendance externe ---- */
+function figPdfDoc(data,w,h,deflated,title){
+  const enc=new TextEncoder(),chunks=[],off=[];let len=0;
+  const put=x=>{const b=(typeof x==="string")?enc.encode(x):x;chunks.push(b);len+=b.length;};
+  const obj=(n,body)=>{off[n]=len;put(n+" 0 obj\n"+body+"\nendobj\n");};
+  const objStream=(n,dict,payload)=>{off[n]=len;
+    put(n+" 0 obj\n"+dict+"\nstream\n");put(payload);put("\nendstream\nendobj\n");};
+  // texte accentué : chaîne UTF-16BE hexadécimale (PDFDocEncoding ne suffit pas)
+  const hexs=s=>{let out="FEFF";for(const ch of s){let c=ch.codePointAt(0);
+    if(c>0xFFFF){c-=0x10000;out+=(0xD800+(c>>10)).toString(16).padStart(4,"0")
+      +(0xDC00+(c&1023)).toString(16).padStart(4,"0");}
+    else out+=c.toString(16).padStart(4,"0");}return "<"+out.toUpperCase()+">";};
+  // A4 dans l'orientation de la figure, image centrée et ajustée aux marges
+  const A=[595.28,841.89],land=w>h,PW=land?A[1]:A[0],PH=land?A[0]:A[1],M=28;
+  const sc=Math.min((PW-2*M)/w,(PH-2*M)/h),iw=w*sc,ih=h*sc,
+        ix=(PW-iw)/2,iy=(PH-ih)/2,r2=v=>Math.round(v*100)/100;
+  put("%PDF-1.4\n");put(new Uint8Array([0x25,0xE2,0xE3,0xCF,0xD3,0x0A]));
+  obj(1,"<< /Type /Catalog /Pages 2 0 R >>");
+  obj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  obj(3,"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "+r2(PW)+" "+r2(PH)+"] "
+       +"/Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>");
+  objStream(4,"<< /Type /XObject /Subtype /Image /Width "+w+" /Height "+h
+    +" /ColorSpace /DeviceRGB /BitsPerComponent 8 "
+    +(deflated?"/Filter /FlateDecode ":"")+"/Length "+data.length+" >>",data);
+  const content="q "+r2(iw)+" 0 0 "+r2(ih)+" "+r2(ix)+" "+r2(iy)+" cm /Im0 Do Q";
+  objStream(5,"<< /Length "+content.length+" >>",content);
+  obj(6,"<< /Title "+hexs(title||"figure")+" /Producer (GardenOfForks) >>");
+  const xref=len;
+  let table="xref\n0 7\n0000000000 65535 f \n";
+  for(let i=1;i<=6;i++)table+=String(off[i]).padStart(10,"0")+" 00000 n \n";
+  put(table);
+  put("trailer\n<< /Size 7 /Root 1 0 R /Info 6 0 R >>\nstartxref\n"+xref+"\n%%EOF\n");
+  const out=new Uint8Array(len);let p=0;
+  chunks.forEach(c=>{out.set(c,p);p+=c.length;});
+  return out;}
+
+async function figPdfBlob(cv,title){
+  const {width:w,height:h}=cv;
+  const px=cv.getContext("2d").getImageData(0,0,w,h).data;
+  const rgb=new Uint8Array(w*h*3);
+  for(let i=0,j=0;i<px.length;i+=4){rgb[j++]=px[i];rgb[j++]=px[i+1];rgb[j++]=px[i+2];}
+  let data=rgb,deflated=false;
+  if(window.CompressionStream){try{
+    const packed=await new Response(new Blob([rgb]).stream()
+      .pipeThrough(new CompressionStream("deflate"))).arrayBuffer();
+    data=new Uint8Array(packed);deflated=true;}catch(e){}}
+  return new Blob([figPdfDoc(data,w,h,deflated,title)],{type:"application/pdf"});}
+
+/* ---- enregistrement : sélecteur de dossier natif si le navigateur l'expose ---- */
+function figPickerAvailable(){return typeof window.showSaveFilePicker==="function";}
+async function figSave(blob,filename,desc,mime,ext){
+  if(figPickerAvailable()){
+    try{
+      const handle=await window.showSaveFilePicker({suggestedName:filename,
+        types:[{description:desc,accept:{[mime]:[ext]}}]});
+      const w=await handle.createWritable();await w.write(blob);await w.close();
+      return {how:"picker",name:handle.name};
+    }catch(err){
+      if(err&&err.name==="AbortError")return {how:"abort"};
+      // sélecteur refusé (contexte non sécurisé, permission) : on retombe
+      // sur le téléchargement plutôt que de ne rien enregistrer du tout
+    }}
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);a.download=filename;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),8000);
+  return {how:"download",name:filename};}
+
+/* ---- bouton flottant : suit la figure survolée ---- */
+function figShowButton(el){
+  const b=$("figBtn"),r=el.getBoundingClientRect();
+  if(r.width<FIG_MIN||r.bottom<0||r.top>window.innerHeight){figHideButton();return;}
+  FIGX.el=el;b.style.display="block";
+  b.style.left=Math.round(Math.min(r.right-b.offsetWidth-6,window.innerWidth-b.offsetWidth-6))+"px";
+  b.style.top=Math.round(Math.max(r.top+6,4))+"px";}
+function figHideButton(){$("figBtn").style.display="none";FIGX.el=null;}
+
+document.addEventListener("mouseover",e=>{
+  const t=e.target;
+  if(t===$("figBtn"))return;                      // survol du bouton : on le garde
+  if(figIsFigure(t)){figShowButton(t);return;}
+  if(FIGX.el&&!FIGX.el.contains(t))figHideButton();});
+window.addEventListener("scroll",()=>{if(FIGX.el)figShowButton(FIGX.el);},true);
+
+/* ---- boîte de dialogue ---- */
+function figStatus(msg){$("figStatus").textContent=msg||"";}
+function figOpenDialog(){
+  const el=FIGX.el;if(!el)return;
+  FIGX.target=el;
+  const h=figHeading(el);
+  $("figWhat").textContent=[h.crumb,h.title].filter(Boolean).join(" — ")||"figure";
+  $("figName").value=figSlug(h.title||h.crumb);
+  $("figHint").innerHTML=figPickerAvailable()
+    ?"Le choix du dossier se fait dans la fenêtre de votre système : "
+     +"n'importe quel emplacement, disques externes compris."
+    :"Votre navigateur n'expose pas de sélecteur de dossier à une page locale "
+     +"(Firefox, Safari) : le fichier ira dans le dossier de téléchargement. Pour "
+     +"choisir l'emplacement à chaque fois, activez « Toujours demander où "
+     +"enregistrer les fichiers » dans ses réglages.";
+  figStatus("");
+  $("figModal").classList.add("on");}
+function figCloseDialog(){$("figModal").classList.remove("on");}
+
+async function figRun(kind){
+  if(FIGX.busy||!FIGX.target)return;
+  FIGX.busy=true;figStatus("préparation de l'image…");
+  try{
+    const cv=await figCanvas(FIGX.target);
+    const name=figSlug($("figName").value)||"figure";
+    if(kind==="clip"){
+      const blob=await figBlob(cv,"image/png");
+      if(!navigator.clipboard||!window.ClipboardItem)
+        throw new Error("le presse-papiers d'images n'est pas disponible dans ce navigateur");
+      await navigator.clipboard.write([new ClipboardItem({"image/png":blob})]);
+      figStatus("figure copiée dans le presse-papiers.");
+    }else if(kind==="png"){
+      const blob=await figBlob(cv,"image/png");
+      const r=await figSave(blob,name+".png","Image PNG","image/png",".png");
+      figStatus(r.how==="abort"?"enregistrement annulé."
+        :r.how==="picker"?("enregistré : "+r.name)
+        :("téléchargé : "+r.name+" (dossier de téléchargement du navigateur)"));
+    }else{
+      figStatus("écriture du PDF…");
+      const blob=await figPdfBlob(cv,$("figWhat").textContent);
+      const r=await figSave(blob,name+".pdf","Document PDF","application/pdf",".pdf");
+      figStatus(r.how==="abort"?"enregistrement annulé."
+        :r.how==="picker"?("enregistré : "+r.name)
+        :("téléchargé : "+r.name+" (dossier de téléchargement du navigateur)"));
+    }
+  }catch(err){figStatus("échec : "+(err&&err.message?err.message:err));}
+  FIGX.busy=false;}
+
+$("figBtn").onclick=e=>{e.stopPropagation();figOpenDialog();};
+$("figCancel").onclick=figCloseDialog;
+$("figModal").onclick=e=>{if(e.target===$("figModal"))figCloseDialog();};
+$("figPng").onclick=()=>figRun("png");
+$("figPdf").onclick=()=>figRun("pdf");
+$("figClip").onclick=()=>figRun("clip");
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&$("figModal").classList.contains("on"))figCloseDialog();});
 
 /* ---------- navigation onglets ---------- */
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));

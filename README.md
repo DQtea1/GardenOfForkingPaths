@@ -439,8 +439,80 @@ dessinées en **canvas partageant l'ordre des patients**, d'où des panneaux
 - **Onglet Pré-analyse** : figures de filtrage et de choix de k (ACP outliers,
   pureté PUREE, CDF/PAC/Δ(K), tracking plot).
 
+**Tailles d'effet et équivalence (sous-onglet Boxplots)** — sur une grande
+cohorte, Wilcoxon finit par être significatif pour une différence sans portée :
+une p-valeur répond « la différence est-elle nulle ? », jamais « est-elle assez
+grande pour compter ? ». Chaque comparaison affichée (chaque modalité contre le
+reste, puis toutes les paires) est donc accompagnée du **δ de Cliff** — qui est
+la corrélation rang-bisériale, δ = 2U/(n₁n₂) − 1 : deux noms, un seul nombre —
+de son **IC 90 %** (estimateur de variance de Cliff 1993, intervalle asymétrique
+qui reste dans [−1, 1]), et d'un **test d'équivalence TOST** contre une borne Δ
+réglable (SESOI ; défaut 0,147, la frontière « négligeable » de Romano 2006).
+Croiser les deux donne quatre lectures, dont celle qui motive tout ceci :
+*significatif mais négligeable*. À l'inverse, un p > 0,05 ne démontre rien —
+seul le TOST permet de conclure à l'équivalence.
+
+**Export des figures** — survoler n'importe quelle figure fait apparaître un
+bouton **⤓ Exporter** (coin haut droit) : PNG, PDF ou copie dans le presse-papiers.
+L'image produite n'est pas la seule zone de dessin, elle est recomposée avec le
+fil d'Ariane des onglets, le titre et la légende, à la résolution native du
+canvas. Le choix du dossier passe par la fenêtre du système (n'importe quel
+emplacement, disques externes compris) sur les navigateurs Chromium ; ailleurs
+(Firefox, Safari) le fichier part dans le dossier de téléchargement — activer
+« Toujours demander où enregistrer les fichiers » pour choisir à chaque fois.
+
 Toutes les données sont embarquées en JSON dans le fichier (plusieurs Mo selon le
 nombre de tumeurs et de k). `create_report: n` pour sauter cette étape.
+
+## Empreinte mémoire
+
+Le plus gros objet du run est la matrice de counts bruts, gardée entière :
+`tumeurs × gènes × 8 octets` (400 × 60 000 ≈ **190 Mo**, 800 × 60 000 ≈ 380 Mo).
+Le pic, lui, est ailleurs — pendant OUTRIDER, où l'autoencodeur TensorFlow tourne
+dans un **sous-processus** dont la mémoire s'ajoute à celle du pipeline.
+
+Ce que le pipeline libère tout seul (jamais un objet encore utile) :
+
+- la matrice d'un sous-groupe OUTRIDER est **abandonnée dès qu'elle est écrite
+  sur le disque**, avant de lancer py_outrider qui la relit — elle n'a aucune
+  raison de coexister avec TensorFlow ;
+- ces counts sont stockés en `int32` plutôt qu'`int64` quand ils y tiennent
+  (moitié moins, ~36 Mo au lieu de 72 pour 150 × 60 000) ;
+- avant chaque sous-processus (py_outrider, R de la déconvolution), les arènes
+  libres sont **rendues au système** (`malloc_trim`), sans quoi elles restent
+  réservées au processus Python et manquent à l'enfant ;
+- les counts bruts et la matrice normalisée sont libérés **après la
+  déconvolution** (étape 15b) : plus aucune étape ne les lit, et le rapport (18)
+  construit sa charge JSON avec d'autant plus de place.
+
+Si ça ne suffit pas, les réglages qui pèsent le plus, par ordre d'effet :
+
+| Réglage | Effet |
+|---|---|
+| `outrider_encod_dim: <entier>` | fixe la dimension du goulot au lieu de la chercher : un seul modèle entraîné par sous-groupe au lieu de plusieurs |
+| `outrider_min_count` / `outrider_min_frac_samples` | moins de gènes retenus par sous-groupe, donc un modèle plus petit |
+| `n_jobs` / `parallel: n` | chaque worker DESeq2/GSEA travaille sur ses propres copies |
+| `outrider_jobs` | nombre de runs OUTRIDER **de front** : chacun est un TensorFlow de plus en mémoire. `1` = séquentiel, le plus économe (voir aussi *Parallélisation* ci-dessous) |
+| `outrider_figure_cells`, `outrider_max_events` | taille des données de figures embarquées dans le rapport |
+| `create_report: n` | supprime le second pic (sérialisation JSON complète) |
+
+Le journal du run trace ces libérations (`Mémoire [...] : 512 -> 310 Mo`) : c'est
+le premier endroit où regarder pour situer un pic.
+
+## Parallélisation d'OUTRIDER
+
+L'autoencodeur d'un sous-groupe est un **petit** modèle : TensorFlow cesse d'en
+tirer parti vers 4 threads (mesuré sur 150 tumeurs × 4000 gènes — 1 thread
+168 s, 4 → 78 s, 8 → 70 s, 16 → 63 s, soit 16 % d'efficacité par cœur à
+16 threads contre 53 % à 4). Les sous-groupes, eux, sont **indépendants**. Le
+pipeline en lance donc plusieurs de front, chacun avec sa part de threads, le
+produit restant borné par `n_jobs` : quatre sous-groupes bouclés en **106 s au
+lieu de 256 s** en série à 16 threads, résultats identiques.
+
+`outrider_jobs: 0` (défaut) laisse le pipeline répartir, `1` revient au
+séquentiel — le plus économe en mémoire, puisque chaque run de front est un
+TensorFlow de plus. La préparation des matrices reste sérialisée dans tous les
+cas : une seule matrice de counts existe à la fois.
 
 ## Pièges à connaître
 

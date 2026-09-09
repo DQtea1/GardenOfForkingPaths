@@ -28,6 +28,7 @@ from . import harmonize_ids as hid
 from . import ica as ic
 from . import ica_cluster_compare as icc
 from . import ica_gsea as ig
+from . import memory as mem
 from . import metrics as mt
 from . import outrider as od
 from . import plots as pl
@@ -914,6 +915,9 @@ def _deconvolution(c: _Ctx) -> None:
             log.warning("Déconvolution : --already-normalized est actif, mais la "
                         "déconvolution attend des counts BRUTS (CPM linéaire pour "
                         "immunedeconv, counts pour BayesPrism). Résultats peu fiables.")
+        # comme pour OUTRIDER : rendre les arènes libres au système avant de
+        # lancer le sous-processus R, qui va réclamer sa propre mémoire
+        mem.release("avant la déconvolution (sous-processus R)")
         deconv = dc.run_deconvolution(
             raw, result.sample_names, outdir,
             methods=args.deconv_methods or None,       # None -> batterie par défaut
@@ -926,6 +930,29 @@ def _deconvolution(c: _Ctx) -> None:
         log.info("Déconvolution terminée : tables dans %s",
                  outdir / "tables" / "deconvolution")
     c.deconv = deconv
+
+
+def _release_inputs(c: _Ctx) -> None:
+    """Étape 15b — libère les matrices d'entrée, plus lues par la suite.
+
+    `c.raw` (counts bruts, tumeurs × TOUS les gènes) est le plus gros objet du
+    run : c'est lui qui sert au DEGSEA (13), à la projection de signatures (14)
+    et à la déconvolution (15). Passé cette dernière, **aucune étape ne le
+    relit** : les analyses cliniques (16-17) travaillent sur les labels, les
+    scores et les métadonnées, et le rapport (18) sur les objets déjà calculés.
+    Le garder jusqu'au bout ne fait qu'ajouter quelques centaines de Mo au pic du
+    rapport, qui construit sa charge JSON en mémoire.
+
+    `c.X_df` est libéré pour la même raison, avec une nuance : chaque branche en
+    détient **sa propre copie** (`AnalysisBranch.__post_init__`), qui reste, elle,
+    indispensable. On ne supprime donc ici qu'un doublon.
+
+    Toute étape ajoutée après ce point doit prendre sa matrice ailleurs — d'où
+    l'appel explicite plutôt qu'un `del` discret au fil de l'eau.
+    """
+    c.raw = None
+    c.X_df = None
+    mem.release("matrices d'entrée libérées")
 
 
 def _clinical_analyses(c: _Ctx) -> None:
@@ -1034,6 +1061,7 @@ def main(argv=None) -> int:
     _degsea_all_k(c)           # 13. DEGSEA par cluster
     _signatures(c)             # 14. projection de signatures
     _deconvolution(c)          # 15. déconvolution
+    _release_inputs(c)         # 15b. counts bruts : plus aucun lecteur ensuite
     _clinical_analyses(c)      # 16-17. khi² + corrélations, toutes branches
     _report(c)                 # 18. rapport HTML
     _save(c)                   # 19. paramètres du run

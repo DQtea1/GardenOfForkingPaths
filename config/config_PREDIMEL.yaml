@@ -243,6 +243,7 @@ outrider_heatmap_genes: 100   # gènes de la heatmap gènes × tumeurs
 outrider_covariates: null
 outrider_extra_args: null
 outrider_keep_h5ad: y
+outrider_jobs: 0              # sous-groupes menés de front ; 0 = auto (~4 threads/run), 1 = séquentiel
 
 # ================================================= 8 · ICA stabilisée (branche parallèle) — _ica()
 # Branche indépendante du consensus clustering : évalue la MSTD, sauvegarde la

@@ -350,12 +350,12 @@ subset_by:
   histo_classe: [histo_classe]
   histo_class_x_SOX10: [histo_classe, SOX10]
   # histo_sexe: [histo_classe, sexe]
-  full_cohort: []                 # liste vide = un seul run sur toute la cohorte
+  # full_cohort: []                 # liste vide = un seul run sur toute la cohorte
 
 # py_outrider (TensorFlow) vit normalement dans son propre environnement, comme
 # PUREE. Laisser null = utiliser l'interpréteur du pipeline, ce qui suppose
 # `pip install py_outrider` au même endroit.
-outrider_python: null
+outrider_python: /home/quentin/miniforge3/envs/tf_keras/bin/python
 
 outrider_profile: outrider    # outrider (counts RNA-seq) | protrider (protéines) | pca
 outrider_encod_dim: null      # null = py_outrider cherche l'optimum (CORRECT mais TRÈS long :
@@ -385,6 +385,12 @@ outrider_heatmap_genes: 100   # gènes les plus variables de la heatmap gènes �
 outrider_covariates: null     # colonnes cliniques passées comme covariables connues
 outrider_extra_args: null     # options passées telles quelles à py_outrider
 outrider_keep_h5ad: y         # conserve l'AnnData complet de chaque run (support des futures figures)
+# Parallélisation. Les sous-groupes sont indépendants, et l'autoencodeur cesse de
+# s'accélérer vers 4 threads (mesuré sur 150×4000 : 1 thread 168 s, 4 → 78 s,
+# 8 → 70 s, 16 → 63 s ; quatre runs de front à 4 threads = 112 s contre 254 s en
+# série à 16 threads). 0 = choisi automatiquement à partir de n_jobs (~4 threads
+# par run) ; 1 = séquentiel. Chaque run de front = un TensorFlow de plus en RAM.
+outrider_jobs: 0
 
 # ================================================= 8 · ICA stabilisée (branche parallèle) — _ica()
 # Branche indépendante du consensus clustering : évalue la MSTD, sauvegarde la
