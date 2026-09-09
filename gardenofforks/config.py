@@ -469,6 +469,14 @@ def build_parser() -> argparse.ArgumentParser:
     out_g.add_argument("--outrider_extra_args", default=None,
                        help="options supplémentaires passées telles quelles à "
                             "py_outrider (ex. '--distribution NB --convergence 1e-4').")
+    out_g.add_argument("--outrider_threads", type=int, default=0,
+                       help="threads TensorFlow PAR run OUTRIDER. 0 (défaut) : ~4, "
+                            "valeur où le gain sature sur un autoencodeur de cette "
+                            "taille (mesuré : 1 thread 168 s, 4 -> 78 s, 8 -> 70 s, "
+                            "16 -> 63 s sur 150 tumeurs × 4000 gènes). Le nombre de "
+                            "runs menés de front s'en déduit (n_jobs / threads) : "
+                            "2 -> 8 runs de front sur 16 cœurs, 8 -> 2 runs. Moins de "
+                            "threads = plus de runs simultanés = plus de mémoire.")
     out_g.add_argument("--outrider_jobs", type=int, default=0,
                        help="sous-groupes OUTRIDER menés DE FRONT. 0 (défaut) : "
                             "choisi automatiquement, ~4 threads TensorFlow par run "
@@ -793,6 +801,7 @@ def _check_ranges(cfg: dict, errors: list[str]) -> None:
     bounded("outrider_encod_dim", 1)
     bounded("outrider_iterations", 1)
     bounded("outrider_jobs", 0)
+    bounded("outrider_threads", 0)
 
     k_min, k_max = cfg.get("k_min"), cfg.get("k_max")
     if k_min is not None and k_max is not None and k_max < k_min:

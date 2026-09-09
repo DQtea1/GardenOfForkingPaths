@@ -244,6 +244,7 @@ outrider_covariates: null
 outrider_extra_args: null
 outrider_keep_h5ad: y
 outrider_jobs: 0              # sous-groupes menés de front ; 0 = auto (~4 threads/run), 1 = séquentiel
+outrider_threads: 0           # threads TensorFlow par run ; 0 = 4 (2 -> 8 runs de front sur 16 cœurs)
 
 # ================================================= 8 · ICA stabilisée (branche parallèle) — _ica()
 # Branche indépendante du consensus clustering : évalue la MSTD, sauvegarde la

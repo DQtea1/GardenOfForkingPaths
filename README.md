@@ -509,10 +509,15 @@ pipeline en lance donc plusieurs de front, chacun avec sa part de threads, le
 produit restant borné par `n_jobs` : quatre sous-groupes bouclés en **106 s au
 lieu de 256 s** en série à 16 threads, résultats identiques.
 
-`outrider_jobs: 0` (défaut) laisse le pipeline répartir, `1` revient au
-séquentiel — le plus économe en mémoire, puisque chaque run de front est un
-TensorFlow de plus. La préparation des matrices reste sérialisée dans tous les
-cas : une seule matrice de counts existe à la fois.
+Deux curseurs, tous deux à `0` = automatique. `outrider_threads` fixe les
+threads **par run** — c'est celui que décrit la courbe ci-dessus — et le nombre
+de runs de front s'en déduit (`2` → 8 runs sur 16 cœurs, `8` → 2 runs).
+`outrider_jobs` raisonne dans l'autre sens et fixe les runs de front (`1` =
+séquentiel, le plus économe en mémoire). Renseigner les deux impose les deux,
+avec un avertissement si le produit dépasse `n_jobs`.
+
+Dans tous les cas, la préparation des matrices reste sérialisée : une seule
+matrice de counts existe à la fois, quel que soit le nombre de runs de front.
 
 ## Pièges à connaître
 

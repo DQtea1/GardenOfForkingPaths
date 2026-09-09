@@ -390,7 +390,10 @@ outrider_keep_h5ad: y         # conserve l'AnnData complet de chaque run (suppor
 # 8 → 70 s, 16 → 63 s ; quatre runs de front à 4 threads = 112 s contre 254 s en
 # série à 16 threads). 0 = choisi automatiquement à partir de n_jobs (~4 threads
 # par run) ; 1 = séquentiel. Chaque run de front = un TensorFlow de plus en RAM.
-outrider_jobs: 0
+outrider_jobs: 8              # runs de front ; 0 = déduit de outrider_threads
+outrider_threads: 2           # threads TensorFlow par run ; 0 = 4 (défaut mesuré).
+                              # 2 -> 8 runs de front sur 16 cœurs, 8 -> 2 runs.
+                              # Baisser = plus de runs simultanés = plus de RAM.
 
 # ================================================= 8 · ICA stabilisée (branche parallèle) — _ica()
 # Branche indépendante du consensus clustering : évalue la MSTD, sauvegarde la
